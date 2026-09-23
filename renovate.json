@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "baseBranchPatterns": ["master"],
+  "branchPrefix": "security/renovate-",
+  "forkProcessing": "enabled",
+  "ignorePaths": ["**/node_modules/**"],
+  "includePaths": [
+    "package.json",
+    "package-lock.json",
+    "tests/trivy-fixture/package.json",
+    "tests/trivy-fixture/package-lock.json"
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "matchCategories": ["security"],
+      "automerge": true,
+      "automergeType": "pr"
+    }
+  ]
+}

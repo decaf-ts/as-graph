@@ -1,0 +1,8 @@
+{
+  "name": "trivy-fixture",
+  "version": "1.0.0",
+  "description": "Trivy vulnerability fixture (intentionally vulnerable lodash for scan/renovate tests)",
+  "dependencies": {
+    "lodash": "4.18.1"
+  }
+}

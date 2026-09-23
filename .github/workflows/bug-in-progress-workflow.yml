@@ -1,0 +1,21 @@
+name: Run bug in progress
+
+# Thin caller of decaf-ts/reusable-actions/.github/workflows/bug-in-progress.yml.
+# Jira automation: creates the bug branch named in the dispatch payload.
+
+on:
+  repository_dispatch:
+    types:
+      - decaf_bug_in_progress
+
+jobs:
+  create-branch:
+    uses: decaf-ts/reusable-actions/.github/workflows/bug-in-progress.yml@master
+    with:
+      branch: ${{ github.event.client_payload.branch }}
+    permissions:
+      contents: write
+    concurrency:
+      group: create-branch-${{ github.event.client_payload.branch }}
+      cancel-in-progress: false
+    secrets: inherit

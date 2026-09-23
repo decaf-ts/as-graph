@@ -1,0 +1,16 @@
+name: Auto Approve and Merge Renovate PRs
+
+# Thin caller of decaf-ts/reusable-actions/.github/workflows/auto-merge-renovate.yml.
+# Only renovate/dependabot PRs are auto-approved and merged once every other
+# check has passed; all other PRs follow the normal human approval pattern.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [master]
+
+jobs:
+  auto-approve-merge:
+    if: github.actor == 'renovate[bot]' || github.actor == 'dependabot[bot]'
+    uses: decaf-ts/reusable-actions/.github/workflows/auto-merge-renovate.yml@master
+    secrets: inherit

@@ -1,0 +1,134 @@
+// .vscode/tasks.json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:prod",
+      "type": "npm",
+      "script": "build:prod",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "build",
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "coverage",
+      "type": "npm",
+      "script": "coverage",
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "docs",
+      "type": "npm",
+      "script": "docs",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "drawings",
+      "type": "npm",
+      "script": "drawings",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "flash-forward",
+      "type": "npm",
+      "script": "flash-forward",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Integration Tests",
+      "type": "npm",
+      "script": "test",
+      "args": ["--testPathPattern=/tests/integration", "--detectOpenHandles"],
+      "problemMatcher": ["$jest-stderr", "$jest-parser"],
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Lint Fix",
+      "type": "npm",
+      "script": "lint-fix",
+      "problemMatcher": ["$eslint-stderr", "$eslint-parse"],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "Test Circular",
+      "type": "npm",
+      "script": "test:circular",
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      },
+      "problemMatcher": ["$jest-stderr", "$jest-parse"]
+    },
+    {
+      "label": "UML Generation",
+      "type": "npm",
+      "script": "uml",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Unit Tests",
+      "type": "npm",
+      "script": "test",
+      "args": ["--testPathPattern=/tests/unit", "--detectOpenHandles"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": ["$jest-stare"],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    },
+    {
+      "label": "update-scripts",
+      "type": "npm",
+      "script": "update-scripts",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "env": {
+        "NODE_ENV": "development"
+      }
+    }
+  ]
+}

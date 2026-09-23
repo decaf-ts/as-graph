@@ -1,0 +1,20 @@
+name: Create bug pull request test
+
+# Thin caller of decaf-ts/reusable-actions/.github/workflows/bug-pull-request.yml.
+# Jira automation: opens the PR for the bug branch and requests CODEOWNERS-
+# derived team reviewers.
+
+on:
+  repository_dispatch:
+    types:
+      - decaf_bug_pull_request
+
+jobs:
+  create-pr:
+    uses: decaf-ts/reusable-actions/.github/workflows/bug-pull-request.yml@master
+    with:
+      branch: ${{ github.event.client_payload.branch }}
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit

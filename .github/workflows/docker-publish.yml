@@ -1,0 +1,70 @@
+name: "Docker Publish"
+
+# Thin caller of decaf-ts/reusable-actions/.github/workflows/docker-publish.yml.
+# Builds and publishes this repo's docker image(s) to the configured
+# registries (default ghcr.io), running in parallel with publish-on-release
+# (npm) on every GitHub Release. Manual dispatch defaults to a full
+# build/test and a trivy scan (no renovate) before the image build.
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version-tag:
+        description: "Explicit version for the versioned tag. Empty = read from package.json."
+        required: false
+        default: ""
+      push:
+        description: "Push the built image to the registry (false = build only)."
+        type: boolean
+        required: false
+        default: true
+      platforms:
+        description: "Platforms to build (buildx format, e.g. linux/amd64,linux/arm64)."
+        required: false
+        default: "linux/amd64"
+      no-cache:
+        description: "Build with --no-cache."
+        type: boolean
+        required: false
+        default: false
+      registries:
+        description: "Comma-separated registries to push to (e.g. 'ghcr.io,docker.io')."
+        required: false
+        default: "ghcr.io"
+      registry-user:
+        description: "Username for the registry logins."
+        required: false
+        default: "decaf-ts-admin"
+      run-build-test:
+        description: "Run a full build + test before building the image."
+        type: boolean
+        required: false
+        default: true
+      run-trivy-scan:
+        description: "Run a trivy vulnerability scan (no renovate) before building the image."
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  docker-base:
+    name: Docker base image
+    uses: decaf-ts/reusable-actions/.github/workflows/docker-publish.yml@master
+    with:
+      image: decaf-ts/ts-workspace
+      dockerfile: Dockerfile
+      context: .
+      tag-prefix: "base-"
+      floating-tag: latest
+      version-tag: ${{ inputs.version-tag }}
+      push: ${{ inputs.push != false }}
+      platforms: ${{ inputs.platforms || 'linux/amd64' }}
+      no-cache: ${{ inputs.no-cache == true }}
+      registries: ${{ inputs.registries || 'ghcr.io' }}
+      registry-user: ${{ inputs.registry-user || 'decaf-ts-admin' }}
+      run-build-test: ${{ inputs.run-build-test == true }}
+      run-trivy-scan: ${{ inputs.run-trivy-scan == true }}
+    secrets: inherit
