@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "jest"],
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": [
+    "../tests/storybook/**/*.ts",
+    "../tests/e2e/ui/**/*.ts",
+    "../src/**/*.ts"
+  ],
+  "exclude": ["../node_modules", "../lib", "../dist"]
+}

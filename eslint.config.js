@@ -31,4 +31,39 @@ export default [
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    files: [
+      "src/shared/graph/document/**/*.ts",
+      "src/shared/graph/catalog/**/*.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@angular/*",
+                "@nestjs/*",
+                "node:*",
+                "fs",
+                "path",
+                "os",
+                "crypto",
+                "http",
+                "https",
+                "stream",
+                "util",
+                "buffer",
+                "child_process",
+                "@decaf-ts/integrations*",
+              ],
+              message:
+                "Canonical graph document/catalog contracts must stay Angular-free, Nest-free, Node-free and engine-free.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];

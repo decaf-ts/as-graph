@@ -1,4 +1,4 @@
-[![Banner](./workdocs/assets/Banner.png)](https://decaf-ts.github.io/ts-workspace/)
-## Typescript Template
+[![Banner](./workdocs/assets/Banner.png)](https://decaf-ts.github.io/as-graph/)
+## Decaf-ts graph
 
-This repository is meant to provide an enterprise template for any standard Typescript project
+Workflow document model, node catalogue and reference execution engine for Decaf graph workflows

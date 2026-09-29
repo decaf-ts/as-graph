@@ -1,0 +1,47 @@
+@startuml engine-execution
+title as-graph — engine execution flow
+
+actor Caller
+participant "GraphExecutionEngine" as Engine
+participant "GraphWorkflowDocumentValidator" as Validator
+participant "GraphNodeManifestResolver" as Resolver
+participant "GraphExecutionPlanner" as Planner
+participant "GraphRunService" as RunService
+participant "GraphNodeExecutorRegistry" as Registry
+participant "GraphNodeExecutor" as Executor
+participant "GraphValueStore" as Store
+participant "GraphRunLogger" as Log
+
+Caller -> Engine : execute(document, inputs)
+activate Engine
+
+Engine -> Validator : validate(document)
+Validator --> Engine : GraphResolvedWorkflow | ValidationError
+Engine -> Resolver : resolve(document, catalogue)
+Resolver --> Engine : GraphResolvedWorkflow
+Engine -> Planner : plan(resolved)
+Planner --> Engine : GraphExecutionPlan (topological layers)
+
+Engine -> RunService : start(runId, plan)
+RunService --> Engine : GraphExecutionFrame
+Engine -> Store : seed workflow inputs
+
+loop each layer, then each node
+  Engine -> Registry : getExecutor(kind)
+  Registry --> Engine : GraphNodeExecutor
+  Engine -> Executor : execute(request, context)
+  Executor -> Store : read inputs / write outputs
+  Executor --> Engine : GraphExecutionValues
+  Engine -> Log : emit(node/edge lifecycle event)
+end
+
+Engine -> RunService : complete(status, outputs)
+RunService --> Engine : GraphExecutionResult
+Engine --> Caller : GraphExecutionResult
+deactivate Engine
+
+note right of Engine
+  Events are published through Decaf's Observable pipeline;
+  consumers call engine.observe({ refresh }) to subscribe.
+end note
+@enduml

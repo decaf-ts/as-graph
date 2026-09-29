@@ -1,5 +1,6 @@
 /lib
 /dist
+/storybook-static
 /docs
 /workdocs/drawings/*
 !/workdocs/drawings/*.drawio
@@ -12,6 +13,12 @@
 /workdocs/reports/images/*
 !/workdocs/reports/images/.gitkeep
 !/workdocs/reports/jest.coverage.config.cjs
+!/workdocs/reports/coverage
+/workdocs/reports/coverage/*
+!/workdocs/reports/coverage/.gitkeep
+!/workdocs/reports/html
+/workdocs/reports/html/*
+!/workdocs/reports/html/.gitkeep
 /workdocs/uml/*
 !/workdocs/uml/*.puml
 /.token

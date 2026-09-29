@@ -1,22 +1,88 @@
-<mxfile host="Electron" modified="2024-03-09T04:35:50.502Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/23.1.5 Chrome/120.0.6099.109 Electron/28.1.0 Safari/537.36" etag="N1EO2Ae_HK81A13fh9sG" version="23.1.5" type="device" pages="2">
-  <diagram name="banner" id="YSmI_IRiB9JPhWhTJ_M6">
+<mxfile host="Electron" modified="2024-03-09T04:35:50.502Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/23.1.5 Chrome/120.0.6099.109 Electron/28.1.0 Safari/537.36" etag="asgraph0engineexec" version="23.1.5" type="device" pages="2">
+  <diagram name="Engine execution flow" id="asgraph-engine-flow">
     <mxGraphModel dx="1050" dy="639" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="1IUq52-lKtW0vFbKEjnJ-1" value="&lt;h1&gt;I am a drawIO Diagram&lt;/h1&gt;&lt;p&gt;Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.&lt;/p&gt;" style="text;html=1;spacing=5;spacingTop=-20;whiteSpace=wrap;overflow=hidden;rounded=0;" parent="1" vertex="1">
-          <mxGeometry x="230" y="230" width="190" height="120" as="geometry" />
+        <mxCell id="caller" value="Caller&#xa;engine.execute(document, inputs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="20" y="40" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="validate" value="Validate&#xa;GraphWorkflowDocumentValidator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="20" y="130" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="resolve" value="Resolve&#xa;GraphNodeManifestResolver" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="20" y="220" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="plan" value="Plan&#xa;GraphExecutionPlanner (topological layers)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="20" y="310" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="run" value="Run lifecycle&#xa;GraphRunService / GraphRunExecutor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="20" y="400" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="execute" value="Execute nodes&#xa;GraphNodeExecutorRegistry → GraphNodeExecutor&#xa;reads/writes GraphValueStore" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="20" y="490" width="230" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="result" value="GraphExecutionResult&#xa;(nodeResults, outputs, status)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="20" y="590" width="230" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="log" value="GraphRunLogger / events&#xa;(Observable pipeline)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="330" y="490" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="caller" target="validate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="validate" target="resolve">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="resolve" target="plan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="plan" target="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="run" target="execute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="execute" target="result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="execute" target="log">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
-  <diagram id="6UFowTpk1v24f48qAjIY" name="Actor">
+  <diagram name="Workflow document model" id="asgraph-document-model">
     <mxGraphModel dx="1050" dy="639" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="SNubH1uuLD6a0vhFL_yV-1" value="Actor" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
-          <mxGeometry x="230" y="240" width="30" height="60" as="geometry" />
+        <mxCell id="doc" value="GraphWorkflowDocument&#xa;id, name&#xa;inputs[], outputs[]&#xa;nodes[], edges[]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="300" y="40" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nodes" value="GraphNodeInstance&#xa;id, kind, parameters&#xa;bindings, loop, pinned" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="220" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="edges" value="GraphEdgeInstance&#xa;id, type (data|connection)&#xa;source, target" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="220" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ports" value="GraphWorkflowPortInstance&#xa;id, label, schema" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="220" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="builder" value="GraphWorkflowDocumentBuilder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="300" y="380" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="de1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=diamond;endFill=1;" edge="1" parent="1" source="doc" target="nodes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="de2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=diamond;endFill=1;" edge="1" parent="1" source="doc" target="edges">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="de3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=diamond;endFill=1;" edge="1" parent="1" source="doc" target="ports">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="de4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="builder" target="doc">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

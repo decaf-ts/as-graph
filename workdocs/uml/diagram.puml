@@ -1,11 +1,83 @@
-@startuml
+@startuml document-model
+title as-graph — canonical workflow document model (shared/graph/document)
 
-[*] --> State1 : moves into state 1
-State1 --> State2 : moves into state 2
-State1 --> State3 : moves into state 3
+package "shared/graph/document" {
+  class GraphWorkflowDocument {
+    +id: string
+    +name: string
+    +inputs: GraphWorkflowPortInstance[]
+    +outputs: GraphWorkflowPortInstance[]
+    +nodes: GraphNodeInstance[]
+    +edges: GraphEdgeInstance[]
+    +settings?: GraphWorkflowSettings
+    +metadata?: Record<string, GraphJsonValue>
+    +ui?: GraphWorkflowUiState
+  }
 
-State3 --> State2: moves into state 2
+  class GraphWorkflowPortInstance {
+    +id: string
+    +label?: string
+    +schema?: GraphValueSchema
+  }
 
-State2 --> [*]: end state
+  class GraphNodeInstance {
+    +id: string
+    +kind: string
+    +label?: string
+    +parameters: Record<string, GraphJsonValue>
+    +inputBindings?: Record<string, GraphInputBinding>
+    +outputBindings?: Record<string, GraphOutputBinding>
+    +disabled?: boolean
+    +loop?: GraphLoopConfiguration
+    +pinned?: GraphNodePinState
+  }
 
+  class GraphEdgeInstance {
+    +id: string
+    +type: "data" | "connection"
+    +source: GraphEndpoint
+    +target: GraphEndpoint
+  }
+
+  class GraphNodeEndpoint {
+    +scope: "node"
+    +nodeId: string
+    +port: string
+  }
+
+  class GraphWorkflowEndpoint {
+    +scope: "workflow"
+    +port: string
+  }
+
+  class GraphWorkflowDocumentBuilder {
+    +addInput()
+    +addOutput()
+    +addNode()
+    +addEdge()
+    +build(): GraphWorkflowDocument
+  }
+
+  class GraphDecoratedWorkflowCompiler {
+    +compile(input): GraphWorkflowDocument
+  }
+
+  class GraphWorkflowDocumentReader
+  class GraphWorkflowDocumentSerializer
+}
+
+GraphWorkflowDocument "1" *-- "*" GraphNodeInstance : nodes
+GraphWorkflowDocument "1" *-- "*" GraphEdgeInstance : edges
+GraphWorkflowDocument "1" *-- "*" GraphWorkflowPortInstance : inputs / outputs
+GraphEdgeInstance --> GraphNodeEndpoint : source / target
+GraphEdgeInstance --> GraphWorkflowEndpoint : source / target
+GraphWorkflowDocumentBuilder ..> GraphWorkflowDocument : builds
+GraphDecoratedWorkflowCompiler ..> GraphWorkflowDocument : compiles
+GraphWorkflowDocumentReader ..> GraphWorkflowDocument : reads
+GraphWorkflowDocumentSerializer ..> GraphWorkflowDocument : (de)serializes
+
+note bottom of GraphWorkflowDocument
+  The single executable artifact. The engine executes only this canonical
+  document; decorated workflow classes are compiled into it first.
+end note
 @enduml
