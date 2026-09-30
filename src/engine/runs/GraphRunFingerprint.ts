@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { GraphWorkflowDocument } from "../../shared/graph";
+import type { GraphWorkflowDocument } from "../../shared/graph/document/GraphWorkflowDocument";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

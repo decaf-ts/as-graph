@@ -17,11 +17,6 @@ import {
 } from "../../shared/graph";
 import { GraphExecutionEngine } from "../execution/GraphExecutionEngine";
 import { GraphStoreError } from "../errors/GraphStoreError";
-import {
-  GraphRunEventPublisher,
-  GraphRunExecutor,
-  type GraphRunDocumentProvider,
-} from "./index";
 import { graphRunDocumentFingerprint } from "./GraphRunFingerprint";
 import {
   DEFAULT_GRAPH_RUN_LIMITS,
@@ -37,6 +32,8 @@ import {
   type GraphRunStore,
 } from "./types";
 import { assertGraphResourceOwnership } from "./ownership";
+import { GraphRunEventPublisher } from "./GraphRunEventPublisher";
+import { GraphRunDocumentProvider, GraphRunExecutor } from "./GraphRunExecutor";
 
 /** Construction options for {@link GraphRunService}. */
 export interface GraphRunServiceOptions {
@@ -77,7 +74,10 @@ export class GraphRunService {
   };
   private readonly activeByCaller = new Map<string, Set<string>>();
   private readonly callerKeysByRun = new Map<string, string>();
-  private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly releaseTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   constructor(
     engine: GraphExecutionEngine,
@@ -142,7 +142,8 @@ export class GraphRunService {
     }
 
     const callerKey = concurrencyKey ?? ownerUser ?? "anonymous";
-    const activeForCaller = this.activeByCaller.get(callerKey) ?? new Set<string>();
+    const activeForCaller =
+      this.activeByCaller.get(callerKey) ?? new Set<string>();
     if (activeForCaller.size >= this.options.limits.maxConcurrentRuns) {
       throw new ValidationError(
         `Graph run rejected: the configured limit of ${this.options.limits.maxConcurrentRuns} concurrent runs per caller is exhausted`
@@ -386,15 +387,11 @@ export class GraphRunService {
   }
 
   private assertOwnership(run: GraphRun, ownerUser: string | null): void {
-    assertGraphResourceOwnership(
-      { owner: run.ownerUser },
-      ownerUser,
-      {
-        allowAnonymousAccess: this.options.allowAnonymousAccess === true,
-        resourceKind: "Graph run",
-        resourceId: run.runId,
-      }
-    );
+    assertGraphResourceOwnership({ owner: run.ownerUser }, ownerUser, {
+      allowAnonymousAccess: this.options.allowAnonymousAccess === true,
+      resourceKind: "Graph run",
+      resourceId: run.runId,
+    });
   }
 
   /**
@@ -415,7 +412,6 @@ export class GraphRunService {
     }
     return cryptoApi.randomUUID();
   }
-
 }
 
 function safeJsonLength(value: unknown): number {
