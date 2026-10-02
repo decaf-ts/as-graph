@@ -15,10 +15,11 @@ import {
   GraphWorkflowDocumentBuilder,
   type GraphWorkflowDocument,
 } from "../../../src/shared/graph";
-import { GraphWorkflowService } from "../../../src/nest/graph/GraphWorkflowService";
-import { GraphWorkflowModel } from "../../../src/nest/graph/GraphWorkflowModel";
-import { GraphWorkflowDocumentRejectedError } from "../../../src/nest/graph/GraphWorkflowErrors";
-import { validateGraphWorkflowDocumentAtBoundary } from "../../../src/nest/graph/GraphWorkflowBoundaryValidation";
+import { GraphWorkflowService } from "../../../src/engine/services/GraphWorkflowService";
+import { GraphEnvironment } from "../../../src/engine/services/GraphEnvironment";
+import { GraphWorkflowModel } from "../../../src/shared/graph/GraphWorkflowModel";
+import { GraphWorkflowDocumentRejectedError } from "../../../src/engine/errors/GraphWorkflowErrors";
+import { validateGraphWorkflowDocumentAtBoundary } from "../../../src/engine/validation/GraphWorkflowBoundaryValidation";
 import type { GraphValidationIssue } from "../../../src";
 import {
   documentEdge,
@@ -174,12 +175,13 @@ describe("GraphWorkflowPersistence (§4.19 nest row)", () => {
     const persistence = new PersistenceService();
     await persistence.boot([[RamAdapter, { UUID: "root" }]] as never);
     // SAA-595: the §4.15 anonymous-on-owned tolerance this suite pins (test 4)
-    // is now an explicit opt-in; secure defaults fail closed. `@service`
-    // singletons do not forward constructor args, so options are applied
-    // via configure().
-    service = new GraphWorkflowService().configure({
-      allowAnonymousAccess: true,
-    });
+    // is now an explicit opt-in; secure defaults fail closed. Services read
+    // their options from the graph environment (`@decaf-ts/logging`), not from
+    // injectable config objects.
+    GraphEnvironment.accumulate({
+      graph: { workflows: { allowAnonymousAccess: true } },
+    } as never);
+    service = new GraphWorkflowService();
   });
 
   it("1. saveDocument → getDocument semantic round trip; updatedAt set; workflowId is the primary key", async () => {
@@ -270,7 +272,7 @@ describe("GraphWorkflowPersistence (§4.19 nest row)", () => {
     (loopBody as Record<string, unknown>).component = { template: "<loop/>" };
     (loopDoc.nodes[0] as Record<string, unknown>).loop = { body: loopBody };
     const loopIssues = issueByCode(
-      validateGraphWorkflowDocumentAtBoundary(loopDoc).issues,
+      (await validateGraphWorkflowDocumentAtBoundary(loopDoc)).issues,
       "document.forbidden-field"
     );
     expect(loopIssues.length).toBeGreaterThan(0);
@@ -339,7 +341,7 @@ describe("GraphWorkflowPersistence (§4.19 nest row)", () => {
     // The override is therefore asserted on the boundary validator the service
     // delegates to, which merges options.limits over the defaults the same way
     // the service constructor does.
-    const overridden = validateGraphWorkflowDocumentAtBoundary(
+    const overridden = await validateGraphWorkflowDocumentAtBoundary(
       wireDocument("lim-strict"),
       { limits: { maxNodes: 0 } }
     );

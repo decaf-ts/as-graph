@@ -16,8 +16,8 @@ import {
   GraphNodeCatalogue,
   GraphWorkflowDocumentValidator,
 } from "../../../src";
-import { validateGraphWorkflowDocumentAtBoundary } from "../../../src/nest/graph/GraphWorkflowBoundaryValidation";
-import { documentEdge, documentNode } from "./engine-fixtures";
+import { validateGraphWorkflowDocumentAtBoundary } from "../../../src/engine/validation/GraphWorkflowBoundaryValidation";
+import { documentEdge, documentNode, freshCatalogue } from "./engine-fixtures";
 
 jest.setTimeout(20000);
 
@@ -90,10 +90,12 @@ describe("GraphLooseNodeValidation (DECAF-50 §4.26 R2-3(8))", () => {
   let catalogue: GraphNodeCatalogue;
   let validator: GraphWorkflowDocumentValidator;
 
-  beforeAll(() => {
-    catalogue = new GraphNodeCatalogue();
+  beforeAll(async () => {
+    catalogue = freshCatalogue();
     for (const kind of ["test.flow", "test.loop"]) {
-      catalogue.registerExecutor(kind, { execute: async () => ({ out: true }) });
+      await catalogue.registerExecutor(kind, {
+        execute: async () => ({ out: true }),
+      });
     }
     validator = new GraphWorkflowDocumentValidator({ catalogue });
   });
@@ -121,8 +123,8 @@ describe("GraphLooseNodeValidation (DECAF-50 §4.26 R2-3(8))", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("3. save gate: the persistence boundary flags the same loose node", () => {
-    const result = validateGraphWorkflowDocumentAtBoundary(
+  it("3. save gate: the persistence boundary flags the same loose node", async () => {
+    const result = await validateGraphWorkflowDocumentAtBoundary(
       looseDocument("loose-save"),
       { catalogue }
     );
@@ -135,8 +137,8 @@ describe("GraphLooseNodeValidation (DECAF-50 §4.26 R2-3(8))", () => {
     expect(issue?.nodeId).toBe("loose-save-n1");
   });
 
-  it("4. save gate: a fully connected document passes with no topology.loose-node issue", () => {
-    const result = validateGraphWorkflowDocumentAtBoundary(
+  it("4. save gate: a fully connected document passes with no topology.loose-node issue", async () => {
+    const result = await validateGraphWorkflowDocumentAtBoundary(
       connectedDocument("connected-save"),
       { catalogue }
     );

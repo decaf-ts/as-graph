@@ -13,7 +13,7 @@ import type {
   GraphWorkflowDocument,
 } from "../../../src/shared/graph";
 import type { GraphResolvedNodeManifest } from "../../../src/shared/graph";
-import { nodeExecutionRequest } from "./engine-fixtures";
+import { nodeExecutionRequest, nodeExecutor } from "./engine-fixtures";
 
 function buildDocument(): GraphWorkflowDocument {
   return { id: "wf", name: "wf", inputs: [], outputs: [], nodes: [], edges: [] };
@@ -147,13 +147,13 @@ describe("UtilityLogNode.execute", () => {
       { user: "bob" }
     );
 
-    const executor = UtilityLogNode;
+    const executor = nodeExecutor(UtilityLogNode);
     const result = await executor.execute(
       nodeExecutionRequest({ value: "my value" }),
       ctx
     );
 
-    expect(result).toEqual({ logged: "my value" });
+    expect(result).toEqual({ value: "my value" });
     expect(captured).toHaveLength(1);
     const entry = captured[0] as {
       level: string;
@@ -186,7 +186,7 @@ describe("UtilityLogNode.execute", () => {
       }
     );
 
-    const executor = UtilityLogNode;
+    const executor = nodeExecutor(UtilityLogNode);
     await executor.execute(nodeExecutionRequest({ value: 42 }), ctx);
 
     expect((captured[0] as { level: string }).level).toBe("info");

@@ -4,7 +4,7 @@
  * @description Holds the run id, execution plan, value store, accumulated node results, events, and timing for a single workflow execution.
  */
 import type { GraphExecutionPlan } from "../planning/GraphExecutionPlan";
-import type { GraphValueStore } from "../store/GraphValueStore";
+import type { GraphValueRepository } from "../store/GraphValueRepository";
 import type { GraphExecutionEventFactory } from "../events/GraphExecutionEventFactory";
 import type {
   GraphExecutionEvent,
@@ -18,12 +18,19 @@ import type {
  * Mutable state for a single graph execution run.
  */
 export class GraphExecutionFrame {
+  /** Unique id of the run this frame tracks. */
   readonly runId: GraphRunId;
+  /** Topologically layered execution plan driving the run. */
   readonly plan: GraphExecutionPlan;
-  readonly valueStore: GraphValueStore;
+  /** Value store routing routed port values between nodes. */
+  readonly valueStore: GraphValueRepository;
+  /** Factory building typed execution events for the run. */
   readonly eventFactory: GraphExecutionEventFactory;
+  /** Timestamp taken when the frame was created. */
   readonly startedAt: Date;
+  /** Per-node execution results accumulated during the run, keyed by node id. */
   readonly nodeResults: Map<string, GraphNodeExecutionResult> = new Map();
+  /** Ordered event log of the run. */
   readonly events: GraphExecutionEvent[] = [];
   /**
    * Ids of the data edges activated by a routed upstream output port
@@ -34,12 +41,13 @@ export class GraphExecutionFrame {
    */
   private readonly activeDataEdges: Set<string> = new Set();
 
+  /** Timestamp taken when {@link finish} was called; undefined while running. */
   finishedAt?: Date;
 
   constructor(
     runId: GraphRunId,
     plan: GraphExecutionPlan,
-    valueStore: GraphValueStore,
+    valueStore: GraphValueRepository,
     eventFactory: GraphExecutionEventFactory
   ) {
     this.runId = runId;

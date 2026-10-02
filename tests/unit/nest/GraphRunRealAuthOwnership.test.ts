@@ -40,8 +40,12 @@ import {
 import { GraphExecutionModule } from "../../../src/nest/graph";
 import type { GraphRunControllerOptions } from "../../../src/nest/graph";
 import { GraphRunService } from "../../../src";
-import { graphWorkflowOwnerOf } from "../../../src/nest/graph/GraphWorkflowService";
-import { linearDocument } from "../graph/engine-fixtures";
+import { graphWorkflowOwnerOf } from "../../../src/engine/services/GraphWorkflowService";
+import {
+  linearDocument,
+  resetGraphInjectables,
+  resetGraphValueAdapter,
+} from "../graph/engine-fixtures";
 
 jest.setTimeout(60000);
 
@@ -56,6 +60,8 @@ async function buildRealAuthApp(runs: GraphRunControllerOptions): Promise<{
   app: INestApplication;
   runService: GraphRunService;
 }> {
+  resetGraphInjectables();
+  resetGraphValueAdapter();
   const moduleRef: TestingModule = await Test.createTestingModule({
     imports: [
       DecafAuthModule.forRoot({

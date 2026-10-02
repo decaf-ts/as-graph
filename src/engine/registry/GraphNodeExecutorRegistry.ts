@@ -10,7 +10,17 @@
  * Legacy error contract preserved: this facade keeps throwing
  * {@link GraphExecutionError} where the pre-catalogue registry did, while the
  * underlying catalogue throws the normative DECAF-50 catalogue errors.
+ *
+ * The facade logs through the synchronous `logCtx` path and therefore requires
+ * its callers to provide exactly one Decaf `Context` (`ContextualArgs<Context>`);
+ * it never becomes async for logging's sake.
  */
+import {
+  Service,
+  service,
+  type Context,
+  type ContextualArgs,
+} from "@decaf-ts/core";
 import type { GraphNodeExecutor } from "../execution/GraphNodeExecutor";
 import { GraphNodeCatalogue } from "../catalog/GraphNodeCatalogue";
 import { GraphNodeNotFoundError } from "../catalog/GraphCatalogueErrors";
@@ -22,10 +32,13 @@ import { GraphExecutionError } from "../errors/GraphExecutionError";
  * catalogue and preserves the pre-catalogue {@link GraphExecutionError}
  * contract.
  */
-export class GraphNodeExecutorRegistry {
+@service()
+export class GraphNodeExecutorRegistry extends Service {
   constructor(
     private readonly catalogue: GraphNodeCatalogue = new GraphNodeCatalogue()
-  ) {}
+  ) {
+    super();
+  }
 
   /** The backing catalogue holding all kind→registration entries. */
   get catalog(): GraphNodeCatalogue {
@@ -33,23 +46,32 @@ export class GraphNodeExecutorRegistry {
   }
 
   /** Registers an executor for the given node kind. */
-  register(kind: string, executor: GraphNodeExecutor): this {
+  register(
+    kind: string,
+    executor: GraphNodeExecutor,
+    ...args: ContextualArgs<Context>
+  ): this {
+    const { log } = this.logCtx(args, "register").for(this.register);
+    log.debug(`Registering graph executor for kind '${kind}'`);
     if (!kind) {
       throw new GraphExecutionError("Graph executor kind is required");
     }
-    this.catalogue.registerExecutor(kind, executor);
+    this.catalogue.registerExecutor(kind, executor, ...args);
     return this;
   }
 
   /** Removes the registration for the given node kind. */
-  unregister(kind: string): this {
-    this.catalogue.unregister(kind);
+  unregister(kind: string, ...args: ContextualArgs<Context>): this {
+    const { log } = this.logCtx(args, "unregister").for(this.unregister);
+    log.debug(`Unregistering graph executor for kind '${kind}'`);
+    this.catalogue.unregister(kind, ...args);
     return this;
   }
 
   /** Returns whether a registration exists for the given kind. */
-  has(kind: string): boolean {
-    return this.catalogue.has(kind);
+  has(kind: string, ...args: ContextualArgs<Context>): boolean {
+    this.logCtx(args, "has").for(this.has);
+    return this.catalogue.has(kind, ...args);
   }
 
   /**
@@ -57,9 +79,10 @@ export class GraphNodeExecutorRegistry {
    *
    * @throws {GraphExecutionError} when no registration exists for `kind`.
    */
-  resolve(kind: string): GraphNodeExecutor {
+  resolve(kind: string, ...args: ContextualArgs<Context>): GraphNodeExecutor {
+    this.logCtx(args, "resolve").for(this.resolve);
     try {
-      return this.catalogue.getExecutor(kind);
+      return this.catalogue.getExecutor(kind, ...args);
     } catch (e) {
       if (e instanceof GraphNodeNotFoundError) {
         throw new GraphExecutionError(

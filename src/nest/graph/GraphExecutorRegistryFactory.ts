@@ -8,6 +8,7 @@
  * kind→registration map (DECAF-50 §4.7); the returned registry is a facade
  * over it, so no second executor map exists.
  */
+import { Context, type Adapter } from "@decaf-ts/core";
 import {
   GraphNodeCatalogue,
   GraphNodeExecutorRegistry,
@@ -45,19 +46,20 @@ const demoExecutorMap: Record<string, ExecutorFn> = {
  * @param extra - Additional executor registrations to merge into the catalogue.
  * @returns The populated catalogue and its registry facade.
  */
-export function createGraphNodeCatalogue(
-  extra?: Record<string, GraphNodeExecutor>
-): { catalogue: GraphNodeCatalogue; registry: GraphNodeExecutorRegistry } {
+export async function createGraphNodeCatalogue(
+  extra?: Record<string, GraphNodeExecutor>,
+  context: Context = new Context()
+): Promise<{ catalogue: GraphNodeCatalogue; registry: GraphNodeExecutorRegistry }> {
   const catalogue = new GraphNodeCatalogue();
-  registerBuiltInGraphNodes(catalogue);
+  registerBuiltInGraphNodes(catalogue, context);
 
   for (const [kind, fn] of Object.entries(demoExecutorMap)) {
-    catalogue.registerExecutor(kind, { execute: fn });
+    catalogue.registerExecutor(kind, { execute: fn }, context);
   }
 
   if (extra) {
     for (const [kind, executor] of Object.entries(extra)) {
-      catalogue.registerExecutor(kind, executor);
+      catalogue.registerExecutor(kind, executor, context);
     }
   }
 
@@ -72,10 +74,11 @@ export function createGraphNodeCatalogue(
  * @returns The registry facade; the underlying catalogue is available as
  * `registry.catalog`.
  */
-export function createGraphExecutorRegistry(
-  extra?: Record<string, GraphNodeExecutor>
-): GraphNodeExecutorRegistry {
-  return createGraphNodeCatalogue(extra).registry;
+export async function createGraphExecutorRegistry(
+  extra?: Record<string, GraphNodeExecutor>,
+  context: Context = new Context()
+): Promise<GraphNodeExecutorRegistry> {
+  return (await createGraphNodeCatalogue(extra, context)).registry;
 }
 
 /**
@@ -89,13 +92,13 @@ export function createGraphExecutorRegistry(
  *   needs an engine back-reference.
  * @returns The catalogue with the built-in registrations applied.
  */
-export function registerEngineBoundGraphNodes(
+export async function registerEngineBoundGraphNodes(
   catalogue: GraphNodeCatalogue,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _engine: GraphExecutionEngine
-): GraphNodeCatalogue {
+  _engine: GraphExecutionEngine,
+  context: Context = new Context()
+): Promise<GraphNodeCatalogue> {
   for (const registration of builtInGraphNodeRegistrations()) {
-    catalogue.register(registration, { replace: true });
+    catalogue.register(registration, { replace: true }, context);
   }
   return catalogue;
 }
@@ -107,27 +110,42 @@ export function registerEngineBoundGraphNodes(
  * `codeSandboxEvaluator`.
  *
  * The config wires an {@link IsolatedVmCodeSandboxEvaluator} (backed by
- * `isolated-vm`) so the Code Node runs in a truly isolated V8 sandbox.
+ * `isolated-vm`) so the Code Node runs in a truly isolated V8 sandbox. Cached and
+ * pinned value persistence uses the host-provided `valueAdapter` when given, and
+ * otherwise defers to the globally configured adapter (`Adapter.current`); this
+ * factory never installs an adapter of its own, so a host that did not configure
+ * one fails closed in {@link GraphExecutionEngine.initialize} rather than having a
+ * `RamAdapter` silently registered behind its back.
  *
- * @returns A config object ready for `new GraphExecutionEngine(config)`.
+ * @param valueAdapter - Optional Decaf adapter for cached/pinned values.
+ * @returns A config object ready for `GraphExecutionEngine.initialize(config)`.
  */
-export function createDemoEngineConfig(): {
+export async function createDemoEngineConfig(
+  valueAdapter?: Adapter<any, any, any, any>,
+  context: Context = new Context()
+): Promise<{
   catalogue: GraphNodeCatalogue;
   registry: GraphNodeExecutorRegistry;
+  valueAdapter?: Adapter<any, any, any, any>;
   defaultOptions: { failFast: boolean };
   codeSandboxEvaluator: IsolatedVmCodeSandboxEvaluator;
-  onEngineCreated: (engine: GraphExecutionEngine) => void;
-} {
-  const { catalogue, registry } = createGraphNodeCatalogue();
+  onEngineCreated: (engine: GraphExecutionEngine) => Promise<void>;
+}> {
+  const { catalogue, registry } = await createGraphNodeCatalogue(
+    undefined,
+    context
+  );
   const codeSandboxEvaluator = new IsolatedVmCodeSandboxEvaluator();
+  await codeSandboxEvaluator.boot({});
 
   return {
     catalogue,
     registry,
+    ...(valueAdapter ? { valueAdapter } : {}),
     defaultOptions: { failFast: false },
     codeSandboxEvaluator,
-    onEngineCreated: (engine: GraphExecutionEngine) => {
-      registerEngineBoundGraphNodes(catalogue, engine);
+    onEngineCreated: async (engine: GraphExecutionEngine) => {
+      await registerEngineBoundGraphNodes(catalogue, engine, context);
     },
   };
 }

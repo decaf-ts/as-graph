@@ -5,6 +5,7 @@
  * `GraphWorkflowDocument`s only, performing validation and resolution
  * internally.
  */
+import { Context, type ContextualArgs } from "@decaf-ts/core";
 import { GraphExecutionEventType } from "../../../src/shared/graph";
 import type {
   GraphInputBinding,
@@ -35,27 +36,29 @@ import { GraphWorkflowDocumentValidator } from "../../../src/engine/validation/G
 import type { GraphValidationIssue } from "../../../src/engine/validation/GraphValidationIssue";
 
 import {
+  bootEngine,
   cyclicDocument,
   demoCatalogue,
   documentEdge,
   documentNode,
   documentPort,
+  freshCatalogue,
   linearDocument,
   resolveDocument,
 } from "./engine-fixtures";
 
 describe("GraphExecutionEngine", () => {
-  function buildEngine(executors?: Record<string, unknown>): {
+  async function buildEngine(executors?: Record<string, unknown>): Promise<{
     engine: GraphExecutionEngine;
     events: GraphExecutionEvent[];
-  } {
+  }> {
     const registry = new GraphNodeExecutorRegistry(
-      demoCatalogue(
+      await demoCatalogue(
         (executors as never) ?? undefined
       )
     );
     const events: GraphExecutionEvent[] = [];
-    const engine = new GraphExecutionEngine({ registry });
+    const engine = await bootEngine({ registry });
     engine.observe({
       refresh: async (event) => { events.push(event); },
     });
@@ -63,7 +66,7 @@ describe("GraphExecutionEngine", () => {
   }
 
   it("executes a canonical document and produces correct outputs", async () => {
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
     const result = await engine.execute(linearDocument(), { a: 2, b: 3 });
 
     expect(result.status).toBe("succeeded");
@@ -73,14 +76,14 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("rejects a document that fails the nine-stage validation gate", async () => {
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
     await expect(engine.execute(cyclicDocument(), {})).rejects.toThrow(
       GraphDocumentValidationError
     );
   });
 
   it("emits validation started and completed events", async () => {
-    const { engine, events } = buildEngine();
+    const { engine, events } = await buildEngine();
     await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     const types = events.map((e) => e.type);
@@ -89,7 +92,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("emits workflow started, planned, and completed events", async () => {
-    const { engine, events } = buildEngine();
+    const { engine, events } = await buildEngine();
     await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     const types = events.map((e) => e.type);
@@ -99,7 +102,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("emits node started and completed events for each node", async () => {
-    const { engine, events } = buildEngine();
+    const { engine, events } = await buildEngine();
     await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     const started = events.filter(
@@ -113,7 +116,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("emits edge value routed events", async () => {
-    const { engine, events } = buildEngine();
+    const { engine, events } = await buildEngine();
     await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     const routed = events.filter(
@@ -125,7 +128,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("captures a failed node and reports the error", async () => {
-    const { engine } = buildEngine({
+    const { engine } = await buildEngine({
       "math.add": { execute: () => { throw new Error("addition failed"); } },
       "math.multiply": {
         execute: (request: GraphNodeExecutionRequest) => ({
@@ -143,7 +146,7 @@ describe("GraphExecutionEngine", () => {
   it("applies skip semantics to disabled nodes", async () => {
     const document = linearDocument();
     (document.nodes[0] as { disabled?: boolean }).disabled = true;
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
 
     const result = await engine.execute(document, { a: 2, b: 3 });
 
@@ -156,7 +159,7 @@ describe("GraphExecutionEngine", () => {
     const adder = document.nodes[0];
     adder.disabled = true;
     adder.metadata = { disabledBehavior: "passThroughFirstInput" };
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
 
     const result = await engine.execute(document, { a: 2, b: 3 });
 
@@ -167,7 +170,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("returns a runId and records timing", async () => {
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
     const result = await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     expect(result.runId).toBeTruthy();
@@ -176,7 +179,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("events have unique ids and incrementing sequence numbers", async () => {
-    const { engine, events } = buildEngine();
+    const { engine, events } = await buildEngine();
     await engine.execute(linearDocument(), { a: 1, b: 1 });
 
     const ids = new Set(events.map((e) => e.id));
@@ -188,7 +191,7 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("supports custom runId via options", async () => {
-    const { engine } = buildEngine();
+    const { engine } = await buildEngine();
     const result = await engine.execute(linearDocument(), { a: 1, b: 1 }, {
       runId: "custom-run",
     });
@@ -196,8 +199,8 @@ describe("GraphExecutionEngine", () => {
   });
 
   it("observer failures do not crash execution", async () => {
-    const registry = new GraphNodeExecutorRegistry(demoCatalogue());
-    const engine = new GraphExecutionEngine({ registry });
+    const registry = new GraphNodeExecutorRegistry(await demoCatalogue());
+    const engine = await bootEngine({ registry });
     engine.observe({
       refresh: async () => { throw new Error("observer crashed"); },
     });
@@ -265,10 +268,10 @@ interface NamedTestKindSpec {
  * leniency) so §4.19 output-validation and capability assertions run on the
  * DECAF-50 target behaviour, never on placeholder-manifest leniency.
  */
-function registerNamedTestKind(
+async function registerNamedTestKind(
   catalogue: GraphNodeCatalogue,
   spec: NamedTestKindSpec
-): void {
+): Promise<void> {
   const manifest: GraphNodeManifest = {
     kind: spec.kind,
     display: { name: spec.kind },
@@ -282,7 +285,7 @@ function registerNamedTestKind(
     ...(spec.capabilities ? { capabilities: spec.capabilities } : {}),
     ...(spec.policies ? { policies: spec.policies } : {}),
   };
-  catalogue.register(
+  await catalogue.register(
     defineGraphNode({
       manifest,
       executor: spec.executor as never,
@@ -290,23 +293,28 @@ function registerNamedTestKind(
   );
 }
 
-/** Offline counting catalogue: records every kind→executor resolution. */
-class NamedTestCountingCatalogue extends GraphNodeCatalogue {
-  public executorResolutions: string[] = [];
-
-  override getExecutor(kind: string) {
-    this.executorResolutions.push(kind);
-    return super.getExecutor(kind);
-  }
+/**
+ * Installs a resolution spy on the catalogue instance, recording every
+ * `getExecutor(kind)` call. `GraphNodeCatalogue` is a `@service()` singleton, so
+ * subclassing cannot intercept instance calls — an own-property wrapper can.
+ */
+function spyOnExecutorResolutions(catalogue: GraphNodeCatalogue): string[] {
+  const resolutions: string[] = [];
+  const original = catalogue.getExecutor.bind(catalogue);
+  catalogue.getExecutor = (kind: string, ...args: unknown[]) => {
+    resolutions.push(kind);
+    return original(kind, ...(args as never[]));
+  };
+  return resolutions;
 }
 
 /** Legacy facade spy: the DECAF-50 engine must never call `resolve(kind)`. */
 class NamedTestUntouchedRegistry extends GraphNodeExecutorRegistry {
   public resolveCalls: string[] = [];
 
-  override resolve(kind: string) {
+  override resolve(kind: string, ...args: ContextualArgs<Context>) {
     this.resolveCalls.push(kind);
-    return super.resolve(kind);
+    return super.resolve(kind, ...args);
   }
 }
 
@@ -315,12 +323,12 @@ class NamedTestUntouchedRegistry extends GraphNodeExecutorRegistry {
  * event (top-level and nested runs alike — nested loop bodies run through
  * the same emitter).
  */
-function namedTestEngine(
+async function namedTestEngine(
   catalogue: GraphNodeCatalogue,
   extra: { codeSandboxEvaluator?: CodeSandboxEvaluator } = {}
-): { engine: GraphExecutionEngine; events: GraphExecutionEvent[] } {
+): Promise<{ engine: GraphExecutionEngine; events: GraphExecutionEvent[] }> {
   const events: GraphExecutionEvent[] = [];
-  const engine = new GraphExecutionEngine({
+  const engine = await bootEngine({
     registry: new GraphNodeExecutorRegistry(catalogue),
     ...(extra.codeSandboxEvaluator ? { codeSandboxEvaluator: extra.codeSandboxEvaluator } : {}),
   });
@@ -342,47 +350,48 @@ function issueOf(
 describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   it("executors resolve through the catalogue: plan nodes carry the catalogue executor and the engine never resolves by kind at execute time", async () => {
     // --- Identity half: the plan carries the catalogue's executor objects.
-    const identityCatalogue = new GraphNodeCatalogue();
-    identityCatalogue.registerExecutor("math.add", {
+    const identityCatalogue = freshCatalogue();
+    await identityCatalogue.registerExecutor("math.add", {
       execute: (request) => ({
         sum: Number(request.inputs.a) + Number(request.inputs.b),
       }),
     });
-    identityCatalogue.registerExecutor("math.multiply", {
+    await identityCatalogue.registerExecutor("math.multiply", {
       execute: (request) => ({ product: Number(request.inputs.x) * 2 }),
     });
-    const catalogueAddExecutor = identityCatalogue.getExecutor("math.add");
-    const catalogueMultiplyExecutor = identityCatalogue.getExecutor("math.multiply");
+    const catalogueAddExecutor = await identityCatalogue.getExecutor("math.add");
+    const catalogueMultiplyExecutor = await identityCatalogue.getExecutor("math.multiply");
 
     const resolved = await resolveDocument(linearDocument(), identityCatalogue);
-    const plan = new GraphExecutionPlanner().plan(resolved);
+    const plan = await new GraphExecutionPlanner().plan(resolved);
     expect(plan.nodes.find((node) => node.id === "adder")!.executor).toBe(catalogueAddExecutor);
     expect(plan.nodes.find((node) => node.id === "multiplier")!.executor).toBe(catalogueMultiplyExecutor);
 
     // --- No-execute-time-resolution half: during a full engine run the
     // catalogue resolves the executor exactly once per node (stage-2 kind
     // resolution) and the legacy facade `resolve(kind)` is never used.
-    const counting = new NamedTestCountingCatalogue();
-    counting.registerExecutor("math.add", {
+    const counting = freshCatalogue();
+    const executorResolutions = spyOnExecutorResolutions(counting);
+    await counting.registerExecutor("math.add", {
       execute: (request) => ({
         sum: Number(request.inputs.a) + Number(request.inputs.b),
       }),
     });
-    counting.registerExecutor("math.multiply", {
+    await counting.registerExecutor("math.multiply", {
       execute: (request) => ({ product: Number(request.inputs.x) * 2 }),
     });
     const untouchedRegistry = new NamedTestUntouchedRegistry(counting);
-    const engine = new GraphExecutionEngine({ registry: untouchedRegistry });
+    const engine = await bootEngine({ registry: untouchedRegistry });
     const result = await engine.execute(linearDocument(), { a: 2, b: 3 });
 
     expect(result.status).toBe("succeeded");
     expect(result.outputs.result).toBe(10);
-    expect(counting.executorResolutions).toEqual(["math.add", "math.multiply"]);
+    expect(executorResolutions).toEqual(["math.add", "math.multiply"]);
     expect(untouchedRegistry.resolveCalls).toEqual([]);
   });
 
   it("separates parameters from inputs: every executor receives a GraphNodeExecutionRequest with configuration and input data separated (§4.9 sole contract)", async () => {
-    const catalogue = new GraphNodeCatalogue();
+    const catalogue = freshCatalogue();
     const recordedRequests: GraphNodeExecutionRequest[] = [];
 
     catalogue.registerExecutor("sample.request-based", {
@@ -392,7 +401,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
       },
     });
 
-    const { engine } = namedTestEngine(catalogue);
+    const { engine } = await namedTestEngine(catalogue);
 
     const requestDocument: GraphWorkflowDocument = {
       id: "request-wf",
@@ -426,8 +435,8 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("applies bindings: literal bindings feed declared ports and manifest port defaults only fill unprovided inputs", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.sum",
       inputs: [
         { id: "a", defaultValue: 7 },
@@ -440,7 +449,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         }),
       } as never,
     });
-    const { engine } = namedTestEngine(catalogue);
+    const { engine } = await namedTestEngine(catalogue);
 
     // Literal binding feeds the declared port in place of an edge.
     const literalDocument: GraphWorkflowDocument = {
@@ -497,8 +506,8 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("expression bindings evaluate only through the configured CodeSandboxEvaluator", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.echo",
       inputs: [{ id: "expressionPort" }],
       outputs: [{ id: "result" }],
@@ -507,7 +516,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
       } as never,
     });
     const evaluatorCalls: CodeSandboxContext[] = [];
-    const { engine } = namedTestEngine(catalogue, {
+    const { engine } = await namedTestEngine(catalogue, {
       codeSandboxEvaluator: {
         evaluate: async (ctx) => {
           evaluatorCalls.push(ctx);
@@ -545,9 +554,61 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
     expect(evaluated.outputs.out).toBe("EXPR-EVAL($input.a + '!')");
   });
 
+  it("resolves GraphValueTemplate parameters into request.parameters at execution time", async () => {
+    const catalogue = freshCatalogue();
+    const requests: GraphNodeExecutionRequest[] = [];
+    catalogue.registerExecutor("sample.templated", {
+      execute: (request) => {
+        requests.push(request);
+        return { result: request.parameters.level };
+      },
+    } as never);
+    const evaluatorCalls: CodeSandboxContext[] = [];
+    const { engine } = await namedTestEngine(catalogue, {
+      codeSandboxEvaluator: {
+        evaluate: async (ctx) => {
+          evaluatorCalls.push(ctx);
+          return "warn";
+        },
+      },
+    });
+
+    const templatedDocument: GraphWorkflowDocument = {
+      id: "templated-param-wf",
+      name: "templated-param-wf",
+      inputs: [documentPort("x")],
+      outputs: [documentPort("out")],
+      nodes: [
+        documentNode(
+          "templated",
+          "sample.templated",
+          {
+            level: {
+              mode: "expression",
+              expression: "$input.x === 'warn' ? 'warn' : 'info'",
+              language: "javascript",
+            },
+          } as GraphJsonValue as never
+        ),
+      ],
+      edges: [
+        documentEdge("e1", ["workflow", "x"], ["node", "templated", "x"]),
+        documentEdge("e2", ["node", "templated", "result"], ["workflow", "out"]),
+      ],
+    };
+    const result = await engine.execute(templatedDocument, { x: "warn" });
+
+    expect(result.status).toBe("succeeded");
+    expect(evaluatorCalls).toHaveLength(1);
+    expect(evaluatorCalls[0].code).toBe("$input.x === 'warn' ? 'warn' : 'info'");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].parameters).toEqual({ level: "warn" });
+    expect(result.outputs.out).toBe("warn");
+  });
+
   it("expression bindings throw GRAPH_CODE_SANDBOX_NOT_CONFIGURED when the engine has no evaluator configured", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.echo",
       inputs: [{ id: "expressionPort" }],
       outputs: [{ id: "result" }],
@@ -555,7 +616,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         execute: (request) => ({ result: request.inputs.expressionPort }),
       } as never,
     });
-    const { engine, events } = namedTestEngine(catalogue);
+    const { engine, events } = await namedTestEngine(catalogue);
 
     const evaluatedDocument: GraphWorkflowDocument = {
       id: "expression-not-configured-wf",
@@ -592,22 +653,22 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("validates executor outputs against the effective output manifest: unknown outputs and missing required outputs fail the node; allowUnknownOutputs is the only escape", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.strict-sum",
       outputs: [{ id: "sum" }],
       executor: {
         execute: () => ({ sum: 5, weird: true }),
       } as never,
     });
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.required-sum",
       outputs: [{ id: "sum", required: true }, { id: "unit" }],
       executor: {
         execute: () => ({ unit: "u" }),
       } as never,
     });
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.lenient-sum",
       outputs: [{ id: "sum" }],
       policies: { allowUnknownOutputs: true },
@@ -615,7 +676,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         execute: () => ({ sum: 5, weird: true }),
       } as never,
     });
-    const { engine } = namedTestEngine(catalogue);
+    const { engine } = await namedTestEngine(catalogue);
 
     const singleKindDocument = (
       id: string,
@@ -667,9 +728,9 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("disabled node emitDefaults behavior emits every declared output port default and never executes the node", async () => {
-    const catalogue = new GraphNodeCatalogue();
+    const catalogue = freshCatalogue();
     let executorInvocations = 0;
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.emit-sum",
       outputs: [{ id: "sum", defaultValue: 33 }],
       executor: {
@@ -679,7 +740,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         },
       } as never,
     });
-    const { engine, events } = namedTestEngine(catalogue);
+    const { engine, events } = await namedTestEngine(catalogue);
 
     const document: GraphWorkflowDocument = {
       id: "emit-defaults-wf",
@@ -707,9 +768,9 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("disabled node document-settings passThroughFirstInput forwards the first incoming edge value on the first declared output port", async () => {
-    const catalogue = new GraphNodeCatalogue();
+    const catalogue = freshCatalogue();
     let executorInvocations = 0;
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.pass",
       inputs: [{ id: "a" }],
       outputs: [{ id: "echo" }],
@@ -720,7 +781,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         },
       } as never,
     });
-    const { engine, events } = namedTestEngine(catalogue);
+    const { engine, events } = await namedTestEngine(catalogue);
 
     const document: GraphWorkflowDocument = {
       id: "pass-through-wf",
@@ -749,15 +810,15 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("disabled node behavior resolution: instance metadata beats document settings, which beats the skip default", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.emit-sum",
       outputs: [{ id: "sum", defaultValue: 33 }],
       executor: {
         execute: () => ({ sum: "executed" }),
       } as never,
     });
-    const { engine, events } = namedTestEngine(catalogue);
+    const { engine, events } = await namedTestEngine(catalogue);
 
     // Instance metadata `skip` beats document settings `emitDefaults`.
     const overrideDocument: GraphWorkflowDocument = {
@@ -817,19 +878,19 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("nested loop bodies execute through the same validation→resolution→planning pipeline", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    const { engine, events } = namedTestEngine(catalogue);
-    registerBuiltInGraphNodes(catalogue, engine);
+    const catalogue = freshCatalogue();
+    const { engine, events } = await namedTestEngine(catalogue);
+    await registerBuiltInGraphNodes(catalogue);
 
     const bodyDocument: GraphWorkflowDocument = {
       id: "loop-body",
       name: "loop-body",
       inputs: [documentPort("item")],
       outputs: [documentPort("result")],
-      nodes: [documentNode("echo", "core.flow.return", { value: {} })],
+      nodes: [documentNode("echo", "core.flow.delay", { value: {} })],
       edges: [
         documentEdge("b1", ["workflow", "item"], ["node", "echo", "value"]),
-        documentEdge("b2", ["node", "echo", "result"], ["workflow", "result"]),
+        documentEdge("b2", ["node", "echo", "value"], ["workflow", "result"]),
       ],
     };
     const loopDocument: GraphWorkflowDocument = {
@@ -892,13 +953,13 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("routes only the selected switch branch: an unselected branch is skipped and never contributes to workflow outputs (DECAF-50 §4.9)", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    const { engine } = namedTestEngine(catalogue);
-    registerBuiltInGraphNodes(catalogue, engine);
+    const catalogue = freshCatalogue();
+    const { engine } = await namedTestEngine(catalogue);
+    await registerBuiltInGraphNodes(catalogue);
 
     const evenInvocations: unknown[] = [];
     const oddInvocations: unknown[] = [];
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.branch-even",
       inputs: [{ id: "value" }],
       outputs: [{ id: "result" }],
@@ -909,7 +970,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         },
       },
     });
-    registerNamedTestKind(catalogue, {
+    await registerNamedTestKind(catalogue, {
       kind: "sample.branch-odd",
       inputs: [{ id: "value" }],
       outputs: [{ id: "result" }],
@@ -1017,9 +1078,9 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("nested loop bodies are validated recursively and merged issue paths announce the owning loop node", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    const { engine } = namedTestEngine(catalogue);
-    registerBuiltInGraphNodes(catalogue, engine);
+    const catalogue = freshCatalogue();
+    const { engine } = await namedTestEngine(catalogue);
+    await registerBuiltInGraphNodes(catalogue);
     const validator = new GraphWorkflowDocumentValidator({ catalogue });
 
     const invalidBody: GraphWorkflowDocument = {
@@ -1028,8 +1089,8 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
       inputs: [],
       outputs: [],
       nodes: [
-        documentNode("dup", "core.flow.return", { value: {} }),
-        documentNode("dup", "core.flow.return", { value: {} }),
+        documentNode("dup", "core.utility.map", { value: {} }),
+        documentNode("dup", "core.utility.map", { value: {} }),
       ],
       edges: [],
     };
@@ -1073,8 +1134,8 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("capability stage 9 rejects loop configuration on kinds that do not declare the loop capability", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    registerNamedTestKind(catalogue, {
+    const catalogue = freshCatalogue();
+    await registerNamedTestKind(catalogue, {
       kind: "sample.sum",
       inputs: [{ id: "a" }, { id: "b" }],
       outputs: [{ id: "sum" }],
@@ -1084,7 +1145,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
         }),
       } as never,
     });
-    const { engine } = namedTestEngine(catalogue);
+    const { engine } = await namedTestEngine(catalogue);
     const validator = new GraphWorkflowDocumentValidator({ catalogue });
 
     const loopDocument: GraphWorkflowDocument = {
@@ -1131,9 +1192,9 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
   });
 
   it("positive capability conformance: core.loop.* built-in kinds declare the loop capability and accept loop configuration", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    const { engine } = namedTestEngine(catalogue);
-    registerBuiltInGraphNodes(catalogue, engine);
+    const catalogue = freshCatalogue();
+    await namedTestEngine(catalogue);
+    await registerBuiltInGraphNodes(catalogue);
     const validator = new GraphWorkflowDocumentValidator({ catalogue });
 
     for (const kind of [
@@ -1141,7 +1202,7 @@ describe("DECAF-50 §4.19 planner/engine — engine resolution", () => {
       "core.loop.while",
       "core.loop.until",
     ] as const) {
-      expect(catalogue.getManifest(kind).capabilities).toEqual(
+      expect((await catalogue.getManifest(kind)).capabilities).toEqual(
         expect.arrayContaining(["loop"])
       );
     }

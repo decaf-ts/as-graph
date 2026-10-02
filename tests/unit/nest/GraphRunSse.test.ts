@@ -367,8 +367,8 @@ describe("GraphRunSse (§4.19 nest row, SAA-516)", () => {
       ],
       edges: [
         documentEdge("e0", ["workflow", "count"], ["node", "l1", "value"]),
-        documentEdge("e1", ["node", "l1", "logged"], ["node", "l2", "value"]),
-        documentEdge("e2", ["node", "l2", "logged"], ["node", "l3", "value"]),
+        documentEdge("e1", ["node", "l1", "value"], ["node", "l2", "value"]),
+        documentEdge("e2", ["node", "l2", "value"], ["node", "l3", "value"]),
       ],
     };
     const res = await api()

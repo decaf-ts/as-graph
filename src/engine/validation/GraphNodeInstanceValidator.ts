@@ -7,6 +7,7 @@
  * dynamic ports resolved consistently and that binding ids refer to
  * effective ports.
  */
+import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import type { GraphNodeInstance } from "../../shared/graph";
 
 import type { GraphNodeCatalogue } from "../catalog/GraphNodeCatalogue";
@@ -34,12 +35,13 @@ export class GraphNodeInstanceValidator {
   async resolveNodes(
     nodes: GraphNodeInstance[],
     issues: GraphValidationIssue[],
-    resolutionContext?: GraphNodeResolutionContext
+    resolutionContext?: GraphNodeResolutionContext,
+    ...args: MaybeContextualArg<Context>
   ): Promise<Map<string, GraphResolvedNodeInstance>> {
     const resolved = new Map<string, GraphResolvedNodeInstance>();
     for (const [index, node] of nodes.entries()) {
       const path = `nodes[${index}]`;
-      if (!this.catalogue.has(node.kind)) {
+      if (!this.catalogue.has(node.kind, ...args)) {
         issues.push({
           code: "kind.unknown",
           path: `${path}.kind`,
@@ -51,8 +53,13 @@ export class GraphNodeInstanceValidator {
       }
       try {
         const manifest: GraphResolvedNodeManifest =
-          await this.catalogue.resolveManifest(node.kind, node, resolutionContext);
-        const executor = this.catalogue.getExecutor(node.kind);
+          await this.catalogue.resolveManifest(
+            node.kind,
+            node,
+            resolutionContext,
+            ...args
+          );
+        const executor = this.catalogue.getExecutor(node.kind, ...args);
         resolved.set(node.id, { instance: node, manifest, executor });
       } catch (error) {
         issues.push({

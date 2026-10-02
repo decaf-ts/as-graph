@@ -8,6 +8,13 @@
  * ports, parameters, dynamic-port rules, credentials, method declarations)
  * and manifests are served as JSON-safe clones — never class instances.
  */
+import {
+  Service,
+  service,
+  Context,
+  type ContextualArgs,
+  type MaybeContextualArg,
+} from "@decaf-ts/core";
 import type {
   GraphJsonValue,
   GraphNodeManifest,
@@ -206,9 +213,33 @@ function assertValidRegistration(
  * manifests with lenient policies for legacy executor-only registrations
  * (removed at cutover, P7).
  */
-export class GraphNodeCatalogue {
+@service()
+export class GraphNodeCatalogue extends Service {
   private readonly entries = new Map<string, GraphCatalogueEntry>();
   private readonly resolver = new GraphNodeManifestResolver();
+  /**
+   * Fallback context used only when a caller supplies none. Production callers
+   * (engine, validators, controllers, boot factories) always thread the single
+   * run/boot context; direct catalogue use (e.g. boot-time registration) falls
+   * back to this instance-scoped context so the synchronous `logCtx` path always
+   * receives exactly one context.
+   */
+  private readonly fallbackContext = new Context();
+
+  constructor() {
+    super();
+  }
+
+  /**
+   * Normalizes caller arguments to a single `Context`, reusing the caller's when
+   * present and otherwise supplying the catalogue's fallback context.
+   */
+  private withContext(
+    args: MaybeContextualArg<Context>
+  ): ContextualArgs<Context> {
+    const last = args[args.length - 1];
+    return last instanceof Context ? (args as ContextualArgs<Context>) : [this.fallbackContext];
+  }
 
   /**
    * Validates and registers a node kind. Throws
@@ -217,8 +248,15 @@ export class GraphNodeCatalogue {
    */
   register(
     registration: GraphNodeRegistration,
-    options: GraphNodeRegistrationOptions = {}
+    options: GraphNodeRegistrationOptions = {},
+    ...args: MaybeContextualArg<Context>
   ): this {
+    const { log } = this.logCtx(this.withContext(args), "register").for(
+      this.register
+    );
+    log.debug(
+      `Registering graph node kind '${registration?.manifest?.kind ?? "unknown"}'`
+    );
     assertValidRegistration(registration);
     const manifest = registration.manifest;
 
@@ -268,7 +306,15 @@ export class GraphNodeCatalogue {
    * (`allowUndeclaredParameters`/`allowUnknownOutputs`, DECAF-50 §4.18) that
    * are removed at cutover (P7).
    */
-  registerExecutor(kind: string, executor: GraphNodeExecutor): this {
+  registerExecutor(
+    kind: string,
+    executor: GraphNodeExecutor,
+    ...args: MaybeContextualArg<Context>
+  ): this {
+    const { log } = this.logCtx(this.withContext(args), "registerExecutor").for(
+      this.registerExecutor
+    );
+    log.debug(`Registering graph executor for kind '${kind}'`);
     if (typeof kind !== "string" || !kind.trim()) {
       throw new GraphNodeRegistrationError("Graph executor kind is required");
     }
@@ -305,13 +351,16 @@ export class GraphNodeCatalogue {
   }
 
   /** Removes a kind registration. */
-  unregister(kind: string): this {
+  unregister(kind: string, ...args: MaybeContextualArg<Context>): this {
+    const { log } = this.logCtx(this.withContext(args), "unregister").for(this.unregister);
+    log.debug(`Unregistering graph node kind '${kind}'`);
     this.entries.delete(kind);
     return this;
   }
 
   /** Whether a kind is registered. */
-  has(kind: string): boolean {
+  has(kind: string, ...args: MaybeContextualArg<Context>): boolean {
+    this.logCtx(this.withContext(args), "has").for(this.has);
     return this.entries.has(kind);
   }
 
@@ -326,35 +375,57 @@ export class GraphNodeCatalogue {
   }
 
   /** Returns a JSON-safe clone of the kind's registered manifest. */
-  getManifest(kind: string): GraphNodeManifest {
+  getManifest(kind: string, ...args: MaybeContextualArg<Context>): GraphNodeManifest {
+    this.logCtx(this.withContext(args), "getManifest").for(this.getManifest);
     return cloneGraphJsonValue(
       this.entry(kind).registration.manifest as unknown as GraphJsonValue
     ) as unknown as GraphNodeManifest;
   }
 
   /** Returns the kind's registered executor. */
-  getExecutor(kind: string): GraphNodeExecutor {
+  getExecutor(kind: string, ...args: MaybeContextualArg<Context>): GraphNodeExecutor {
+    this.logCtx(this.withContext(args), "getExecutor").for(this.getExecutor);
     return this.entry(kind).registration.executor;
   }
 
   /** Returns the declared method manifest for a kind, if declared. */
-  getMethodDeclaration(kind: string, method: string): GraphNodeMethodManifest {
+  getMethodDeclaration(
+    kind: string,
+    method: string,
+    ...args: MaybeContextualArg<Context>
+  ): GraphNodeMethodManifest {
+    this.logCtx(this.withContext(args), "getMethodDeclaration").for(this.getMethodDeclaration);
     return this.entry(kind).methods.getDeclaration(method);
   }
 
   /** Returns the registered method implementation for a kind. */
-  getMethod(kind: string, method: string): GraphNodeMethod {
+  getMethod(
+    kind: string,
+    method: string,
+    ...args: MaybeContextualArg<Context>
+  ): GraphNodeMethod {
+    this.logCtx(this.withContext(args), "getMethod").for(this.getMethod);
     this.entry(kind).methods.getDeclaration(method);
     return this.entry(kind).methods.get(method);
   }
 
   /** Lists all method declarations registered for a kind. */
-  listMethodDeclarations(kind: string): GraphNodeMethodManifest[] {
+  listMethodDeclarations(
+    kind: string,
+    ...args: MaybeContextualArg<Context>
+  ): GraphNodeMethodManifest[] {
+    this.logCtx(this.withContext(args), "listMethodDeclarations").for(
+      this.listMethodDeclarations
+    );
     return this.entry(kind).methods.list();
   }
 
   /** Lists registered manifests, optionally filtered by kind and display category. */
-  listManifests(context?: GraphCatalogueQueryContext): GraphNodeManifest[] {
+  listManifests(
+    context?: GraphCatalogueQueryContext,
+    ...args: MaybeContextualArg<Context>
+  ): GraphNodeManifest[] {
+    this.logCtx(this.withContext(args), "listManifests").for(this.listManifests);
     const kinds = [...this.entries.keys()].sort();
     const categoryFilter = context?.categories?.length
       ? new Set(context.categories)
@@ -363,7 +434,7 @@ export class GraphNodeCatalogue {
     const manifests: GraphNodeManifest[] = [];
     for (const kind of kinds) {
       if (kindFilter && !kindFilter.has(kind)) continue;
-      const manifest = this.getManifest(kind);
+      const manifest = this.getManifest(kind, ...args);
       if (categoryFilter && !categoryFilter.has(manifest.display.category ?? "")) {
         continue;
       }
@@ -373,7 +444,8 @@ export class GraphNodeCatalogue {
   }
 
   /** Lists all registered kinds, sorted. */
-  listKinds(): string[] {
+  listKinds(...args: MaybeContextualArg<Context>): string[] {
+    this.logCtx(this.withContext(args), "listKinds").for(this.listKinds);
     return [...this.entries.keys()].sort();
   }
 
@@ -390,8 +462,10 @@ export class GraphNodeCatalogue {
   async resolveManifest(
     kind: string,
     instance: GraphNodeInstance,
-    context?: GraphNodeResolutionContext
+    context?: GraphNodeResolutionContext,
+    ...args: MaybeContextualArg<Context>
   ): Promise<GraphResolvedNodeManifest> {
+    this.logCtx(this.withContext(args), "resolveManifest").for(this.resolveManifest);
     const entry = this.entry(kind);
     return this.resolver.resolve(
       kind,

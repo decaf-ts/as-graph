@@ -50,6 +50,12 @@ import ivm from "isolated-vm";
 import * as acorn from "acorn";
 import * as walk from "acorn-walk";
 import * as ts from "typescript";
+import {
+  ClientBasedService,
+  type Context,
+  type ContextualArgs,
+  type MaybeContextualArg,
+} from "@decaf-ts/core";
 import type {
   CodeSandboxEvaluator,
   CodeSandboxContext,
@@ -295,23 +301,86 @@ function hasReturnStatement(code: string): boolean {
  * When the code has no `return` statement it is treated as a single expression
  * and wrapped in `return (...)`.
  */
-export class IsolatedVmCodeSandboxEvaluator implements CodeSandboxEvaluator {
-  private readonly defaultTimeoutMs: number;
-  private readonly defaultMemoryMb: number;
+export interface IsolatedVmCodeSandboxEvaluatorConfig {
+  /** Default execution timeout in milliseconds. */
+  timeoutMs?: number;
+  /** Default isolate memory limit in MB. */
+  memoryMb?: number;
+}
 
-  /**
-   * @param defaultTimeoutMs - Default execution timeout in milliseconds.
-   * @param defaultMemoryMb - Default isolate memory limit in MB.
-   */
-  constructor(
-    defaultTimeoutMs: number = DEFAULT_TIMEOUT_MS,
-    defaultMemoryMb: number = DEFAULT_MEMORY_MB
-  ) {
-    this.defaultTimeoutMs = defaultTimeoutMs;
-    this.defaultMemoryMb = defaultMemoryMb;
+/**
+ * `isolated-vm`-backed {@link CodeSandboxEvaluator}.
+ *
+ * Runs user code in a separate V8 isolate with its own heap, transpiling
+ * TypeScript, statically validating the AST, and executing under a timeout and
+ * memory limit. See the module doc for the full pipeline and restrictions.
+ *
+ * @example
+ * ```ts
+ * const evaluator = new IsolatedVmCodeSandboxEvaluator();
+ * await evaluator.initialize({ timeoutMs: 5000, memoryMb: 128 });
+ * const result = await evaluator.evaluate({
+ *   code: "return $input.a + $input.b;",
+ *   input: { a: 2, b: 3 },
+ * });
+ * // result === 5
+ * ```
+ */
+export class IsolatedVmCodeSandboxEvaluator
+  extends ClientBasedService<
+    typeof ivm,
+    IsolatedVmCodeSandboxEvaluatorConfig
+  >
+  implements CodeSandboxEvaluator
+{
+  constructor() {
+    super();
   }
 
-  async evaluate(ctx: CodeSandboxContext): Promise<unknown> {
+  /**
+   * Resolves the evaluator's config and `isolated-vm` client.
+   *
+   * @param args - An optional config, optionally followed by a decaf `Context`.
+   * @returns The resolved config and the `isolated-vm` module.
+   */
+  override async initialize(
+    ...args: ContextualArgs<any>
+  ): Promise<{
+    config: IsolatedVmCodeSandboxEvaluatorConfig;
+    client: typeof ivm;
+  }> {
+    const config = (args[0] ?? {}) as IsolatedVmCodeSandboxEvaluatorConfig;
+    const resolved = config && typeof config === "object" ? config : {};
+    this._config = resolved;
+    this._client = ivm;
+    return { config: resolved, client: ivm };
+  }
+
+  private get defaultTimeoutMs(): number {
+    return this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  private get defaultMemoryMb(): number {
+    return this.config.memoryMb ?? DEFAULT_MEMORY_MB;
+  }
+
+  /**
+   * Runs the sandbox pipeline for one evaluation: transpiles TypeScript,
+   * statically validates the code against the import/require restrictions,
+   * builds a fresh V8 isolate with the `$input`/`$vars`/`$item`/`$index`/
+   * `$node` context variables, and executes under the configured timeout and
+   * memory limit.
+   *
+   * @param {CodeSandboxContext} ctx - Sandbox context carrying code, language, inputs, and limits.
+   * @param args - An optional decaf `Context` forwarded to `logCtx`.
+   * @return {Promise<unknown>} The evaluated code's return value.
+   * @throws {GraphExecutionError} When the code is empty or fails static validation, or when execution exceeds the timeout.
+   */
+  async evaluate(
+    ctx: CodeSandboxContext,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<unknown> {
+    (await this.logCtx(args, "evaluate", true)).for(this.evaluate);
     const code = ctx.code;
     if (!code || typeof code !== "string" || code.trim().length === 0) {
       throw new GraphExecutionError(

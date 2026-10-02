@@ -188,6 +188,7 @@ export function resolveGraphNodeManifest(
   if (manifest.capabilities?.length) resolved.capabilities = manifest.capabilities;
   if (manifest.policies) resolved.policies = manifest.policies;
   if (manifest.metadata) resolved.metadata = manifest.metadata;
+  if (manifest.namespaces?.length) resolved.namespaces = manifest.namespaces;
   return cloneGraphJsonValue(
     resolved as unknown as GraphJsonValue
   ) as unknown as GraphResolvedNodeManifest;
@@ -200,6 +201,21 @@ export function resolveGraphNodeManifest(
  * {@link resolveGraphNodeManifest}.
  */
 export class GraphNodeManifestResolver {
+  /**
+   * Resolves the effective manifest for a node kind. Prefers the
+   * registration's `resolveManifest` provider (validated for shape and JSON
+   * safety, with the published manifest's namespaces preserved) and falls
+   * back to static-plus-dynamic resolution via
+   * {@link resolveGraphNodeManifest}.
+   *
+   * @param {string} kind - Registered node kind the manifest belongs to.
+   * @param {GraphNodeManifest} manifest - Published static manifest for the kind.
+   * @param {GraphResolvedManifestProvider | undefined} provider - Optional per-registration dynamic manifest provider.
+   * @param {GraphNodeInstance} instance - Node instance whose parameters drive dynamic port resolution.
+   * @param {GraphNodeResolutionContext} [context] - Optional resolution context forwarded to the provider.
+   * @return {Promise<GraphResolvedNodeManifest>} The effective resolved manifest.
+   * @throws {GraphNodeRegistrationError} When the provider returns a non-conforming or non-JSON-safe manifest.
+   */
   async resolve(
     kind: string,
     manifest: GraphNodeManifest,
@@ -219,9 +235,15 @@ export class GraphNodeManifestResolver {
           `resolveManifest provider for kind '${kind}' returned a non-JSON-safe resolved manifest`
         );
       }
-      return cloneGraphJsonValue(
+      const cloned = cloneGraphJsonValue(
         resolved as unknown as GraphJsonValue
       ) as unknown as GraphResolvedNodeManifest;
+      // The provider may build a manifest without the auth requirement; the
+      // published manifest remains authoritative for the node's namespaces.
+      if (!cloned.namespaces?.length && manifest.namespaces?.length) {
+        cloned.namespaces = manifest.namespaces.slice();
+      }
+      return cloned;
     }
     return resolveGraphNodeManifest(manifest, instance.parameters ?? {});
   }

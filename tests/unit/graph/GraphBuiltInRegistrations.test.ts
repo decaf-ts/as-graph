@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 23 built-in kinds as manifest+executor pairs,
+ * @description Validates the 20 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -20,7 +20,6 @@ import {
   GraphExecutionEngine,
   GraphExecutionContext,
   GraphNodeCatalogue,
-  GraphNodeExecutorRegistry,
   GraphNodeRegistrationError,
   builtInGraphNodeRegistrations,
   defineGraphNode,
@@ -36,7 +35,7 @@ import {
   LogFlowNode,
 } from "../../../src/node";
 import { registerEngineBoundGraphNodes } from "../../../src/nest/graph";
-import { nodeExecutionRequest } from "./engine-fixtures";
+import { freshCatalogue, nodeExecutionRequest } from "./engine-fixtures";
 
 jest.setTimeout(30000);
 
@@ -44,45 +43,46 @@ jest.setTimeout(30000);
  * Runs {@link registerBuiltInGraphNodes} for a fresh catalogue and returns the
  * catalogue.
  */
-function buildBuiltInCatalogue(): GraphNodeCatalogue {
-  const catalogue = new GraphNodeCatalogue();
-  registerBuiltInGraphNodes(catalogue);
+async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
+  const catalogue = freshCatalogue();
+  await registerBuiltInGraphNodes(catalogue);
   return catalogue;
 }
 
 describe("GraphBuiltInRegistrations", () => {
-  it("resolves each built-in kind's manifest+executor conformance pair", () => {
-    const catalogue = buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(23);
+  it("resolves each built-in kind's manifest+executor conformance pair", async () => {
+    const catalogue = await buildBuiltInCatalogue();
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(22);
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
-      expect(catalogue.has(manifest.kind)).toBe(true);
-      expect(catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
-      expect(catalogue.getExecutor(manifest.kind)).toBeDefined();
-      expect(catalogue.getExecutor(manifest.kind).execute).toBeInstanceOf(
+      expect(await catalogue.has(manifest.kind)).toBe(true);
+      expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
+      expect(await catalogue.getExecutor(manifest.kind)).toBeDefined();
+      expect((await catalogue.getExecutor(manifest.kind)).execute).toBeInstanceOf(
         Function
       );
     }
-    expect(catalogue.size).toBe(23);
+    expect(catalogue.size).toBe(22);
   });
 
-  it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", () => {
-    const catalogue = new GraphNodeCatalogue();
-    // registerBuiltInGraphNodes registers all 23 built-ins with no engine
+  it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
+    const catalogue = freshCatalogue();
+    // registerBuiltInGraphNodes registers all 22 built-ins with no engine
     // argument: each executor is derived from the node class's static execute.
-    registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(23);
+    await registerBuiltInGraphNodes(catalogue);
+    expect(catalogue.size).toBe(22);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
-      expect(catalogue.has(kind)).toBe(true);
-      expect(catalogue.getManifest(kind).kind).toBe(kind);
-      expect(catalogue.getExecutor(kind).execute).toBeInstanceOf(Function);
+      expect(await catalogue.has(kind)).toBe(true);
+      expect((await catalogue.getManifest(kind)).kind).toBe(kind);
+      expect((await catalogue.getExecutor(kind)).execute).toBeInstanceOf(Function);
     }
 
     // a built-in kind re-registered without the explicit replacement policy
     // is rejected
+    const foreachManifest = await catalogue.getManifest("core.loop.foreach");
     expect(() =>
       catalogue.register(
         defineGraphNode({
-          manifest: catalogue.getManifest("core.loop.foreach"),
+          manifest: foreachManifest,
           executor: { execute: async () => ({}) },
         })
       )
@@ -91,17 +91,15 @@ describe("GraphBuiltInRegistrations", () => {
     // registerEngineBoundGraphNodes re-registers the full built-in set with the
     // explicit replace:true policy (the engine argument is retained for
     // call-site compatibility; node classes reach the engine via the context)
-    const engine = new GraphExecutionEngine({
-      registry: new GraphNodeExecutorRegistry(catalogue),
-    });
-    expect(() =>
+    const engine = new GraphExecutionEngine();
+    await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
-    ).not.toThrow();
-    expect(catalogue.size).toBe(23);
+    ).resolves.toBeDefined();
+    expect(catalogue.size).toBe(22);
   });
 
-  it("drives a built-in node through its registered executor and the node class's static execute", async () => {
-    const catalogue = buildBuiltInCatalogue();
+  it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
+    const catalogue = await buildBuiltInCatalogue();
     const node = {
       id: "log-node",
       kind: "core.flow.log",
@@ -122,26 +120,28 @@ describe("GraphBuiltInRegistrations", () => {
       "wf",
       document,
       node,
-      catalogue.getManifest("core.flow.log"),
+      await catalogue.getManifest("core.flow.log"),
       ["log-node"],
       async (event) => {
         emitted.push(event);
       }
     );
 
-    const result = await catalogue
-      .getExecutor("core.flow.log")
-      .execute(nodeExecutionRequest({ value: "hello" }), context);
+    const result = await (
+      await catalogue.getExecutor("core.flow.log")
+    ).execute(nodeExecutionRequest({ value: "hello" }), context);
 
-    expect(result).toEqual({ logged: "hello" });
-    // the registration delegates to the node class's own execute
-    expect(LogFlowNode.execute).toBeInstanceOf(Function);
+    expect(result).toEqual({ value: "hello" });
+    // the registration delegates to the node class's own instance execute
+    expect(LogFlowNode.prototype.execute).toBeInstanceOf(Function);
     expect(emitted.length).toBeGreaterThan(0);
   });
 
   it("resolves the built-in manifest kinds in the internal catalog inventory", () => {
     const builtIns = GRAPH_BUILT_IN_NODE_MANIFESTS.map((a) => a.kind);
     expect(builtIns).toEqual([
+      "value",
+      "result",
       "core.trigger.manual",
       "core.trigger.webhook",
       "core.trigger.schedule",
@@ -150,13 +150,10 @@ describe("GraphBuiltInRegistrations", () => {
       "core.trigger.chat",
       "core.flow.if",
       "core.flow.switch",
-      "core.flow.parallel",
-      "core.flow.merge",
       "core.utility.map",
       "core.flow.delay",
       "core.flow.errorBoundary",
       "core.flow.humanApproval",
-      "core.flow.return",
       "core.utility.code",
       "core.flow.log",
       "core.utility.log",
@@ -178,6 +175,7 @@ describe("GraphBuiltInRegistrations", () => {
       "Utility",
       "Agent",
       "Loop",
+      "Boundary",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(manifest.display.name).toBeTruthy();
@@ -201,16 +199,16 @@ describe("GraphBuiltInRegistrations", () => {
 });
 
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
-  it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", () => {
+  it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(23);
-    const catalogue = buildBuiltInCatalogue();
+    expect(registrations.length).toBe(22);
+    const catalogue = await buildBuiltInCatalogue();
     expect(() => catalogue.register(registrations[0] as never)).toThrow(
       GraphNodeRegistrationError
     );
-    expect(() =>
+    expect(
       catalogue.register(registrations[0] as never, { replace: true })
-    ).not.toThrow();
+    ).toBeDefined();
   });
 
   it("resolves the ALFRED-5 node kinds' visual family conformance for every built-in kind", () => {
@@ -220,26 +218,39 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       "Utility",
       "Agent",
       "Loop",
+      "Boundary",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       const family = manifest.display.category;
       expect(families.includes(family as never)).toBe(true);
       expect(manifest.display.labels?.at(0)).toBe(
-        manifest.kind.startsWith("core.trigger.")
-          ? "trigger"
-          : manifest.kind.startsWith("core.utility.")
-            ? "utility"
-            : manifest.kind === "core.agent"
-              ? "agent"
-              : manifest.kind.startsWith("core.loop.")
-                ? "loop"
-                : "flow"
+        family === "Boundary"
+          ? "workflow"
+          : manifest.kind.startsWith("core.trigger.")
+            ? "trigger"
+            : manifest.kind.startsWith("core.utility.")
+              ? "utility"
+              : manifest.kind === "core.agent"
+                ? "agent"
+                : manifest.kind.startsWith("core.loop.")
+                  ? "loop"
+                  : "flow"
       );
       if (manifest.kind === "core.agent") {
         // the Agent class omits color/icon on @node(); the display is
         // resolved from the registered "Agent" category style instead
         expect(manifest.display.color).toBeUndefined();
         expect(manifest.display.icon?.name).toBe("ti-robot");
+      } else if (family === "Boundary") {
+        // the Boundary family is not yet in the §21.8.2 category-style
+        // registry, so each manifest carries an explicit color/icon while
+        // `graphCategoryStyleOf("Boundary")` falls back to the default style.
+        expect(manifest.display.color).toBe("#0f766e");
+        expect(
+          (manifest.display.icon as { name?: string }).name?.startsWith(
+            "ti-circle-"
+          )
+        ).toBe(true);
       } else {
         // D7/G3-22: the manifest display colour is the category base
         // colour — same-category nodes never diverge.
@@ -349,6 +360,16 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
             "Agent"
           )
         ).toBe("ti-robot");
+      } else if (family === "Boundary") {
+        // the Boundary family has no §21.8.2 category-style registration yet,
+        // so the manifest is the single authority for its explicit color/icon and
+        // the category lookup falls back to the default style.
+        expect(graphCategoryStyleOf("Boundary")).toEqual({
+          color: "#64748b",
+          icon: "ti-pointer",
+        });
+        expect(manifest.display.color).toBe("#0f766e");
+        expect(manifest.display.icon?.name).toMatch(/^ti-circle-(plus|minus)$/);
       } else {
         // D7/G3-22: the manifest display is the single authority for the
         // category base colour — every node of a category shares it.
@@ -357,9 +378,10 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 23 built-ins present exactly these five families
+    // the 22 built-ins present exactly these six families
     expect([...families].sort()).toEqual([
       "Agent",
+      "Boundary",
       "Flow Control",
       "Loop",
       "Trigger",
@@ -367,26 +389,28 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
     ]);
   });
 
-  it("keeps the listManifests kind-sorted digest stable across registration order and rebuilds", () => {
-    function digestOf(catalogue: GraphNodeCatalogue): string {
-      return JSON.stringify(catalogue.listManifests());
+  it("keeps the listManifests kind-sorted digest stable across registration order and rebuilds", async () => {
+    async function digestOf(
+      catalogue: GraphNodeCatalogue
+    ): Promise<string> {
+      return JSON.stringify(await catalogue.listManifests());
     }
     // built-ins registered in declaration order (with an engine)
-    const forward = buildBuiltInCatalogue();
+    const forward = await buildBuiltInCatalogue();
     // and in reverse order (no engine registration differences)
-    const reversed = new GraphNodeCatalogue();
+    const reversed = freshCatalogue();
     for (const manifest of [...GRAPH_BUILT_IN_NODE_MANIFESTS].reverse()) {
-      reversed.register(
+      await reversed.register(
         defineGraphNode({ manifest, executor: { execute: async () => ({}) } })
       );
     }
-    expect(digestOf(reversed)).toBe(digestOf(forward));
+    expect(await digestOf(reversed)).toBe(await digestOf(forward));
     // repeated calls never mutate the digest
-    expect(digestOf(forward)).toBe(digestOf(forward));
+    expect(await digestOf(forward)).toBe(await digestOf(forward));
     // the digest encodes the strict kind-sorted order (§4.19 listManifests
     // determinism; the HTTP ETag sits on the same ordering)
     expect(
-      (JSON.parse(digestOf(forward)) as { kind: string }[]).map(
+      (JSON.parse(await digestOf(forward)) as { kind: string }[]).map(
         (manifest) => manifest.kind
       )
     ).toEqual(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).sort());

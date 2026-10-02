@@ -30,10 +30,8 @@ import type { GraphWorkflowDefinition } from "../../../src/shared/graph";
 
 import { type GraphExecutionValues, GraphRunService } from "../../../src";
 
-import {
-  GraphExecutionModule,
-  GraphWorkflowService,
-} from "../../../src/nest/graph";
+import { GraphExecutionModule } from "../../../src/nest/graph";
+import { GraphWorkflowService } from "../../../src";
 import { linearDocument } from "../graph/engine-fixtures";
 import { TestRequestContextModule } from "./graphRunTestSupport";
 

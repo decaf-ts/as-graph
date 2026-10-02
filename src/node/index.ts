@@ -2,67 +2,64 @@
  * @module as-graph/nodes
  * @summary Shared node kind declarations (DECAF-32 §22.2, DECAF-50 Phase A).
  * @description Canonical `@node`-decorated classes for the ALFRED-5 node kind
- * taxonomy, laid out one node per file under `nodes/<category>/<node>.ts`:
- * triggers (§22.2.1), flow-control and utility nodes (§22.2.2–22.2.3), the
- * Agent node (§21.3), the three loop kinds (`core.loop.foreach/while/until`,
- * §5.9), and the workflow input-value boundary node. Shared non-node support
- * (the base class and manifests) lives in sibling files under the same tree;
- * category styles remain in `@decaf-ts/ui-decorators` (`graph/category-styles`).
- * Consumers (for-angular, ALFRED, etc.) import these declarations
- * to populate node palettes, registries, and reference snapshots.
+ * taxonomy, laid out one node per folder under
+ * `node/<category>/<sub>/<node>/node.ts`: triggers (§22.2.1), flow-control and
+ * utility nodes (§22.2.2–22.2.3), the Agent node (§21.3), the three loop kinds
+ * (`core.loop.foreach/while/until`, §5.9), and the workflow input/output value
+ * boundary nodes. Shared non-node support (the base class and manifests) lives in
+ * sibling files under the same tree; category styles remain in
+ * `@decaf-ts/ui-decorators` (`graph/category-styles`). Consumers
+ * (for-angular, ALFRED, etc.) import these declarations to populate node
+ * palettes, registries, and reference snapshots.
  */
 export * from "./base";
-export * from "./flow-control/break";
-export * from "./flow-control/error-boundary";
-export * from "./flow-control/human-approval";
-export * from "./flow-control/if";
-export * from "./flow-control/parallel";
-export * from "./flow-control/switch";
-export * from "./utility/code";
-export * from "./utility/delay";
-export * from "./utility/log";
-export * from "./utility/map";
-export * from "./utility/merge";
-export * from "./utility/return";
-export * from "./utility/utility-log";
-export * from "./triggers/chat";
-export * from "./triggers/event";
-export * from "./triggers/form";
-export * from "./triggers/manual";
-export * from "./triggers/schedule";
-export * from "./triggers/webhook";
-export * from "./agents/agent";
-export * from "./loops/foreach";
-export * from "./loops/until";
-export * from "./loops/while";
-import { AgentNode } from "./agents/agent";
-export * from "./boundary/input-value";
+export * from "./flow/break/node";
+export * from "./flow/error-boundary/node";
+export * from "./flow/human-approval/node";
+export * from "./flow/if/node";
+export * from "./flow/switch/node";
+export * from "./utility/code/node";
+export * from "./utility/delay/node";
+export * from "./utility/log/node";
+export * from "./utility/map/node";
+export * from "./utility/utility-log/node";
+export * from "./triggers/chat/node";
+export * from "./triggers/event/node";
+export * from "./triggers/form/node";
+export * from "./triggers/manual/node";
+export * from "./triggers/schedule/node";
+export * from "./triggers/webhook/node";
+export * from "./agents/agent/node";
+export * from "./flow/loop/foreach/node";
+export * from "./flow/loop/until/node";
+export * from "./flow/loop/while/node";
+export * from "./boundary/input/node";
+export * from "./boundary/output/node";
 export * from "./manifests";
 import type { GraphNodeClass } from "./base";
 
-import { BreakFlowNode } from "./flow-control/break";
-import { ErrorBoundaryFlowNode } from "./flow-control/error-boundary";
-import { HumanApprovalFlowNode } from "./flow-control/human-approval";
-import { IfFlowNode } from "./flow-control/if";
-import { ParallelFlowNode } from "./flow-control/parallel";
-import { SwitchFlowNode } from "./flow-control/switch";
-import { CodeNode } from "./utility/code";
-import { DelayFlowNode } from "./utility/delay";
-import { LogFlowNode } from "./utility/log";
-import { MapNode } from "./utility/map";
-import { MergeFlowNode } from "./utility/merge";
-import { ReturnFlowNode } from "./utility/return";
-import { UtilityLogNode } from "./utility/utility-log";
-import { ChatTriggerNode } from "./triggers/chat";
-import { EventTriggerNode } from "./triggers/event";
-import { FormTriggerNode } from "./triggers/form";
-import { ManualTriggerNode } from "./triggers/manual";
-import { ScheduleTriggerNode } from "./triggers/schedule";
-import { WebhookTriggerNode } from "./triggers/webhook";
-import { GraphForeachLoopNode } from "./loops/foreach";
-import { GraphUntilLoopNode } from "./loops/until";
-import { GraphWhileLoopNode } from "./loops/while";
-import { GraphInputValueNode } from "./boundary/input-value";
+import { AgentNode } from "./agents/agent/node";
+import { BreakFlowNode } from "./flow/break/node";
+import { ErrorBoundaryFlowNode } from "./flow/error-boundary/node";
+import { HumanApprovalFlowNode } from "./flow/human-approval/node";
+import { IfFlowNode } from "./flow/if/node";
+import { SwitchFlowNode } from "./flow/switch/node";
+import { CodeNode } from "./utility/code/node";
+import { DelayFlowNode } from "./utility/delay/node";
+import { LogFlowNode } from "./utility/log/node";
+import { MapNode } from "./utility/map/node";
+import { UtilityLogNode } from "./utility/utility-log/node";
+import { ChatTriggerNode } from "./triggers/chat/node";
+import { EventTriggerNode } from "./triggers/event/node";
+import { FormTriggerNode } from "./triggers/form/node";
+import { ManualTriggerNode } from "./triggers/manual/node";
+import { ScheduleTriggerNode } from "./triggers/schedule/node";
+import { WebhookTriggerNode } from "./triggers/webhook/node";
+import { GraphForeachLoopNode } from "./flow/loop/foreach/node";
+import { GraphUntilLoopNode } from "./flow/loop/until/node";
+import { GraphWhileLoopNode } from "./flow/loop/while/node";
+import { GraphInputValueNode } from "./boundary/input/node";
+import { GraphOutputValueNode } from "./boundary/output/node";
 
 /**
  * All built-in trigger node constructors.
@@ -83,12 +80,9 @@ export const GRAPH_TRIGGER_NODES = [
 export const GRAPH_FLOW_CONTROL_NODES = [
   IfFlowNode,
   SwitchFlowNode,
-  ParallelFlowNode,
-  MergeFlowNode,
   DelayFlowNode,
   ErrorBoundaryFlowNode,
   HumanApprovalFlowNode,
-  ReturnFlowNode,
   LogFlowNode,
   BreakFlowNode,
 ] as const;
@@ -116,7 +110,10 @@ export const GRAPH_LOOP_NODES = [
 /**
  * All built-in boundary node constructors.
  */
-export const GRAPH_BOUNDARY_NODES = [GraphInputValueNode] as const;
+export const GRAPH_BOUNDARY_NODES = [
+  GraphInputValueNode,
+  GraphOutputValueNode,
+] as const;
 
 /**
  * Kind→class map for every built-in node kind the backend executes
@@ -125,6 +122,8 @@ export const GRAPH_BOUNDARY_NODES = [GraphInputValueNode] as const;
  * built-in node behaviour.
  */
 export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass> = {
+  value: GraphInputValueNode,
+  result: GraphOutputValueNode,
   "core.trigger.manual": ManualTriggerNode,
   "core.trigger.webhook": WebhookTriggerNode,
   "core.trigger.schedule": ScheduleTriggerNode,
@@ -133,13 +132,10 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.trigger.chat": ChatTriggerNode,
   "core.flow.if": IfFlowNode,
   "core.flow.switch": SwitchFlowNode,
-  "core.flow.parallel": ParallelFlowNode,
-  "core.flow.merge": MergeFlowNode,
   "core.utility.map": MapNode,
   "core.flow.delay": DelayFlowNode,
   "core.flow.errorBoundary": ErrorBoundaryFlowNode,
   "core.flow.humanApproval": HumanApprovalFlowNode,
-  "core.flow.return": ReturnFlowNode,
   "core.utility.code": CodeNode,
   "core.flow.log": LogFlowNode,
   "core.utility.log": UtilityLogNode,

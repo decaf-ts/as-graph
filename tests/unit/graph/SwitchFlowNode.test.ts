@@ -15,7 +15,11 @@ import type {
 } from "../../../src/shared/graph";
 import type { SwitchNodeMetadata } from "../../../src/shared/graph";
 import type { GraphResolvedNodeManifest } from "../../../src/shared/graph";
-import { nodeExecutionRequest } from "./engine-fixtures";
+import {
+  bootCodeSandboxEvaluator,
+  nodeExecutionRequest,
+  nodeExecutor,
+} from "./engine-fixtures";
 
 /**
  * Minimal engine facade exposing the `codeSandboxEvaluator` the Switch node
@@ -29,8 +33,9 @@ function engineWith(
 
 /**
  * Builds a minimal {@link GraphExecutionContext} for a Switch node whose
- * instance metadata carries the given {@link SwitchNodeMetadata} under the
- * `switch` key.
+ * instance `parameters` carry the given {@link SwitchNodeMetadata} (the
+ * decorated-property surface the node hydrates `this.cases`/`this.hasDefault`/
+ * `this.defaultPort` from).
  */
 function buildContext(
   switchMeta: SwitchNodeMetadata,
@@ -40,8 +45,7 @@ function buildContext(
   const node: GraphNodeInstance = {
     id: "SwitchNode",
     kind: "core.flow.switch",
-    parameters: {},
-    metadata: { switch: switchMeta } as never,
+    parameters: { ...switchMeta } as never,
   };
   const document: GraphWorkflowDocument = {
     id: "wf",
@@ -74,7 +78,7 @@ function buildContext(
 
 describe("SwitchFlowNode.execute", () => {
   describe("ConditionExpression (graphical mode)", () => {
-    const executor = SwitchFlowNode;
+    const executor = nodeExecutor(SwitchFlowNode);
 
     it("routes to the first matching case output port", async () => {
       const meta: SwitchNodeMetadata = {
@@ -215,9 +219,14 @@ describe("SwitchFlowNode.execute", () => {
   });
 
   describe("CodeCondition (code mode)", () => {
-    const evaluator = new IsolatedVmCodeSandboxEvaluator();
-    const engine = engineWith(evaluator);
-    const executor = SwitchFlowNode;
+    let evaluator: IsolatedVmCodeSandboxEvaluator;
+    let engine: GraphExecutionEngine;
+    const executor = nodeExecutor(SwitchFlowNode);
+
+    beforeAll(async () => {
+      evaluator = await bootCodeSandboxEvaluator();
+      engine = engineWith(evaluator);
+    });
 
     it("evaluates a code condition and routes on true", async () => {
       const meta: SwitchNodeMetadata = {
@@ -300,7 +309,7 @@ describe("SwitchFlowNode.execute", () => {
 
   describe("without a CodeSandboxEvaluator", () => {
     it("throws GRAPH_CODE_SANDBOX_NOT_CONFIGURED for code conditions", async () => {
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const meta: SwitchNodeMetadata = {
         cases: [
           {
@@ -322,7 +331,7 @@ describe("SwitchFlowNode.execute", () => {
     });
 
     it("throws when engine is undefined", async () => {
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const meta: SwitchNodeMetadata = {
         cases: [
           {
@@ -343,7 +352,7 @@ describe("SwitchFlowNode.execute", () => {
 
   describe("unknown condition type", () => {
     it("throws GraphExecutionError", async () => {
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const meta: SwitchNodeMetadata = {
         cases: [
           {
@@ -367,14 +376,14 @@ describe("SwitchFlowNode.execute", () => {
 
   describe("empty / missing metadata", () => {
     it("routes to default when there are no cases", async () => {
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const ctx = buildContext({ cases: [], defaultPort: "default", hasDefault: true });
       const result = await executor.execute(nodeExecutionRequest({ value: 42 }), ctx);
       expect(result).toEqual({ default: 42 });
     });
 
     it("throws GRAPH_SWITCH_NO_MATCH when no cases and hasDefault is false", async () => {
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const ctx = buildContext({
         cases: [],
         defaultPort: "default",
@@ -391,7 +400,7 @@ describe("SwitchFlowNode.execute", () => {
       const custom: CodeSandboxEvaluator = {
         evaluate: (ctx) => `code-result:${ctx.code}`,
       };
-      const executor = SwitchFlowNode;
+      const executor = nodeExecutor(SwitchFlowNode);
       const meta: SwitchNodeMetadata = {
         cases: [
           {
@@ -411,7 +420,7 @@ describe("SwitchFlowNode.execute", () => {
   });
 
   describe("UI-authored switch documents (DECAF-50 §4.26 R4-4)", () => {
-    const executor = SwitchFlowNode;
+    const executor = nodeExecutor(SwitchFlowNode);
 
     /**
      * Builds a context whose node instance carries `parameters` (the surface

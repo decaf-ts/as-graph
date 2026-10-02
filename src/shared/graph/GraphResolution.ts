@@ -48,6 +48,8 @@ export interface GraphResolvedNodeManifest {
   policies?: GraphNodePolicyManifest;
   /** Free-form metadata. */
   metadata?: Record<string, GraphJsonValue>;
+  /** Namespaces required to execute this node, when declared. */
+  namespaces?: string[];
 }
 
 /**

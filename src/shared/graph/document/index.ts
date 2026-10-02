@@ -3,11 +3,13 @@
  */
 export * from "./GraphDecoratedWorkflowCompiler";
 export * from "./GraphEdgeInstance";
+export * from "./GraphErrorBoundaryConfiguration";
 export * from "./GraphEndpoint";
 export * from "./GraphJsonValue";
 export * from "./GraphLoopConfiguration";
 export * from "./GraphNodeBinding";
 export * from "./GraphNodeInstance";
+export * from "./GraphValueTemplate";
 export * from "./GraphWorkflowDocument";
 export * from "./GraphWorkflowDocumentBuilder";
 export * from "./GraphWorkflowDocumentReader";

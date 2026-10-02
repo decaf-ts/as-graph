@@ -24,6 +24,12 @@ export interface GraphNodeManifest {
   methods?: GraphNodeMethodManifest[];
   policies?: GraphNodePolicyManifest;
   metadata?: Record<string, GraphJsonValue>;
+  /**
+   * Namespaces required to execute this node kind, folded from the node class's
+   * `@namespace(...)` metadata by the manifest compiler. The engine validates
+   * them against the authenticated principal before execution.
+   */
+  namespaces?: string[];
 }
 
 /**

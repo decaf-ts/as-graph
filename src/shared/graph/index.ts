@@ -5,6 +5,7 @@ import "@decaf-ts/ui-decorators";
 import "./overrides";
 
 export * from "./constants";
+export * from "./auth";
 export * from "./decorators";
 export * from "./registry";
 export * from "./overrides";
@@ -13,6 +14,8 @@ export * from "./reader";
 export * from "./document";
 export * from "./catalog";
 export * from "./types";
+export * from "./GraphRunModel";
+export * from "./GraphWorkflowModel";
 export * from "./GraphExecutionStateMapper";
 export * from "./GraphResolution";
 export * from "./category-styles";

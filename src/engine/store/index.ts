@@ -1,10 +1,10 @@
 /**
  * @module as-graph/store
- * @summary Graph value store, adapter, and key types.
- * @description Re-exports the value store adapter interface, in-memory default, key/cached-value types, and the runtime store wrapper.
+ * @summary Graph value persistence model, repository, and key types.
+ * @description Re-exports the persistable cached/pinned value model and its
+ * adapter-backed repository, plus the runtime key/cached-value types.
  */
 export * from "./GraphValueKey";
 export * from "./GraphCachedValue";
-export * from "./GraphValueStoreAdapter";
-export * from "./InMemoryGraphValueStoreAdapter";
-export * from "./GraphValueStore";
+export * from "./GraphValueModel";
+export * from "./GraphValueRepository";

@@ -17,8 +17,8 @@ import { GraphExecutionPlanner } from "../../../src/engine/planning/GraphExecuti
 import { GraphPinningDependencyResolver } from "../../../src/engine/pinning/GraphPinningDependencyResolver";
 import { GraphPinningPolicy } from "../../../src/engine/pinning/GraphPinningPolicy";
 import { GraphPinningService } from "../../../src/engine/pinning/GraphPinningService";
-import { InMemoryGraphValueStoreAdapter } from "../../../src/engine/store/InMemoryGraphValueStoreAdapter";
-import { GraphValueStore } from "../../../src/engine/store/GraphValueStore";
+import { createGraphValueRepository } from "../../../src/engine/store/GraphValueRepository";
+import { createRamGraphAdapter } from "../../../src/ram";
 import type { GraphExecutionPlanNode } from "../../../src/engine/planning/GraphExecutionPlanNode";
 import type { GraphExecutionResult } from "../../../src/engine/types";
 
@@ -89,7 +89,7 @@ describe("GraphPinningPolicy", () => {
 
 describe("GraphPinningDependencyResolver", () => {
   it("getDependencies returns upstream nodes excluding boundary", async () => {
-    const plan = new GraphExecutionPlanner().plan(
+    const plan = await new GraphExecutionPlanner().plan(
       await resolveDocument(linearDocument())
     );
     const resolver = new GraphPinningDependencyResolver();
@@ -98,7 +98,7 @@ describe("GraphPinningDependencyResolver", () => {
   });
 
   it("getPinSet includes the node itself plus dependencies", async () => {
-    const plan = new GraphExecutionPlanner().plan(
+    const plan = await new GraphExecutionPlanner().plan(
       await resolveDocument(linearDocument())
     );
     const resolver = new GraphPinningDependencyResolver();
@@ -111,7 +111,7 @@ describe("GraphPinningDependencyResolver", () => {
 describe("GraphPinningService", () => {
   async function pinnedLinearPlan() {
     const resolved = await resolveDocument(linearDocument());
-    const plan = new GraphExecutionPlanner().plan(resolved);
+    const plan = await new GraphExecutionPlanner().plan(resolved);
     // Mark every node pinnable through instance metadata.
     for (const node of plan.nodes) {
       node.metadata = { ...(node.metadata ?? {}), pinnable: PINNABLE };
@@ -123,8 +123,10 @@ describe("GraphPinningService", () => {
     return plan;
   }
 
-  function makeService(): GraphPinningService {
-    const store = new GraphValueStore(new InMemoryGraphValueStoreAdapter());
+  async function makeService(): Promise<GraphPinningService> {
+    const store = createGraphValueRepository(
+      (await createRamGraphAdapter(`graph-pinning-${Math.random()}`)) as never
+    );
     return new GraphPinningService(
       store,
       new GraphPinningPolicy(),
@@ -134,7 +136,7 @@ describe("GraphPinningService", () => {
 
   it("computeFingerprint is deterministic for identical inputs", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const fp1 = service.computeFingerprint(plan.workflowId, node, { a: 1, b: 2 }, {});
     const fp2 = service.computeFingerprint(plan.workflowId, node, { a: 1, b: 2 }, {});
@@ -143,7 +145,7 @@ describe("GraphPinningService", () => {
 
   it("computeFingerprint changes when inputs change", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const fp1 = service.computeFingerprint(plan.workflowId, node, { a: 1, b: 2 }, {});
     const fp2 = service.computeFingerprint(plan.workflowId, node, { a: 1, b: 3 }, {});
@@ -152,7 +154,7 @@ describe("GraphPinningService", () => {
 
   it("computeFingerprint changes when parameters change", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const before = service.computeFingerprint(plan.workflowId, node, { a: 1 }, {});
     node.instance.parameters = { precision: 2 };
@@ -162,7 +164,7 @@ describe("GraphPinningService", () => {
 
   it("computeFingerprint excludes presentation-only UI state", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const before = service.computeFingerprint(plan.workflowId, node, { a: 1 }, {});
     // Canvas position / UI state changes must NOT affect the fingerprint.
@@ -177,7 +179,7 @@ describe("GraphPinningService", () => {
 
   it("computeFingerprint is stable regardless of key ordering in inputs", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const fp1 = service.computeFingerprint(plan.workflowId, node, { a: 1, b: 2 }, {});
     const fp2 = service.computeFingerprint(plan.workflowId, node, { b: 2, a: 1 }, {});
@@ -186,7 +188,7 @@ describe("GraphPinningService", () => {
 
   it("readPinnedValue returns undefined when nothing is pinned", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const result = await service.readPinnedValue(plan.workflowId, node, {}, {});
     expect(result).toBeUndefined();
@@ -194,7 +196,7 @@ describe("GraphPinningService", () => {
 
   it("pinNode writes pinned values and readPinnedValue returns them", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const fakeResult = {
       runId: "r1",
@@ -240,7 +242,7 @@ describe("GraphPinningService", () => {
 
   it("unpinNode removes the pinned value", async () => {
     const plan = await pinnedLinearPlan();
-    const service = makeService();
+    const service = await makeService();
     const node = plan.nodes.find((n) => n.id === "adder")!;
     const fakeResult = {
       runId: "r1",

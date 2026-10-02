@@ -7,6 +7,7 @@ import {
 import type { GraphEndpoint, GraphNodeEndpoint, GraphWorkflowEndpoint } from "./GraphEndpoint";
 import { isGraphEndpoint, isGraphNodeEndpoint, isGraphWorkflowEndpoint } from "./GraphEndpoint";
 import { isGraphInputBinding } from "./GraphNodeBinding";
+import type { GraphErrorBoundaryConfiguration } from "./GraphErrorBoundaryConfiguration";
 import type { GraphValueReference } from "./GraphLoopConfiguration";
 import type { GraphLoopConfiguration } from "./GraphLoopConfiguration";
 import type { GraphWorkflowUiState } from "./GraphWorkflowUiState";
@@ -194,6 +195,13 @@ export function assertGraphWorkflowDocumentValid(
     if (node.loop) {
       assertGraphLoopConfigurationValid(node, node.loop, nestedContext);
     }
+    if (node.errorBoundary) {
+      assertGraphErrorBoundaryConfigurationValid(
+        node,
+        node.errorBoundary,
+        nestedContext
+      );
+    }
   }
   const edgeIds = new Set<string>();
   for (const edge of document.edges) {
@@ -347,6 +355,31 @@ function assertGraphLoopConfigurationValid(
       }
       assertGraphValueReferenceShape(reference, node.id, key);
     }
+  }
+}
+
+function assertGraphErrorBoundaryConfigurationValid(
+  node: GraphNodeInstance,
+  config: GraphErrorBoundaryConfiguration,
+  context: GraphWorkflowDocumentValidationContext
+): void {
+  if (!config.try || typeof config.try !== "object") {
+    throw new ValidationError(
+      `Node '${node.id}' error-boundary configuration requires a try body document`
+    );
+  }
+  assertGraphWorkflowDocumentValid(config.try, context);
+  for (const [label, body] of [
+    ["catch", config.catch],
+    ["finally", config.finally],
+  ] as const) {
+    if (body === undefined) continue;
+    if (!body || typeof body !== "object") {
+      throw new ValidationError(
+        `Node '${node.id}' error-boundary ${label} body must be a document`
+      );
+    }
+    assertGraphWorkflowDocumentValid(body, context);
   }
 }
 

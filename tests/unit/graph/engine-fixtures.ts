@@ -152,6 +152,9 @@ import type { GraphResolvedNodeManifest } from "../../../src/shared/graph";
 import type { GraphNodeCatalogue } from "../../../src/engine/catalog/GraphNodeCatalogue";
 import { GraphNodeCatalogue as GraphNodeCatalogueClass } from "../../../src/engine/catalog/GraphNodeCatalogue";
 import type { GraphNodeExecutor } from "../../../src/engine/execution/GraphNodeExecutor";
+import type { GraphExecutionContext } from "../../../src/engine/execution/GraphExecutionContext";
+import { graphNodeConfig } from "../../../src/node/base";
+import type { GraphNodeClass } from "../../../src/node/base";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -163,6 +166,74 @@ import type {
 import {
   GraphWorkflowDocumentValidator,
 } from "../../../src/engine/validation/GraphWorkflowDocumentValidator";
+import { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
+import type { GraphExecutionEngineConfig } from "../../../src/engine/execution/GraphExecutionEngine";
+import { createRamGraphAdapter } from "../../../src/ram";
+import { Adapter, Context } from "@decaf-ts/core";
+import { IsolatedVmCodeSandboxEvaluator } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
+import type { IsolatedVmCodeSandboxEvaluatorConfig } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
+import { Injectables } from "@decaf-ts/injectable-decorators";
+
+/**
+ * Returns a fresh {@link GraphNodeCatalogue}. `GraphNodeCatalogue` is a
+ * `@service()` singleton, so `new GraphNodeCatalogue()` would otherwise return
+ * the same shared instance across tests; reset the injectable first so each call
+ * gets an isolated catalogue.
+ */
+export function resetGraphInjectables(): void {
+  const registry = Injectables.getRegistry() as unknown as {
+    cache?: Record<string | symbol, { instance?: unknown }>;
+  };
+  const cache = registry.cache;
+  if (!cache) return;
+  for (const key of Object.getOwnPropertySymbols(cache)) {
+    if (key.toString().includes("GraphNodeCatalogue")) {
+      const entry = cache[key];
+      if (entry && typeof entry === "object") entry.instance = undefined;
+    }
+  }
+}
+
+/**
+ * Returns an isolated {@link GraphNodeCatalogue}. Pairs with
+ * {@link resetGraphInjectables}, which must run first so the `@service()`
+ * singleton is re-instantiated instead of reused across tests.
+ */
+export function freshCatalogue(): GraphNodeCatalogue {
+  resetGraphInjectables();
+  return new GraphNodeCatalogueClass();
+}
+
+/**
+ * Clears the process-global Decaf adapter cache. The `@service()` singleton
+ * catalogue and the eagerly-created `RamAdapter` in `createDemoEngineConfig`
+ * leak across Nest module bootstraps; tests that boot the graph module more than
+ * once must reset both registries first so each bootstrap starts clean.
+ */
+export function resetGraphAdapters(): void {
+  const adapter = Adapter as unknown as {
+    _cache?: Record<string, unknown>;
+    _currentFlavour?: string;
+  };
+  const cache = adapter._cache;
+  if (cache) {
+    for (const alias of Object.keys(cache)) {
+      delete cache[alias];
+    }
+  }
+  adapter._currentFlavour = undefined;
+}
+
+/**
+ * Unregisters only the graph value adapter alias (`as-graph-ram`) that
+ * `createDemoEngineConfig` eagerly registers on every module bootstrap, leaving
+ * the ambient `ram` adapter that a host `DecafModule` installed in place. Use
+ * this when a suite boots the graph module repeatedly and must reuse the host
+ * adapter across bootstraps.
+ */
+export function resetGraphValueAdapter(): void {
+  Adapter.unregister("as-graph-ram");
+}
 
 /**
  * Builds a minimal workflow port instance for a document.
@@ -268,12 +339,49 @@ export function nodeExecutionRequest(
 }
 
 /**
+ * Instantiates a built-in node class with its configuration hydrated by the
+ * constructor (`Model.fromModel`), then invokes its **instance** `execute` method —
+ * the DECAF-50 §4.26 R2-1 executor contract used by the built-in
+ * registrations.
+ *
+ * The node instance is hydrated from the flattened `context.node` configuration
+ * with the engine-resolved `request.parameters` merged on top. The engine
+ * resolves `GraphValueTemplate` user properties into `request.parameters` at
+ * execution time (DECAF-32 §22.4), so the harness must let the resolved values
+ * win over the raw persisted ones for templates to reach the node.
+ */
+export function executeNode(
+  nodeClass: GraphNodeClass,
+  request: GraphNodeExecutionRequest,
+  context: GraphExecutionContext
+): GraphExecutionValues | Promise<GraphExecutionValues> {
+  const instance = nodeClass.instantiate({
+    ...graphNodeConfig(context.node),
+    ...(request.parameters as Record<string, unknown>),
+  });
+  return instance.execute(request, context);
+}
+
+/**
+ * Wraps a built-in node class as a `GraphNodeExecutor` whose `execute`
+ * instantiates + hydrates the class per call (matching the built-in
+ * registration's executor), so tests can drive a node class through the same
+ * instance-`execute` contract as production.
+ */
+export function nodeExecutor(nodeClass: GraphNodeClass): GraphNodeExecutor {
+  return {
+    execute: (request, context) =>
+      executeNode(nodeClass, request, context),
+  };
+}
+
+/**
  * Builds a catalogue with the arithmetic demo executors registered as
  * legacy executor-only (placeholder-manifest, lenient) kinds. The executors
  * follow the DECAF-50 §4.9 request contract: routed port values are read
  * from `request.inputs`.
  */
-export function demoCatalogue(
+export async function demoCatalogue(
   executors: Record<string, GraphNodeExecutor> = {
     "math.add": {
       execute: (request) => ({
@@ -284,10 +392,11 @@ export function demoCatalogue(
       execute: (request) => ({ product: Number(request.inputs.x) * 2 }),
     },
   }
-): GraphNodeCatalogue {
-  const catalogue = new GraphNodeCatalogueClass();
+): Promise<GraphNodeCatalogue> {
+  const catalogue = freshCatalogue();
+  const ctx = new Context();
   for (const [kind, executor] of Object.entries(executors)) {
-    catalogue.registerExecutor(kind, executor);
+    catalogue.registerExecutor(kind, executor, ctx);
   }
   return catalogue;
 }
@@ -298,10 +407,45 @@ export function demoCatalogue(
  */
 export async function resolveDocument(
   document: GraphWorkflowDocument,
-  catalogue: GraphNodeCatalogue = demoCatalogue()
+  catalogue?: GraphNodeCatalogue
 ): Promise<GraphResolvedWorkflow> {
-  const validator = new GraphWorkflowDocumentValidator({ catalogue });
-  return await validator.validateOrThrow(document);
+  const resolvedCatalogue = catalogue ?? (await demoCatalogue());
+  const validator = new GraphWorkflowDocumentValidator({
+    catalogue: resolvedCatalogue,
+  });
+  return await validator.validateOrThrow(document, 0, new Context());
+}
+
+/**
+ * Boots an {@link IsolatedVmCodeSandboxEvaluator} as a Decaf `ClientBasedService`
+ * and returns the initialized instance. Tests must boot the evaluator before calling
+ * `evaluate`; this helper keeps that boilerplate in one place.
+ */
+export async function bootCodeSandboxEvaluator(
+  config: IsolatedVmCodeSandboxEvaluatorConfig = {}
+): Promise<IsolatedVmCodeSandboxEvaluator> {
+  const evaluator = new IsolatedVmCodeSandboxEvaluator();
+  await evaluator.boot(config);
+  return evaluator;
+}
+
+let ramAdapterCounter = 0;
+
+/**
+ * Boots a {@link GraphExecutionEngine} as a Decaf `ClientBasedService` and
+ * returns the initialized instance. Tests must boot the engine before observing or
+ * executing; this helper keeps that boilerplate in one place. Falls back to a
+ * fresh `RamAdapter` alias when `config.valueAdapter` is not supplied.
+ */
+export async function bootEngine(
+  config: GraphExecutionEngineConfig
+): Promise<GraphExecutionEngine> {
+  const engine = new GraphExecutionEngine();
+  const valueAdapter =
+    config.valueAdapter ??
+    (await createRamGraphAdapter(`as-graph-ram-${ramAdapterCounter++}`));
+  await engine.boot({ ...config, valueAdapter });
+  return engine;
 }
 
 /**

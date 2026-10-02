@@ -25,9 +25,20 @@ import type {
   GraphExecutionEvent,
 } from "../../shared/graph";
 import type {
+  GraphExecutionLimits,
   GraphRunId,
 } from "../types";
+import type { GraphAuthData } from "../auth";
+import { graphAuthDataFromRecord, graphAuthDataOf } from "../auth";
 import type { GraphExecutionEngine } from "./GraphExecutionEngine";
+
+function stringArrayOf(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0
+  );
+  return values.length ? values : undefined;
+}
 
 /**
  * Context passed to every graph node executor.
@@ -57,6 +68,8 @@ export class GraphExecutionContext extends Context {
    * @param abortSignal - Run-level abort signal, forwarded to code sandbox
    *   evaluation so a run timeout or cancellation interrupts a pending
    *   sandbox continuation at the host boundary.
+   * @param limits - Effective engine execution limits (loop iteration
+   *   ceilings) for the run, read by loop node executors.
    */
   constructor(
     readonly runId: GraphRunId,
@@ -69,15 +82,37 @@ export class GraphExecutionContext extends Context {
     private readonly emitFn: (event: Partial<GraphExecutionEvent>) => Promise<void>,
     readonly metadata: Record<string, unknown> = {},
     readonly engine?: GraphExecutionEngine,
-    readonly abortSignal?: AbortSignal
+    readonly abortSignal?: AbortSignal,
+    readonly limits?: GraphExecutionLimits
   ) {
     super();
+    // Bind the resolved principal facts (already merged into the run metadata by
+    // the engine) onto this context's cache, so `graphAuthDataOf(context)`
+    // resolves them when this context is forwarded as the contextual arg to a
+    // nested loop-body execution. Only recognized keys are copied.
+    const auth = graphAuthDataFromRecord(metadata);
+    // Loop nodes forward this context as the contextual argument to
+    // `GraphExecutionEngine.execute`, which resolves its context through
+    // `Service.context` and reads the parent context's `operation` flag. Seed it
+    // with the engine's operation name or every nested body throws
+    // `Key operation does not exist in accumulator`.
+    this.accumulate({
+      ...(auth as Record<string, unknown>),
+      operation: "execute",
+    });
     const user = typeof metadata?.["user"] === "string" ? metadata["user"] : null;
     this.runLogger = new GraphRunLogger({
       runId,
       workflowId,
       nodeId: node.id,
       user,
+      roles: stringArrayOf(metadata?.["roles"]),
+      namespaces: stringArrayOf(metadata?.["namespaces"]),
+      organization:
+        typeof metadata?.["organization"] === "string"
+          ? (metadata["organization"] as string)
+          : undefined,
+      ip: typeof metadata?.["ip"] === "string" ? (metadata["ip"] as string) : undefined,
       forward: async (event) => {
         await this.emit(event);
       },
@@ -92,6 +127,16 @@ export class GraphExecutionContext extends Context {
    */
   override get logger(): Logger {
     return this.runLogger!;
+  }
+
+  /**
+   * The authenticated principal facts resolved for this run (user, roles,
+   * namespaces, organization, ip). Loop node executors forward this to their
+   * nested body executions so the nested nodes are authorized against the same
+   * principal instead of an empty one.
+   */
+  get auth(): GraphAuthData {
+    return graphAuthDataOf(this);
   }
 
   /**

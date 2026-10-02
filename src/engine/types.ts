@@ -22,6 +22,7 @@ import type {
   GraphExecutionErrorPayload,
   GraphExecutionEvent,
 } from "../shared/graph";
+import type { GraphAuthData } from "./auth/GraphAuth";
 
 /**
  * Unique identifier for a single graph execution run.
@@ -66,6 +67,25 @@ export interface GraphExecutionOptions {
   writeThroughCache?: boolean;
   metadata?: Record<string, unknown>;
   abortSignal?: AbortSignal;
+  /**
+   * Authenticated principal facts for this run. When omitted, the engine reads
+   * them from the Decaf execution context (bound by the host `AuthHandler`).
+   * Explicit values win over context-derived ones. Used to authorize the
+   * workflow and each node before execution, and bound to the execution logger.
+   */
+  auth?: GraphAuthData;
+}
+
+/**
+ * Effective engine execution limits exposed to node executors for a run. A
+ * node-level value can never exceed these bounds; loop nodes clamp their own
+ * `maxIterations` against them.
+ */
+export interface GraphExecutionLimits {
+  /** Maximum iterations a `while` / `until` loop may execute. */
+  maxLoopIterations: number;
+  /** Maximum iterations a `foreach` loop may execute. */
+  maxForeachIterations: number;
 }
 
 /**
@@ -115,11 +135,17 @@ export type GraphResolvedCredentials = Record<string, GraphCredentialReference>;
  * Request passed to request-based node executors (DECAF-50 §4.9).
  * Configuration (`parameters`, `credentials`, `metadata`) and input data
  * (`inputs`) are separated.
+ *
+ * @typeParam INPUT - The shape of the node's input values. Defaults to the
+ *   generic {@link GraphExecutionValues} map; a node may narrow it to its own
+ *   `@input`/`@output` shape for stricter typing.
  */
-export interface GraphNodeExecutionRequest {
+export interface GraphNodeExecutionRequest<
+  INPUT = GraphExecutionValues,
+> {
   nodeId: string;
   kind: string;
-  inputs: GraphExecutionValues;
+  inputs: INPUT;
   parameters: Record<string, GraphJsonValue>;
   credentials: GraphResolvedCredentials;
   metadata?: Record<string, GraphJsonValue>;

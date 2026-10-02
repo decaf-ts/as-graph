@@ -18,6 +18,9 @@ const GRAPH_TYPE_NAME_MAP: Record<string, GraphValueSchemaType> = {
   string: "string",
   char: "string",
   text: "string",
+  textarea: "string",
+  radio: "string",
+  select: "string",
   number: "number",
   integer: "number",
   float: "number",
@@ -25,6 +28,7 @@ const GRAPH_TYPE_NAME_MAP: Record<string, GraphValueSchemaType> = {
   decimal: "number",
   boolean: "boolean",
   bool: "boolean",
+  checkbox: "boolean",
   array: "array",
   list: "array",
   set: "array",
@@ -86,9 +90,15 @@ export function graphEnumValuesFromValidation(
 
 function customTypeNameFromValidation(validation: GraphValidationRecord): string | undefined {
   const typeEntry = validation[ValidationKeys.TYPE] as
-    | { customTypes?: Array<{ name?: string }> }
+    | { customTypes?: Array<{ name?: string } | string> }
     | undefined;
-  return typeEntry?.customTypes?.[0]?.name;
+  const custom = typeEntry?.customTypes?.[0];
+  const name =
+    typeof custom === "function"
+      ? (custom as { name?: string }).name
+      : (custom as { name?: string } | undefined)?.name;
+  if (!name) return undefined;
+  return name;
 }
 
 /**

@@ -34,28 +34,28 @@ describe("GraphTopology", () => {
     expect(GraphTopology.isBoundary("n1")).toBe(false);
   });
 
-  it("upstreamNodes returns dependencies excluding the boundary by default", () => {
-    const plan = new GraphExecutionPlanner().plan(linearResolved());
+  it("upstreamNodes returns dependencies excluding the boundary by default", async () => {
+    const plan = await new GraphExecutionPlanner().plan(linearResolved());
     const upstream = GraphTopology.upstreamNodes("multiplier", plan.incomingByNode);
     expect(upstream.has("adder")).toBe(true);
     expect(upstream.has(GRAPH_WORKFLOW_BOUNDARY)).toBe(false);
   });
 
-  it("upstreamNodes includes boundary when includeBoundary is true", () => {
-    const plan = new GraphExecutionPlanner().plan(linearResolved());
+  it("upstreamNodes includes boundary when includeBoundary is true", async () => {
+    const plan = await new GraphExecutionPlanner().plan(linearResolved());
     const upstream = GraphTopology.upstreamNodes("adder", plan.incomingByNode, true);
     expect(upstream.has(GRAPH_WORKFLOW_BOUNDARY)).toBe(true);
   });
 
-  it("downstreamNodes returns dependents excluding the boundary by default", () => {
-    const plan = new GraphExecutionPlanner().plan(linearResolved());
+  it("downstreamNodes returns dependents excluding the boundary by default", async () => {
+    const plan = await new GraphExecutionPlanner().plan(linearResolved());
     const downstream = GraphTopology.downstreamNodes("adder", plan.outgoingByNode);
     expect(downstream.has("multiplier")).toBe(true);
     expect(downstream.has(GRAPH_WORKFLOW_BOUNDARY)).toBe(false);
   });
 
-  it("downstreamNodes includes boundary when includeBoundary is true", () => {
-    const plan = new GraphExecutionPlanner().plan(linearResolved());
+  it("downstreamNodes includes boundary when includeBoundary is true", async () => {
+    const plan = await new GraphExecutionPlanner().plan(linearResolved());
     const downstream = GraphTopology.downstreamNodes("multiplier", plan.outgoingByNode, true);
     expect(downstream.has(GRAPH_WORKFLOW_BOUNDARY)).toBe(true);
   });

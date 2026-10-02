@@ -22,6 +22,7 @@ import {
   GRAPH_DEFAULT_DISABLED_NODE_BEHAVIOR,
   GRAPH_DISABLED_NODE_BEHAVIORS,
   isGraphDisabledNodeBehavior,
+  isGraphValueTemplate,
 } from "../../shared/graph";
 import type { GraphResolvedNodeManifest } from "../../shared/graph";
 import type { GraphValidationIssue } from "./GraphValidationIssue";
@@ -310,6 +311,10 @@ export class GraphParameterValidator {
     value: GraphJsonValue,
     parameter: { type: string; options?: unknown; credentialType?: string }
   ): { valid: boolean; message?: string } {
+    // A `GraphValueTemplate` (code expression / text template) is resolved at
+    // execution time, so its persisted object form is valid for any parameter
+    // type regardless of the type the resolved value will take.
+    if (isGraphValueTemplate(value)) return { valid: true };
     switch (parameter.type) {
       case "string":
       case "code":

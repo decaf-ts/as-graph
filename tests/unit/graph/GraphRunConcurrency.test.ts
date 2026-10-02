@@ -23,8 +23,6 @@ import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import { ValidationError } from "@decaf-ts/db-decorators";
 
 import {
-  GraphExecutionEngine,
-  GraphNodeCatalogue,
   GraphNodeExecutorRegistry,
   GraphRunService,
   InMemoryGraphRunEventStore,
@@ -32,7 +30,12 @@ import {
   type GraphNodeExecutor,
   type GraphRun,
 } from "../../../src";
-import { documentEdge, documentNode } from "./engine-fixtures";
+import {
+  bootEngine,
+  documentEdge,
+  documentNode,
+  freshCatalogue,
+} from "./engine-fixtures";
 
 jest.setTimeout(30000);
 
@@ -141,15 +144,15 @@ describe("GraphRunConcurrency (SAA-595 per-caller buckets)", () => {
     );
   }
 
-  beforeAll(() => {
+  beforeAll(async () => {
     blocked = [];
     entered = 0;
-    const catalogue = new GraphNodeCatalogue();
-    const engine = new GraphExecutionEngine({
+    const catalogue = freshCatalogue();
+    const engine = await bootEngine({
       registry: new GraphNodeExecutorRegistry(catalogue),
     });
-    catalogue.registerExecutor("test.block", blockingExecutor);
-    catalogue.registerExecutor("test.sink", {
+    await catalogue.registerExecutor("test.block", blockingExecutor);
+    await catalogue.registerExecutor("test.sink", {
       execute: async () => ({ ok: true }),
     });
     service = new GraphRunService(

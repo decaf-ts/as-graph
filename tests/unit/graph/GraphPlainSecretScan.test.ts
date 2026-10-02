@@ -31,13 +31,17 @@ import {
   GraphCredentialReferenceValidator,
   GraphDocumentValidationError,
   GraphExecutionEngine,
-  GraphNodeCatalogue,
   GraphNodeExecutorRegistry,
   GraphWorkflowDocumentValidator,
   type GraphNodeExecutor,
 } from "../../../src";
 import type { GraphValidationIssue } from "../../../src";
-import { documentEdge, documentNode } from "./engine-fixtures";
+import {
+  bootEngine,
+  documentEdge,
+  documentNode,
+  freshCatalogue,
+} from "./engine-fixtures";
 
 jest.setTimeout(20000);
 
@@ -84,9 +88,9 @@ describe("GraphPlainSecretScan (SAA-595 F7 recursive scan)", () => {
   let validator: GraphWorkflowDocumentValidator;
   let engine: GraphExecutionEngine;
 
-  beforeAll(() => {
-    const catalogue = new GraphNodeCatalogue();
-    engine = new GraphExecutionEngine({
+  beforeAll(async () => {
+    const catalogue = freshCatalogue();
+    engine = await bootEngine({
       registry: new GraphNodeExecutorRegistry(catalogue),
     });
     const executor: GraphNodeExecutor = {
@@ -94,7 +98,7 @@ describe("GraphPlainSecretScan (SAA-595 F7 recursive scan)", () => {
     };
     // placeholder manifest: undeclared parameters are tolerated, so the
     // nested parameter/metadata values reach the stage-8 scan untouched
-    catalogue.registerExecutor("test.scan", executor);
+    await catalogue.registerExecutor("test.scan", executor);
     validator = new GraphWorkflowDocumentValidator({ catalogue });
   });
 

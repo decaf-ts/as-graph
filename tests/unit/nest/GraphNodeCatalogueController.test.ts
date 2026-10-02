@@ -30,9 +30,7 @@ import type {
 } from "../../../src/shared/graph";
 import { isGraphJsonSafeValue } from "../../../src/shared/graph";
 import {
-  GraphExecutionEngine,
   GraphNodeCatalogue,
-  GraphNodeExecutorRegistry,
   defineGraphNode,
   registerBuiltInGraphNodes,
   type GraphNodeExecutor,
@@ -44,6 +42,7 @@ import {
   GraphNodeCatalogueController,
   type GraphCatalogueControllerOptions,
 } from "../../../src/nest/graph";
+import { freshCatalogue } from "../graph/engine-fixtures";
 jest.setTimeout(30000);
 
 const SORTED_CATALOGUE_KINDS = [
@@ -56,9 +55,6 @@ const SORTED_CATALOGUE_KINDS = [
   "core.flow.humanApproval",
   "core.flow.if",
   "core.flow.log",
-  "core.flow.merge",
-  "core.flow.parallel",
-  "core.flow.return",
   "core.flow.switch",
   "core.loop.foreach",
   "core.loop.until",
@@ -72,6 +68,8 @@ const SORTED_CATALOGUE_KINDS = [
   "core.utility.code",
   "core.utility.log",
   "core.utility.map",
+  "result",
+  "value",
 ];
 
 type TestResponse = {
@@ -164,13 +162,10 @@ async function bootstrapController(
   requestContext?: Record<string, unknown>,
   throttlers?: NamedThrottler[]
 ): Promise<AppBootstrap> {
-  const catalogue = new GraphNodeCatalogue();
-  // the engine-bound built-ins (Switch, loops, Code, Log) register only with
-  // an engine, so the API app serves the full 23-kind catalogue
-  const engine = new GraphExecutionEngine({
-    registry: new GraphNodeExecutorRegistry(catalogue),
-  });
-  registerBuiltInGraphNodes(catalogue, engine);
+  const catalogue = freshCatalogue();
+  // the built-ins (Switch, loops, Code, Log) register without an engine: node
+  // classes reach the engine through the execution context
+  await registerBuiltInGraphNodes(catalogue);
   registerCustomKinds(catalogue);
   const moduleRef = await Test.createTestingModule({
     imports: throttlers ? [ThrottlerModule.forRoot(throttlers)] : [],
@@ -425,7 +420,7 @@ describe("GraphNodeCatalogueController (unit)", () => {
       parameters: [],
       methods: [{ name: "echo.context", type: "action" }],
     };
-    const echoCatalogue = new GraphNodeCatalogue();
+    const echoCatalogue = freshCatalogue();
     echoCatalogue.register(
       defineGraphNode({
         manifest: echoManifest,
@@ -596,7 +591,7 @@ describe("GraphNodeCatalogueController (unit)", () => {
     expect(resolved.outputs.map((port) => port.label)).toEqual([
       "Case A",
       "Case B",
-      "Default",
+      "graph.node.flow_control.switch.ports.output.default.label",
     ]);
   });
 

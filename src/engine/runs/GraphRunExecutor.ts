@@ -288,11 +288,16 @@ export class GraphRunExecutor {
       }
 
       try {
-        result = await this.engine.execute(document, inputs, {
-          runId,
-          abortSignal: this.controllers.get(runId)?.signal,
-          metadata: { documentFingerprint: fingerprint },
-        });
+        result = await this.engine.execute(
+          document,
+          inputs,
+          {
+            runId,
+            abortSignal: this.controllers.get(runId)?.signal,
+            metadata: { documentFingerprint: fingerprint },
+          },
+          ...args
+        );
       } catch (e: unknown) {
         lastError = errorPayloadOf(e);
       }

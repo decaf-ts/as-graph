@@ -21,10 +21,13 @@ export * from "./errors/GraphStoreError";
 export * from "./errors/GraphTopologyError";
 export * from "./errors/GraphBreakSignal";
 export * from "./errors/GraphRunCancelledError";
+export * from "./errors/GraphWorkflowErrors";
 
 export * from "./events/GraphExecutionObserver";
 export * from "./events/GraphExecutionEventEmitter";
 export * from "./events/GraphExecutionEventFactory";
+
+export * from "./auth";
 
 export * from "./execution/GraphExecutionContext";
 export * from "./execution/GraphNodeExecutor";
@@ -41,9 +44,8 @@ export * from "./catalog";
 
 export * from "./store/GraphValueKey";
 export * from "./store/GraphCachedValue";
-export * from "./store/GraphValueStoreAdapter";
-export * from "./store/InMemoryGraphValueStoreAdapter";
-export * from "./store/GraphValueStore";
+export * from "./store/GraphValueModel";
+export * from "./store/GraphValueRepository";
 
 export * from "./planning/GraphExecutionPlanNode";
 export * from "./planning/GraphExecutionPlanEdge";
@@ -68,6 +70,11 @@ export * from "./pinning/GraphPinningService";
 
 // Run lifecycle (DECAF-50 §4.14–§4.16)
 export * from "./runs";
+
+// Nest-agnostic backend services (options resolved from the graph environment)
+export * from "./services/GraphEnvironment";
+export * from "./services/GraphWorkflowService";
+export * from "./services/GraphRunModelService";
 
 // Snapshots (TASK-219)
 export * from "./snapshots/GraphExecutionSnapshotMapper";

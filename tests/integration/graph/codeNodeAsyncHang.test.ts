@@ -22,9 +22,11 @@ import { describe, it, expect } from "@jest/globals";
 
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import { isGraphRunTerminalStatus } from "../../../src/shared/graph";
-import { CODE_GRAPH_NODE_MANIFEST, CodeNode } from "../../../src/node";
+import {
+  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
+  CodeNode,
+} from "../../../src/node";
 import { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
-import { IsolatedVmCodeSandboxEvaluator } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
 import { GraphNodeCatalogue } from "../../../src/engine/catalog/GraphNodeCatalogue";
 import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
 import { registerBuiltInGraphNodes } from "../../../src/engine/catalog/GraphBuiltInRegistrations";
@@ -38,9 +40,16 @@ import {
 import {
   documentEdge,
   documentNode,
+  bootCodeSandboxEvaluator,
+  bootEngine,
   documentPort,
+  executeNode,
+  freshCatalogue,
   resolveDocument,
 } from "../../unit/graph/engine-fixtures";
+
+const CODE_GRAPH_NODE_MANIFEST =
+  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.utility.code"];
 
 /** Configured run-level execution timeout. */
 const RUN_TIMEOUT_MS = 500;
@@ -100,17 +109,17 @@ async function settleRunWithin(
  * re-registered with a string schema for `code` (the executor stays the real
  * `CodeNode` + sandbox), so canonical documents can bind code literally.
  */
-function buildEngine(): {
+async function buildEngine(): Promise<{
   engine: GraphExecutionEngine;
   catalogue: GraphNodeCatalogue;
-} {
-  const catalogue = new GraphNodeCatalogue();
-  const engine = new GraphExecutionEngine({
+}> {
+  const catalogue = freshCatalogue();
+  const engine = await bootEngine({
     registry: new GraphNodeExecutorRegistry(catalogue),
-    codeSandboxEvaluator: new IsolatedVmCodeSandboxEvaluator(),
+    codeSandboxEvaluator: await bootCodeSandboxEvaluator(),
   });
-  registerBuiltInGraphNodes(catalogue, engine);
-  catalogue.register(
+  await registerBuiltInGraphNodes(catalogue);
+  await catalogue.register(
     defineGraphNode({
       manifest: {
         ...CODE_GRAPH_NODE_MANIFEST,
@@ -119,7 +128,7 @@ function buildEngine(): {
         ),
       },
       executor: {
-        execute: (request, context) => CodeNode.execute(request, context),
+        execute: (request, context) => executeNode(CodeNode, request, context),
       },
     }),
     { replace: true }
@@ -154,7 +163,7 @@ function neverSettlingDocument(): GraphWorkflowDocument {
 
 describe("core.utility.code never-settling async node (SAA-1938 F1)", () => {
   it("finalizes the owning run and releases the caller's concurrency slot within a bounded multiple of executionTimeoutMs", async () => {
-    const { engine, catalogue } = buildEngine();
+    const { engine, catalogue } = await buildEngine();
     const document = neverSettlingDocument();
     await resolveDocument(document, catalogue);
 

@@ -5,6 +5,7 @@
 import { jest } from "@jest/globals";
 
 import { IsolatedVmCodeSandboxEvaluator } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
+import { bootCodeSandboxEvaluator } from "./engine-fixtures";
 import { GraphExecutionError } from "../../../src/engine/errors/GraphExecutionError";
 import type {
   CodeSandboxContext,
@@ -36,7 +37,11 @@ function createSpyLogger(): SpyLogger {
 }
 
 describe("IsolatedVmCodeSandboxEvaluator", () => {
-  const evaluator = new IsolatedVmCodeSandboxEvaluator();
+  let evaluator: IsolatedVmCodeSandboxEvaluator;
+
+  beforeAll(async () => {
+    evaluator = await bootCodeSandboxEvaluator();
+  });
 
   describe("expression mode (no return statement)", () => {
     it("evaluates a simple arithmetic expression", async () => {
@@ -368,7 +373,10 @@ describe("IsolatedVmCodeSandboxEvaluator", () => {
     });
 
     it("throws on infinite loop (timeout)", async () => {
-      const slowEvaluator = new IsolatedVmCodeSandboxEvaluator(100, 8);
+      const slowEvaluator = await bootCodeSandboxEvaluator({
+        timeoutMs: 100,
+        memoryMb: 8,
+      });
       const ctx: CodeSandboxContext = {
         code: "while (true) { }",
         input: {},

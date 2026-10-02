@@ -16,14 +16,15 @@ import type {
 } from "../../../src/shared/graph";
 import { isGraphJsonSafeValue } from "../../../src/shared/graph";
 import {
-  GraphExecutionEngine,
-  GraphNodeCatalogue,
-  GraphNodeExecutorRegistry,
   registerBuiltInGraphNodes,
   resolveGraphNodeManifest,
   resolveGraphDynamicPorts,
 } from "../../../src";
-import { SWITCH_GRAPH_NODE_MANIFEST } from "../../../src/node";
+import { GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND } from "../../../src/node";
+import { freshCatalogue } from "./engine-fixtures";
+
+const SWITCH_GRAPH_NODE_MANIFEST =
+  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.flow.switch"];
 
 function portNode(
   id: string,
@@ -214,7 +215,7 @@ describe("GraphNodeManifestResolver", () => {
     expect(resolved.outputs.map((port) => port.label)).toEqual([
       "Case A",
       "Case B",
-      "Default",
+      "graph.node.flow_control.switch.ports.output.default.label",
     ]);
     expect(resolved.parameters.map((parameter) => parameter.id)).toEqual([
       "value",
@@ -306,11 +307,8 @@ describe("Conformance: core.flow.switch declarative dynamic-port rules vs the ba
   }
 
   it("resolves core.flow.switch's dynamic ports identically through the declarative rules and the backend resolve path", async () => {
-    const catalogue = new GraphNodeCatalogue();
-    const engine = new GraphExecutionEngine({
-      registry: new GraphNodeExecutorRegistry(catalogue),
-    });
-    registerBuiltInGraphNodes(catalogue, engine);
+    const catalogue = freshCatalogue();
+    await registerBuiltInGraphNodes(catalogue);
 
     for (const parameters of [
       { cases: CASES, hasDefault: true },
@@ -347,7 +345,7 @@ describe("Conformance: core.flow.switch declarative dynamic-port rules vs the ba
     expect(withDefault.outputs.map((port) => port.label)).toEqual([
       "Case A",
       "Case B",
-      "Default",
+      "graph.node.flow_control.switch.ports.output.default.label",
     ]);
 
     // hasDefault:false -> the default port is dropped on both routes

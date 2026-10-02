@@ -1,0 +1,683 @@
+{
+  "graph": {
+    "node": {
+      "categories": {
+        "trigger": "Trigger",
+        "flow_control": "Flow Control",
+        "utility": "Utility",
+        "loop": "Loop",
+        "agent": "Agent",
+        "boundary": "Boundary"
+      },
+      "connectionCategories": {
+        "model": "Model",
+        "memory": "Memory",
+        "workspace": "Workspace"
+      },
+      "trigger": {
+        "manual": {
+          "name": "Manual trigger",
+          "description": "Starts the workflow when the user clicks Run. The input form is generated from the trigger's input schema.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              }
+            }
+          }
+        },
+        "webhook": {
+          "name": "Webhook trigger",
+          "description": "Starts the workflow when an HTTP request is received on the configured path and method.",
+          "ports": {
+            "input": {
+              "schema": {
+                "label": "Request schema",
+                "placeholder": "Define the expected request body"
+              }
+            },
+            "output": {
+              "payload": {
+                "label": "Payload"
+              }
+            }
+          },
+          "fields": {
+            "schema": {
+              "label": "Request schema",
+              "placeholder": "Define the expected request body"
+            }
+          }
+        },
+        "schedule": {
+          "name": "Schedule trigger",
+          "description": "Starts the workflow on a cron-like schedule with timezone support.",
+          "ports": {
+            "input": {
+              "cron": {
+                "label": "Schedule",
+                "placeholder": "0 * * * *"
+              }
+            },
+            "output": {
+              "payload": {
+                "label": "Payload"
+              }
+            }
+          },
+          "fields": {
+            "cron": {
+              "label": "Schedule",
+              "placeholder": "0 * * * *"
+            }
+          }
+        },
+        "event": {
+          "name": "Event trigger",
+          "description": "Starts the workflow when an event is published on the configured internal event bus topic.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              }
+            }
+          }
+        },
+        "form": {
+          "name": "Form trigger",
+          "description": "Starts the workflow when a generated form is submitted. Field definitions drive the form schema.",
+          "ports": {
+            "input": {
+              "schema": {
+                "label": "Form schema",
+                "placeholder": "Define the form fields"
+              }
+            },
+            "output": {
+              "payload": {
+                "label": "Payload"
+              }
+            }
+          },
+          "fields": {
+            "schema": {
+              "label": "Form schema",
+              "placeholder": "Define the form fields"
+            }
+          }
+        },
+        "chat": {
+          "name": "Chat trigger",
+          "description": "Starts the workflow when a chat message is received. Emits message, sessionId, and userId.",
+          "ports": {
+            "output": {
+              "message": {
+                "label": "Message"
+              },
+              "sessionId": {
+                "label": "Session id"
+              },
+              "userId": {
+                "label": "User id"
+              }
+            }
+          }
+        }
+      },
+      "flow_control": {
+        "if": {
+          "name": "If",
+          "description": "Conditional branch. Evaluates the configured condition and routes the input to the matching output.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value",
+                "placeholder": "Value to evaluate"
+              },
+              "else": {
+                "label": "Else"
+              }
+            },
+            "output": {
+              "then": {
+                "label": "Then"
+              },
+              "else": {
+                "label": "Else",
+                "placeholder": "Output when condition is false"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value",
+              "placeholder": "Value to evaluate"
+            },
+            "condition": {
+              "label": "Condition",
+              "placeholder": "Condition expression to evaluate"
+            },
+            "else": {
+              "label": "Else"
+            }
+          }
+        },
+        "switch": {
+          "name": "Switch",
+          "description": "Multi-branch switch. Routes the input to the first matching case output, or the default output.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value",
+                "placeholder": "Value to switch on"
+              }
+            },
+            "output": {
+              "default": {
+                "label": "Default"
+              },
+              "case": {
+                "label": "Case"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value",
+              "placeholder": "Value to switch on"
+            },
+            "cases": {
+              "label": "Cases"
+            },
+            "hasDefault": {
+              "label": "Has default"
+            },
+            "defaultPort": {
+              "label": "Default port"
+            },
+            "switch": {
+              "label": "Switch"
+            }
+          }
+        },
+        "error_boundary": {
+          "name": "Error boundary",
+          "description": "Wraps the input in a try/catch/finally. Emits the result on success, or the error on failure.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value",
+                "placeholder": "Value to guard"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "error": {
+                "label": "Error"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value",
+              "placeholder": "Value to guard"
+            },
+            "finally": {
+              "label": "Finally"
+            }
+          }
+        },
+        "human_approval": {
+          "name": "Human approval",
+          "description": "Suspends execution until a human approves or rejects. Emits the approved value or a rejection.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              }
+            },
+            "output": {
+              "approved": {
+                "label": "Approved"
+              },
+              "rejected": {
+                "label": "Rejected"
+              }
+            }
+          },
+          "fields": {
+            "message": {
+              "label": "Message",
+              "placeholder": "Message shown to the approver"
+            },
+            "approved": {
+              "label": "Approved"
+            },
+            "approvers": {
+              "label": "Approvers"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
+        },
+        "break": {
+          "name": "Break",
+          "description": "Breaks out of the enclosing loop. The loop terminates early and returns the results collected so far.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value",
+                "placeholder": "Value to forward (collected as the last partial result)"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Value",
+              "placeholder": "Value to forward (collected as the last partial result)"
+            }
+          }
+        }
+      },
+      "utility": {
+        "map": {
+          "name": "Map",
+          "description": "Transforms the current input into a new output object using the configured mapper.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value",
+                "placeholder": "Value to transform"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value",
+              "placeholder": "Value to transform"
+            }
+          }
+        },
+        "delay": {
+          "name": "Delay",
+          "description": "Pauses execution for the configured duration (in milliseconds), then forwards the input unchanged.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              },
+              "timeoutMs": {
+                "label": "Timeout (ms)"
+              }
+            },
+            "output": {
+              "value": {
+                "label": "Value"
+              }
+            }
+          },
+          "fields": {
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
+        },
+        "code": {
+          "name": "Code",
+          "description": "Runs user-authored JS/TS in a restricted VM sandbox. Supports placeholder syntax for workflow data references.",
+          "ports": {
+            "input": {
+              "code": {
+                "label": "Code",
+                "placeholder": "// User-authored JS code"
+              },
+              "data": {
+                "label": "Data"
+              },
+              "timeoutMs": {
+                "label": "Timeout (ms)"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              }
+            }
+          },
+          "fields": {
+            "code": {
+              "label": "Code",
+              "placeholder": "// User-authored JS code"
+            },
+            "language": {
+              "label": "Language",
+              "options": {
+                "javascript": "JavaScript",
+                "typescript": "TypeScript"
+              }
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            },
+            "defaultCode": {
+              "label": "Default code",
+              "placeholder": "Code run when no code input is connected"
+            }
+          }
+        },
+        "log": {
+          "name": "Log",
+          "description": "Logs the input value to the execution logger and forwards it unchanged.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              },
+              "message": {
+                "label": "Message",
+                "placeholder": "Message to log"
+              },
+              "level": {
+                "label": "Log level"
+              }
+            },
+            "output": {
+              "value": {
+                "label": "Value"
+              }
+            }
+          },
+          "fields": {
+            "message": {
+              "label": "Message",
+              "placeholder": "Message to log"
+            },
+            "level": {
+              "label": "Log level",
+              "placeholder": "info, warn, error, ..."
+            }
+          }
+        },
+        "utility_log": {
+          "name": "Utility Log",
+          "description": "Logs the input value to the run's ctx.logger at a configurable level and forwards it unchanged.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              },
+              "message": {
+                "label": "Message",
+                "placeholder": "Message to log"
+              },
+              "level": {
+                "label": "Log level"
+              }
+            },
+            "output": {
+              "value": {
+                "label": "Value"
+              }
+            }
+          },
+          "fields": {
+            "message": {
+              "label": "Message",
+              "placeholder": "Message to log"
+            },
+            "level": {
+              "label": "Log level",
+              "placeholder": "info, warn, error, ..."
+            }
+          }
+        }
+      },
+      "loop": {
+        "foreach": {
+          "name": "Foreach loop",
+          "description": "Iterates over an array input and executes the body once per item (or per slice of items).",
+          "ports": {
+            "input": {
+              "items": {
+                "label": "Items",
+                "placeholder": "Array to iterate over"
+              },
+              "slice": {
+                "label": "Slice size",
+                "placeholder": "Items per iteration (default 1)"
+              },
+              "state": {
+                "label": "State",
+                "placeholder": "Initial state"
+              }
+            },
+            "output": {
+              "item": {
+                "label": "Item"
+              },
+              "completed": {
+                "label": "Completed"
+              },
+              "results": {
+                "label": "Results"
+              },
+              "iterations": {
+                "label": "Iterations"
+              },
+              "broken": {
+                "label": "Broken"
+              },
+              "state": {
+                "label": "State"
+              }
+            },
+            "connection": {
+              "loop": {
+                "label": "Loop body"
+              }
+            }
+          },
+          "fields": {
+            "items": {
+              "label": "Items",
+              "placeholder": "Array to iterate over"
+            },
+            "slice": {
+              "label": "Slice size",
+              "placeholder": "Items per iteration (default 1)"
+            },
+            "maxIterations": {
+              "label": "Max iterations"
+            },
+            "condition": {
+              "label": "Condition"
+            },
+            "itemPort": {
+              "label": "Item port"
+            },
+            "resultPort": {
+              "label": "Result port"
+            },
+            "statePort": {
+              "label": "State port"
+            }
+          }
+        },
+        "while": {
+          "name": "While loop",
+          "description": "Repeats the body while the condition is true (pre-condition).",
+          "ports": {
+            "input": {
+              "state": {
+                "label": "State",
+                "placeholder": "Initial state"
+              }
+            },
+            "output": {
+              "state": {
+                "label": "Final state"
+              },
+              "iterations": {
+                "label": "Iterations"
+              }
+            }
+          },
+          "fields": {
+            "state": {
+              "label": "State",
+              "placeholder": "Initial state"
+            },
+            "condition": {
+              "label": "Condition"
+            },
+            "maxIterations": {
+              "label": "Max iterations"
+            },
+            "statePort": {
+              "label": "State port"
+            },
+            "inputPort": {
+              "label": "Input port"
+            },
+            "outputPort": {
+              "label": "Output port"
+            }
+          }
+        },
+        "until": {
+          "name": "Until loop",
+          "description": "Repeats the body until the condition is true (post-condition, runs at least once).",
+          "ports": {
+            "input": {
+              "state": {
+                "label": "State",
+                "placeholder": "Initial state"
+              }
+            },
+            "output": {
+              "state": {
+                "label": "Final state"
+              },
+              "iterations": {
+                "label": "Iterations"
+              }
+            }
+          },
+          "fields": {
+            "state": {
+              "label": "State",
+              "placeholder": "Initial state"
+            },
+            "condition": {
+              "label": "Condition"
+            },
+            "maxIterations": {
+              "label": "Max iterations"
+            },
+            "statePort": {
+              "label": "State port"
+            },
+            "inputPort": {
+              "label": "Input port"
+            },
+            "outputPort": {
+              "label": "Output port"
+            }
+          }
+        }
+      },
+      "agent": {
+        "agent": {
+          "name": "Agent",
+          "description": "AI agent that orchestrates a model, memory, and workspace to complete a task.",
+          "ports": {
+            "input": {
+              "prompt": {
+                "label": "Prompt",
+                "placeholder": "Prompt for the agent"
+              }
+            },
+            "output": {
+              "response": {
+                "label": "Response"
+              },
+              "actions": {
+                "label": "Actions"
+              }
+            },
+            "model": {
+              "model": {
+                "label": "Model"
+              }
+            },
+            "memory": {
+              "memory": {
+                "label": "Memory"
+              }
+            },
+            "workspace": {
+              "workspace": {
+                "label": "Workspace"
+              }
+            }
+          },
+          "fields": {
+            "prompt": {
+              "label": "Prompt",
+              "placeholder": "Prompt for the agent"
+            }
+          }
+        }
+      },
+      "boundary": {
+        "input": {
+          "name": "Workflow input value",
+          "description": "Reusable canvas value node representing a workflow input.",
+          "ports": {
+            "output": {
+              "value": {
+                "label": "Value"
+              }
+            }
+          }
+        },
+        "output": {
+          "name": "Workflow output value",
+          "description": "Terminal canvas node that receives the workflow output.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              }
+            }
+          }
+        }
+      }
+    },
+    "run": {
+      "id": {
+        "label": "Run id"
+      },
+      "workflowId": {
+        "label": "Workflow id"
+      },
+      "owner": {
+        "label": "Owner"
+      },
+      "status": {
+        "label": "Status"
+      },
+      "fingerprint": {
+        "label": "Fingerprint"
+      }
+    }
+  }
+}

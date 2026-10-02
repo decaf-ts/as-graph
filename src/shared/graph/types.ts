@@ -210,6 +210,14 @@ export interface GraphRunLogEntry {
   workflowId: string;
   nodeId?: string;
   user?: string | null;
+  /** Granted roles of the authenticated principal, when present. */
+  roles?: string[];
+  /** Granted namespaces of the authenticated principal, when present. */
+  namespaces?: string[];
+  /** Authenticated organization/tenant, when present. */
+  organization?: string;
+  /** Client IP address, when present. */
+  ip?: string;
   /** Structured payload associated with the log line, if any. */
   payload?: unknown;
 }

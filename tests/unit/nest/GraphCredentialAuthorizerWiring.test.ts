@@ -35,14 +35,19 @@ import {
   type GraphCredentialAuthorizer,
 } from "../../../src";
 import { GraphExecutionModule } from "../../../src/nest/graph";
-import { documentEdge, documentNode } from "../graph/engine-fixtures";
+import {
+  documentEdge,
+  documentNode,
+  resetGraphInjectables,
+  resetGraphValueAdapter,
+} from "../graph/engine-fixtures";
 import { TestRequestContextModule } from "./graphRunTestSupport";
 
 jest.setTimeout(60000);
 
 /** Registers the credential-requiring kind plus a lenient plain-secret kind. */
-function registerTestKinds(catalogue: GraphNodeCatalogue): void {
-  catalogue.register(
+async function registerTestKinds(catalogue: GraphNodeCatalogue): Promise<void> {
+  await catalogue.register(
     defineGraphNode({
       manifest: {
         kind: "test.credauth",
@@ -65,10 +70,10 @@ function registerTestKinds(catalogue: GraphNodeCatalogue): void {
   // placeholder manifests (lenient): nested parameter values reach the
   // stage-8 plain-secret scan without undeclared-parameter noise, and the
   // sink keeps the credential node connected (DECAF-50 §4.26 R2-3(8))
-  catalogue.registerExecutor("test.plainsecret", {
+  await catalogue.registerExecutor("test.plainsecret", {
     execute: async () => ({ out: true }),
   });
-  catalogue.registerExecutor("test.sink", {
+  await catalogue.registerExecutor("test.sink", {
     execute: async () => ({ out: true }),
   });
 }
@@ -127,6 +132,8 @@ async function bootApp(
   credentialAuthorizer: GraphCredentialAuthorizer,
   initAdapter: boolean
 ): Promise<{ app: INestApplication; engine: GraphExecutionEngine; runService: GraphRunService }> {
+  resetGraphInjectables();
+  resetGraphValueAdapter();
   const moduleRef = await Test.createTestingModule({
     imports: [
       TestRequestContextModule,
@@ -139,7 +146,7 @@ async function bootApp(
   }).compile();
   const app = moduleRef.createNestApplication();
   await app.init();
-  registerTestKinds(moduleRef.get(GraphNodeCatalogue));
+  await registerTestKinds(moduleRef.get(GraphNodeCatalogue));
   return {
     app,
     engine: moduleRef.get(GraphExecutionEngine),

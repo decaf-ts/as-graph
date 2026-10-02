@@ -1,3 +1,4 @@
+import type { GraphErrorBoundaryConfiguration } from "./GraphErrorBoundaryConfiguration";
 import type { GraphInputBinding, GraphOutputBinding } from "./GraphNodeBinding";
 import type { GraphJsonValue } from "./GraphJsonValue";
 import type { GraphLoopConfiguration } from "./GraphLoopConfiguration";
@@ -32,6 +33,7 @@ export interface GraphNodeInstance {
   disabled?: boolean;
   metadata?: Record<string, GraphJsonValue>;
   loop?: GraphLoopConfiguration;
+  errorBoundary?: GraphErrorBoundaryConfiguration;
   ui?: GraphNodeUiState;
   /**
    * UI data-pinning state (D4, DECAF-50 §4.22). Present iff the node is

@@ -16,9 +16,12 @@ import { AuthorizationError, ForbiddenError } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../shared/graph";
 import { DecafRequestContext } from "@decaf-ts/for-nest";
 import type { GraphWorkflowValidationResult } from "../../";
-import { GraphWorkflowService, GRAPH_WORKFLOW_OPTIONS } from "./GraphWorkflowService";
-import { GraphWorkflowDocumentRejectedError } from "./GraphWorkflowErrors";
-import type { GraphWorkflowDocumentLimits } from "./GraphWorkflowDocumentLimits";
+import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
+import { GraphWorkflowDocumentRejectedError } from "../../engine/errors/GraphWorkflowErrors";
+import type { GraphWorkflowDocumentLimits } from "../../engine/validation/GraphWorkflowDocumentLimits";
+
+/** DI token for {@link GraphWorkflowControllerOptions}. */
+export const GRAPH_WORKFLOW_OPTIONS = "GRAPH_WORKFLOW_OPTIONS";
 
 /** Options for the workflow persistence HTTP API (DECAF-50 §4.10): authentication mode and document resource limits. */
 export interface GraphWorkflowControllerOptions {
@@ -119,6 +122,16 @@ export class GraphWorkflowController {
     return this.requestContext;
   }
 
+  /**
+   * Saves a workflow: a canonical `{ document, ... }` wrapper body is stored
+   * as a legacy-transition snapshot, a bare document body as the canonical
+   * document.
+   *
+   * @param {string} workflowId - Workflow id path parameter.
+   * @param {unknown} body - Bare `GraphWorkflowDocument` or canonical snapshot wrapper.
+   * @return {Promise<GraphWorkflowSaveResponse>} The saved workflow's id, name, and timestamp.
+   * @throws {HttpException} The mapped graph-workflow HTTP error (400/403/409 per the service contract).
+   */
   @Put("workflows/:workflowId")
   async saveWorkflow(
     @Param("workflowId") workflowId: string,
@@ -147,6 +160,13 @@ export class GraphWorkflowController {
     }
   }
 
+  /**
+   * Returns a workflow's canonical document.
+   *
+   * @param {string} workflowId - Workflow id path parameter.
+   * @return {Promise<GraphWorkflowDocument>} The stored canonical document.
+   * @throws {HttpException} The mapped graph-workflow HTTP error (404 for unknown/undocumented workflows, 403 for foreign owners).
+   */
   @Get("workflows/:workflowId")
   async getWorkflow(
     @Param("workflowId") workflowId: string
@@ -159,6 +179,13 @@ export class GraphWorkflowController {
     }
   }
 
+  /**
+   * Validates a workflow document against the boundary gate without persisting.
+   *
+   * @param {unknown} body - Bare `GraphWorkflowDocument` or canonical snapshot wrapper.
+   * @return {Promise<GraphWorkflowValidationResult>} Structured validation result.
+   * @throws {HttpException} 401 without an authenticated context.
+   */
   @Post("workflows/validate")
   async validateWorkflow(
     @Body() body: unknown

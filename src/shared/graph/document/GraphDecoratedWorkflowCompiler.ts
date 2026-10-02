@@ -8,6 +8,11 @@ import type {
   GraphWorkflowRelationMetadata,
 } from "../constants";
 import { graphLeafPortsOf, graphWorkflowDefinitionOf } from "../reader";
+import {
+  GRAPH_AUTH_METADATA_KEY,
+  graphAuthMetadataOf,
+  graphAuthMetadataWith,
+} from "../auth";
 import type { GraphWorkflowDocument, GraphWorkflowPortInstance } from "./GraphWorkflowDocument";
 import type { GraphNodeInstance } from "./GraphNodeInstance";
 import type { GraphEdgeInstance } from "./GraphEdgeInstance";
@@ -325,11 +330,19 @@ function asNumber(value: unknown): number | undefined {
 function graphDocumentMetadataOf(
   definition: GraphWorkflowDefinition
 ): Record<string, GraphJsonValue> | undefined {
-  if (!definition.workflow?.metadata) return undefined;
   const collected: Record<string, GraphJsonValue> = {};
-  for (const [key, value] of Object.entries(definition.workflow.metadata)) {
+  for (const [key, value] of Object.entries(definition.workflow?.metadata ?? {})) {
     reflectJsonSafeValue(collected, key, value);
   }
+  // Fold the workflow class's `@namespace(...)` requirement (or explicit
+  // `namespaces` option) into the reserved `auth` document-metadata key so the
+  // engine can authorize the whole graph before executing any node.
+  const declared = graphAuthMetadataOf(collected);
+  const auth = graphAuthMetadataWith({
+    namespaces: definition.namespaces ?? declared?.namespaces,
+    roles: declared?.roles,
+  });
+  if (auth) collected[GRAPH_AUTH_METADATA_KEY] = auth as unknown as GraphJsonValue;
   return Object.keys(collected).length ? collected : undefined;
 }
 
@@ -472,6 +485,15 @@ function graphNodeDefinitionSafely(node: unknown): GraphNodeDefinitionShim | und
  * decorated-definition to {@link GraphWorkflowDocument} mapping.
  */
 export class GraphDecoratedWorkflowCompiler {
+  /**
+   * Compiles a decorated workflow class (or model instance, or raw
+   * definition) into its canonical {@link GraphWorkflowDocument}.
+   *
+   * @param {GraphDecoratedWorkflowInput} workflow - The decorated workflow source to compile.
+   * @param {GraphDecoratedWorkflowCompileOptions} [options] - Compile options forwarded to the facade.
+   * @return {GraphWorkflowDocument} The compiled canonical document.
+   * @throws {Error} When the workflow shape is invalid or a loop body fails to compile.
+   */
   compile(
     workflow: GraphDecoratedWorkflowInput,
     options: GraphDecoratedWorkflowCompileOptions = {}

@@ -34,6 +34,11 @@ function configAttribute(
   return (payload.config as Record<string, unknown>)[key];
 }
 
+/** Renders a string-list attribute as a comma-separated column value. */
+function renderStringList(value: unknown): string {
+  return Array.isArray(value) ? value.map((entry) => String(entry)).join(", ") : String(value);
+}
+
 /**
  * Registers the four DECAF-48 run attributes as log parameter descriptors
  * (nodeId / workflowId / runId / user). Rendered only when keyed with a
@@ -76,6 +81,44 @@ export function registerGraphRunLogParameters(): void {
       },
       render(payload) {
         return String(configAttribute(payload, GraphLogAttribute.USER));
+      },
+    },
+    {
+      key: GraphLogAttribute.ROLES,
+      shouldInclude(payload) {
+        const value = configAttribute(payload, GraphLogAttribute.ROLES);
+        return Array.isArray(value) && value.length > 0;
+      },
+      render(payload) {
+        return renderStringList(configAttribute(payload, GraphLogAttribute.ROLES));
+      },
+    },
+    {
+      key: GraphLogAttribute.NAMESPACES,
+      shouldInclude(payload) {
+        const value = configAttribute(payload, GraphLogAttribute.NAMESPACES);
+        return Array.isArray(value) && value.length > 0;
+      },
+      render(payload) {
+        return renderStringList(configAttribute(payload, GraphLogAttribute.NAMESPACES));
+      },
+    },
+    {
+      key: GraphLogAttribute.ORGANIZATION,
+      shouldInclude(payload) {
+        return configAttribute(payload, GraphLogAttribute.ORGANIZATION) != null;
+      },
+      render(payload) {
+        return String(configAttribute(payload, GraphLogAttribute.ORGANIZATION));
+      },
+    },
+    {
+      key: GraphLogAttribute.IP,
+      shouldInclude(payload) {
+        return configAttribute(payload, GraphLogAttribute.IP) != null;
+      },
+      render(payload) {
+        return String(configAttribute(payload, GraphLogAttribute.IP));
       },
     },
   ];

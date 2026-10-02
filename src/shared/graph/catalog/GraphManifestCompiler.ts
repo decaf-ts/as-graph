@@ -1,5 +1,6 @@
 import { ValidationError } from "@decaf-ts/db-decorators";
 import type { Constructor } from "@decaf-ts/decoration";
+import { ValidationKeys } from "@decaf-ts/decorator-validation";
 import type { Model } from "@decaf-ts/decorator-validation";
 import type { GraphNodeDefinition, GraphPortDefinition } from "../constants";
 import { graphDefinitionOf, graphLeafPortsOf, graphNodeMetadataOf, graphPortsOf } from "../reader";
@@ -24,6 +25,7 @@ import type { GraphConnectionPolicy } from "./GraphConnectionPolicy";
 import type { GraphValueSchema } from "./GraphValueSchema";
 import {
   GRAPH_DATE_TYPE_NAME_FORMATS,
+  graphTypeNameToSchemaType,
   graphValueSchemaFromValidation,
   type GraphValidationRecord,
 } from "./GraphValueSchemaDerivation";
@@ -61,9 +63,56 @@ function portPlaceholderOf(port: GraphPortDefinition): string | undefined {
   return typeof placeholder === "string" ? placeholder : undefined;
 }
 
+/**
+ * Returns the explicit primitive value-schema type declared on the port via
+ * `@input({ type })` / `@port` graph metadata or the `@uielement` `type` prop,
+ * when it names a known non-model schema type.
+ *
+ * Decaf's `Metadata.validationFor` auto-injects a `type` validation entry
+ * carrying the property's TypeScript `design:type` for ANY validated property.
+ * That entry is indistinguishable from an explicit `@type` custom-model
+ * decorator, so the manifest compiler must prefer an explicitly declared
+ * primitive here to keep a `@min`/`@max`-decorated `number` parameter a
+ * `number` instead of degrading it to an `object`.
+ */
+function explicitGraphPrimitiveTypeOf(port: GraphPortDefinition): string | undefined {
+  for (const candidate of [
+    port.graph?.["type"],
+    port.element?.["props"]?.["type"],
+    port.prop?.["type"],
+  ]) {
+    if (typeof candidate === "string" && graphTypeNameToSchemaType(candidate) !== "any") {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strips the auto-injected `type` validation entry while preserving the other
+ * validators (e.g. `min`/`max`) so an explicit primitive schema keeps its
+ * constraints.
+ */
+function validationWithoutType(
+  validation: Record<string, unknown> | undefined
+): GraphValidationRecord | undefined {
+  if (!validation) return undefined;
+  const entries = Object.entries(validation).filter(
+    ([key]) => key !== ValidationKeys.TYPE
+  );
+  return Object.fromEntries(entries) as GraphValidationRecord;
+}
+
 function graphPortSchemaOf(port: GraphPortDefinition): GraphValueSchema {
   if (port.type && port.type in GRAPH_DATE_TYPE_NAME_FORMATS) {
     return { type: "string", format: GRAPH_DATE_TYPE_NAME_FORMATS[port.type] };
+  }
+  const explicitType = explicitGraphPrimitiveTypeOf(port);
+  if (explicitType) {
+    return graphValueSchemaFromValidation(
+      validationWithoutType(port.validation),
+      explicitType
+    );
   }
   return graphValueSchemaFromValidation(
     port.validation as GraphValidationRecord | undefined,
@@ -110,12 +159,26 @@ function graphPortDirectionOf(
   }
 }
 
+function graphPortIdOf(port: GraphPortDefinition): string {
+  // The decorated `handle` is the port identity consumed by edges, input
+  // bindings and the renderer (see `GraphPortView`); the `path`/`property` is
+  // only the TypeScript field name. They diverge when a node needs two logical
+  // ports named the same (e.g. a passthrough node with `value` in and out).
+  // Connection ports are structural (they carry no workflow data) and keep their
+  // property/path id.
+  const handle = port.graph?.["handle"];
+  if (port.direction !== "connection" && typeof handle === "string" && handle) {
+    return handle;
+  }
+  return port.path ?? port.property;
+}
+
 function graphPortManifestOf(
   port: GraphPortDefinition,
   connectionsPolicy?: GraphConnectionPolicy
 ): GraphPortManifest {
   const manifest: GraphPortManifest = {
-    id: port.path ?? port.property,
+    id: graphPortIdOf(port),
     label: port.label,
     direction: graphPortDirectionOf(port.direction),
     schema: graphPortSchemaOf(port),
@@ -124,6 +187,7 @@ function graphPortManifestOf(
   if (port.hidden) manifest.hidden = true;
   const category = port.graph?.["category"];
   if (typeof category === "string") manifest.category = category;
+  if (port.graph?.["userControlled"] === true) manifest.configurable = true;
   const handle = port.graph?.["handle"];
   if (typeof handle === "string") manifest.handle = handle;
   const policy = graphPortsPolicyOf(port.graph?.["connectionRules"]) ?? connectionsPolicy;
@@ -138,7 +202,7 @@ function graphPortManifestOf(
 function graphParameterOf(port: GraphPortDefinition): GraphParameterDefinition {
   const base: Record<string, unknown> = {
     type: "string",
-    id: port.path ?? port.property,
+    id: graphPortIdOf(port),
     label: port.label,
     required: port.required,
   };
@@ -243,8 +307,13 @@ function widgetTagOf(port: GraphPortDefinition): string | undefined {
   return typeof tag === "string" && tag ? tag : undefined;
 }
 
+function widgetTypeOf(port: GraphPortDefinition): string | undefined {
+  const type = port.element?.["props"]?.["type"];
+  return typeof type === "string" ? type : undefined;
+}
+
 function multilineOf(port: GraphPortDefinition): boolean {
-  return widgetTagOf(port) === "textarea";
+  return widgetTagOf(port) === "textarea" || widgetTypeOf(port) === "textarea";
 }
 
 function isGraphCodeWidget(port: GraphPortDefinition): boolean {
@@ -378,6 +447,7 @@ export function graphNodeManifest(
     parameters,
   };
   if (connections.length) manifest.connections = connections;
+  if (definition.namespaces?.length) manifest.namespaces = definition.namespaces.slice();
   assertGraphNodeManifestSerializable(manifest);
   return manifest;
 }

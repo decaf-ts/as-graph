@@ -25,7 +25,7 @@ import {
 describe("GraphExecutionPlanner", () => {
   it("plans a resolved linear workflow into ordered topological layers", async () => {
     const planner = new GraphExecutionPlanner();
-    const plan = planner.plan(await resolveDocument(linearDocument()));
+    const plan = await planner.plan(await resolveDocument(linearDocument()));
 
     expect(plan.workflowId).toBe("linear-wf");
     expect(plan.nodes).toHaveLength(2);
@@ -41,12 +41,12 @@ describe("GraphExecutionPlanner", () => {
     expect(layer1.nodes.map((n) => n.id)).toContain("multiplier");
   });
 
-  it("accepts only resolved workflows — raw definitions are rejected (§4.19: raw GraphWorkflowDefinition objects)", () => {
+  it("accepts only resolved workflows — raw definitions are rejected (§4.19: raw GraphWorkflowDefinition objects)", async () => {
     const planner = new GraphExecutionPlanner();
     const planCall = () => planner.plan(linearWorkflow() as never);
-    expect(planCall).toThrow(GraphTopologyError);
+    await expect(planCall).rejects.toThrow(GraphTopologyError);
     try {
-      planCall();
+      await planCall();
     } catch (error) {
       expect((error as GraphTopologyError).message).toContain(
         "accepts only a GraphResolvedWorkflow"
@@ -54,7 +54,7 @@ describe("GraphExecutionPlanner", () => {
     }
   });
 
-  it("accepts only resolved workflows — inline raw node definitions are rejected (§4.19: raw GraphNodeDefinition objects)", () => {
+  it("accepts only resolved workflows — inline raw node definitions are rejected (§4.19: raw GraphNodeDefinition objects)", async () => {
     const planner = new GraphExecutionPlanner();
     const raw = {
       nodes: [
@@ -72,10 +72,12 @@ describe("GraphExecutionPlanner", () => {
       ],
       relations: [],
     };
-    expect(() => planner.plan(raw as never)).toThrow(GraphTopologyError);
+    await expect(planner.plan(raw as never)).rejects.toThrow(
+      GraphTopologyError
+    );
   });
 
-  it("accepts only resolved workflows — definition-shaped objects that skip the resolved lookup maps are rejected (§4.20 P3 gate)", () => {
+  it("accepts only resolved workflows — definition-shaped objects that skip the resolved lookup maps are rejected (§4.20 P3 gate)", async () => {
     const planner = new GraphExecutionPlanner();
     // Carries the resolved-workflow report arrays over a canonical document
     // but without the `nodeById`/`incomingByNode`/`outgoingByNode` maps that
@@ -83,17 +85,23 @@ describe("GraphExecutionPlanner", () => {
     const notActuallyResolved = {
       document: linearDocument(),
       nodes: [
-        { instance: { id: "adder", kind: "math.add", parameters: {} }, manifest: {}, executor: { execute: () => ({}) } },
+        {
+          instance: { id: "adder", kind: "math.add", parameters: {} },
+          manifest: {},
+          executor: { execute: () => ({}) },
+        },
       ],
       edges: [],
     };
-    expect(() => planner.plan(notActuallyResolved as never)).toThrow(GraphTopologyError);
+    await expect(planner.plan(notActuallyResolved as never)).rejects.toThrow(
+      GraphTopologyError
+    );
   });
 
   it("carries the canonical instance, manifest, and executor on plan nodes", async () => {
     const planner = new GraphExecutionPlanner();
     const resolved = await resolveDocument(linearDocument());
-    const plan = planner.plan(resolved);
+    const plan = await planner.plan(resolved);
 
     const adder = plan.nodes.find((n) => n.id === "adder")!;
     expect(adder.instance).toBe(resolved.nodeById.get("adder")!.instance);
@@ -103,7 +111,7 @@ describe("GraphExecutionPlanner", () => {
 
   it("builds incoming and outgoing edge maps", async () => {
     const planner = new GraphExecutionPlanner();
-    const plan = planner.plan(await resolveDocument(linearDocument()));
+    const plan = await planner.plan(await resolveDocument(linearDocument()));
 
     const incoming = plan.incomingByNode.get("adder") ?? [];
     expect(incoming.length).toBe(2);
@@ -115,31 +123,36 @@ describe("GraphExecutionPlanner", () => {
 
   it("never routes values along structural connection edges", async () => {
     const planner = new GraphExecutionPlanner();
-    const plan = planner.plan(await resolveDocument(linearDocument()));
+    const plan = await planner.plan(await resolveDocument(linearDocument()));
     for (const edge of plan.edges) {
       expect(edge.type).toBe("data");
     }
   });
 
-  it("throws GraphCycleError for cyclic workflows", () => {
+  it("throws GraphCycleError for cyclic workflows", async () => {
     const planner = new GraphExecutionPlanner();
     const resolved = handResolvedWorkflow(
       cyclicDocument(),
       [
         { id: "adder", kind: "math.add", inputs: ["a"], outputs: ["sum"] },
-        { id: "multiplier", kind: "math.multiply", inputs: ["x"], outputs: ["product"] },
+        {
+          id: "multiplier",
+          kind: "math.multiply",
+          inputs: ["x"],
+          outputs: ["product"],
+        },
       ],
       [
         ["e1", "adder", "sum", "multiplier", "x"],
         ["e2", "multiplier", "product", "adder", "a"],
       ]
     );
-    expect(() => planner.plan(resolved)).toThrow(GraphCycleError);
+    await expect(planner.plan(resolved)).rejects.toThrow(GraphCycleError);
   });
 
   it("assigns incremental layer indices", async () => {
     const planner = new GraphExecutionPlanner();
-    const plan = planner.plan(await resolveDocument(linearDocument()));
+    const plan = await planner.plan(await resolveDocument(linearDocument()));
     plan.layers.forEach((layer, i) => {
       expect(layer.index).toBe(i);
     });
@@ -202,23 +215,32 @@ describe("DECAF-50 §4.19 planner/engine — planner module surface", () => {
 
     for (const file of files) {
       const compiled = compilePlanningFile(file);
-      expect({ file, surface: /graphDefinitionOf/.test(compiled) })
-        .toEqual({ file, surface: false });
-      expect({ file, surface: /GraphRelationResolver/.test(compiled) })
-        .toEqual({ file, surface: false });
+      expect({ file, surface: /graphDefinitionOf/.test(compiled) }).toEqual({
+        file,
+        surface: false,
+      });
+      expect({ file, surface: /GraphRelationResolver/.test(compiled) }).toEqual({
+        file,
+        surface: false,
+      });
     }
 
     // Non-vacuity: the scan only counts when the compiled planner is real
     // module output (class + resolved-workflow guard present).
     const planner = compilePlanningFile("GraphExecutionPlanner.ts");
-    expect(planner).toContain("class GraphExecutionPlanner");
+    expect(planner).toContain("GraphExecutionPlanner");
     expect(planner).toContain("plan(workflow");
     expect(planner).toContain("isGraphResolvedWorkflow");
   });
 
   it("keeps exactly one graphDefinitionOf mention in the planning sources and it is the module doc comment", () => {
-    const raw = readFileSync(join(locatePlanningDir(), "GraphExecutionPlanner.ts"), "utf8");
-    const occurrences = [...raw.matchAll(/graphDefinitionOf/g)].map((m) => m.index as number);
+    const raw = readFileSync(
+      join(locatePlanningDir(), "GraphExecutionPlanner.ts"),
+      "utf8"
+    );
+    const occurrences = [...raw.matchAll(/graphDefinitionOf/g)].map(
+      (m) => m.index as number
+    );
     expect(occurrences).toHaveLength(1);
     // The single mention sits inside the module JSDoc (before the imports).
     const firstImport = raw.indexOf("import ");

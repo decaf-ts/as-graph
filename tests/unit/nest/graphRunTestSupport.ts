@@ -29,7 +29,7 @@ import {
 } from "@nestjs/common";
 import { REQUEST } from "@nestjs/core";
 import { Test, type TestingModule } from "@nestjs/testing";
-import { DecafRequestContext } from "@decaf-ts/for-nest";
+import { DecafRequestContext, contextualizeRequestContext } from "@decaf-ts/for-nest";
 import type {
   GraphEdgeInstance,
   GraphWorkflowDocument,
@@ -57,11 +57,19 @@ interface TestHttpRequest {
  * header, mirroring how the DECAF-36 Req-B5 auth handler accumulates auth
  * data. Requests without the header stay anonymous (`undefined` owner),
  * which §4.15 tolerates for standalone module runs.
+ *
+ * It also runs `contextualizeRequestContext` — the same step the production
+ * `for-nest` `AuthMiddleware` / `DecafRequestHandlerInterceptor` performs —
+ * so the double is faithful to a real request context (the graph engine's
+ * `logCtx` reads the accumulated `operation`). Without this, a context-backed
+ * `engine.execute` throws `Key operation does not exist in accumulator` before
+ * any node runs, which is a test-harness gap, not production behaviour.
  */
 @Injectable({ scope: Scope.REQUEST })
 class TestRequestContext extends DecafRequestContext {
   constructor(@Inject(REQUEST) req: unknown) {
     super(req as never);
+    contextualizeRequestContext(this, req as never);
     const headers = (req as TestHttpRequest | undefined)?.headers ?? {};
     const user = headers[TEST_USER_HEADER];
     if (typeof user === "string" && user.length > 0) {
@@ -139,6 +147,7 @@ export class GateCenter {
   private readonly released = new Set<string>();
   private readonly waiters = new Map<string, Array<() => void>>();
 
+  /** {@link GraphNodeExecutor} implementing the blocking gate behaviour for kind `test.gate`. */
   readonly executor: GraphNodeExecutor = {
     execute: async (_input, context: GraphExecutionContext) => {
       const key = gateKey(context.runId, context.node.id);

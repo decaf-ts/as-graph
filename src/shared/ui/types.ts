@@ -4,7 +4,7 @@
  * @description The shared, DOM-free projection of the canonical graph
  * manifests, workflow documents and engine run results that a graph UI
  * renders. These are the "node components" and "port elements" contracts
- * consumed by the storybook harness and the e2e UI tests: a node view carries
+ * consumed by graph UI renderers: a node view carries
  * its display metadata, its effective (static + dynamic) ports and its visual
  * run state; a workflow view carries the nodes, edges and the optional run
  * feedback. Nothing here touches the DOM or the execution engine, so the shared

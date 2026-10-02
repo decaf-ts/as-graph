@@ -41,7 +41,7 @@ import type {
   GraphRunCreateRequest,
 } from "../../";
 import { GraphRunService } from "../../";
-import { graphWorkflowOwnerOf } from "./GraphWorkflowService";
+import { graphWorkflowOwnerOf } from "../../engine/services/GraphWorkflowService";
 
 /** DI token for {@link GraphRunControllerOptions}. */
 export const GRAPH_RUN_OPTIONS = "GRAPH_RUN_OPTIONS";
@@ -212,6 +212,13 @@ export class GraphRunController {
     }
   }
 
+  /**
+   * Reads a run and maps it to its HTTP representation.
+   *
+   * @param {string} runId - Run id path parameter.
+   * @return {Promise<Record<string, unknown>>} The run's HTTP shape.
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown runs, 403 for foreign owners).
+   */
   @Get("runs/:runId")
   async getRun(@Param("runId") runId: string): Promise<Record<string, unknown>> {
     const context = this.requireAuthenticatedContext();
@@ -223,6 +230,13 @@ export class GraphRunController {
     }
   }
 
+  /**
+   * Cancels a run (cooperative cancellation) and returns its updated state.
+   *
+   * @param {string} runId - Run id path parameter.
+   * @return {Promise<Record<string, unknown>>} The cancelled run's HTTP shape.
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown runs, 403 for foreign owners).
+   */
   @Delete("runs/:runId")
   async cancelRun(
     @Param("runId") runId: string
@@ -240,6 +254,16 @@ export class GraphRunController {
     }
   }
 
+  /**
+   * SSE stream of a run's event envelopes: replays buffered events after
+   * `afterSequence`, then streams live events until the terminal event type
+   * completes the stream.
+   *
+   * @param {string} runId - Run id path parameter.
+   * @param {string} [afterSequence] - Sequence number to replay events after.
+   * @return {Promise<Observable<MessageEvent>>} The SSE event stream.
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown runs, 403 for foreign owners).
+   */
   @Sse("runs/:runId/events")
   async events(
     @Param("runId") runId: string,

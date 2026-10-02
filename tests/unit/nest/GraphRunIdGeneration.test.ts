@@ -15,11 +15,10 @@ import { afterEach, describe, it, expect } from "@jest/globals";
 import {
   GraphExecutionEngine,
   GraphExecutionError,
-  GraphNodeExecutorRegistry,
   GraphStoreError,
   GraphRunService,
 } from "../../../src";
-import { demoCatalogue, linearDocument } from "../graph/engine-fixtures";
+import { linearDocument } from "../graph/engine-fixtures";
 
 /** The services expose `generateRunId` as a private method; reach it directly. */
 type RunIdGenerator = { generateRunId(): string };
@@ -39,11 +38,9 @@ function createService(): GraphRunService {
   );
 }
 
-/** Builds a `GraphExecutionEngine` over the arithmetic demo catalogue. */
+/** Builds a `GraphExecutionEngine`; `generateRunId` needs no configuration. */
 function createEngine(): GraphExecutionEngine {
-  return new GraphExecutionEngine({
-    registry: new GraphNodeExecutorRegistry(demoCatalogue()),
-  });
+  return new GraphExecutionEngine();
 }
 
 /** Runs `fn`, returning the thrown value (or `undefined` when it does not throw). */

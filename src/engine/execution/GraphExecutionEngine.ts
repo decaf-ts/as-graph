@@ -16,16 +16,30 @@
  * Decaf's Observable pipeline, including the DECAF-48 §4.4 visual-state
  * events and the `graph.run.log` run-log channel.
  */
-import type { Observable } from "@decaf-ts/core";
+import {
+  Adapter,
+  ClientBasedService,
+  type Context,
+  type ContextualArgs,
+  type MaybeContextualArg,
+} from "@decaf-ts/core";
 import type {
   GraphInputBinding,
   GraphJsonValue,
+  GraphValueTemplate,
   GraphWorkflowDocument,
   GraphWorkflowPortInstance,
 } from "../../shared/graph";
 
 import {
+  graphValueTemplateDefaultLanguage,
+  isGraphValueTemplate,
+} from "../../shared/graph";
+
+import {
   GRAPH_DEFAULT_CONCURRENCY,
+  GRAPH_MAX_FOREACH_ITERATIONS,
+  GRAPH_MAX_LOOP_ITERATIONS,
   GRAPH_WORKFLOW_BOUNDARY,
 } from "../constants";
 import {
@@ -33,12 +47,17 @@ import {
   GraphExecutionStatus,
   GraphVisualState,
 } from "../../shared/graph";
-import { GraphExecutionError, GraphRunCancelledError } from "../errors";
+import {
+  GraphBreakSignal,
+  GraphExecutionError,
+  GraphRunCancelledError,
+} from "../errors";
 import type {
   GraphExecutionErrorPayload,
   GraphExecutionEvent,
 } from "../../shared/graph";
 import type {
+  GraphExecutionLimits,
   GraphExecutionOptions,
   GraphExecutionResult,
   GraphExecutionValues,
@@ -68,9 +87,7 @@ import {
   isGraphCredentialReferenceLike,
 } from "../validation/GraphParameterValidator";
 import { GraphDocumentValidationError } from "../validation/GraphValidationErrors";
-import type { GraphValueStoreAdapter } from "../store/GraphValueStoreAdapter";
-import { InMemoryGraphValueStoreAdapter } from "../store/InMemoryGraphValueStoreAdapter";
-import { GraphValueStore } from "../store/GraphValueStore";
+import { createGraphValueRepository } from "../store/GraphValueRepository";
 import type { GraphCachedValue } from "../store/GraphCachedValue";
 import { GraphPinningService } from "../pinning/GraphPinningService";
 import { GraphPinningPolicy } from "../pinning/GraphPinningPolicy";
@@ -79,6 +96,12 @@ import { GraphExecutionContext } from "./GraphExecutionContext";
 import { GraphExecutionFrame } from "./GraphExecutionFrame";
 import { buildGraphExecutionResult } from "./GraphExecutionResult";
 import type { CodeSandboxEvaluator } from "./CodeSandboxEvaluator";
+import {
+  GraphAuthValidator,
+  graphAuthDataOf,
+  mergeGraphAuthData,
+  type GraphNamespaceMatchOptions,
+} from "../auth";
 
 /**
  * Configuration for the {@link GraphExecutionEngine}.
@@ -96,8 +119,24 @@ export interface GraphExecutionEngineConfig {
   documentLimits?: GraphWorkflowDocumentValidationLimits;
   /** Pluggable credential existence/authorization hook (§4.8 stage 8). */
   credentialAuthorizer?: GraphCredentialAuthorizer;
+  /**
+   * Whether workflow/node namespace authorization is enforced. Defaults to
+   * `false`: auth is optional. The NestJS module auto-enables it when a
+   * Keycloak auth handler is configured.
+   */
+  authEnabled?: boolean;
+  /**
+   * Namespace decomposition comparison policy. Defaults to `inherit`: a broader
+   * department grant covers a narrower sub-department requirement.
+   */
+  authMatch?: GraphNamespaceMatchOptions;
   planner?: GraphExecutionPlanner;
-  valueStoreAdapter?: GraphValueStoreAdapter;
+  /**
+   * Decaf adapter backing cached/pinned value persistence. Defaults to the
+   * globally configured adapter (`Adapter.current`); tests pass a `RamAdapter`
+   * and production passes a durable adapter.
+   */
+  valueAdapter?: Adapter<any, any, any, any>;
   eventEmitter?: GraphExecutionEventEmitter;
   defaultOptions?: Partial<GraphExecutionOptions>;
   /**
@@ -114,7 +153,48 @@ export interface GraphExecutionEngineConfig {
    * need a back-reference to the engine (e.g. loop executors that execute
    * sub-workflows through the same engine).
    */
-  onEngineCreated?: (engine: GraphExecutionEngine) => void;
+  onEngineCreated?: (
+    engine: GraphExecutionEngine
+  ) => void | Promise<void>;
+}
+
+/**
+ * Runtime collaborators resolved by {@link GraphExecutionEngine.initialize}.
+ */
+export interface GraphExecutionEngineClient {
+  /** Executor registry facade. */
+  registry: GraphNodeExecutorRegistry;
+  /** Trusted backend kind catalogue. */
+  catalogue: GraphNodeCatalogue;
+  /** Topological planner. */
+  planner: GraphExecutionPlanner;
+  /** Decaf adapter backing cached/pinned value persistence. */
+  valueAdapter: Adapter<any, any, any, any>;
+  /** Engine event emitter. */
+  eventEmitter: GraphExecutionEventEmitter;
+  /** Nine-stage document validator. */
+  documentValidator: GraphWorkflowDocumentValidator;
+  /** Workflow/node namespace + role authorizer. */
+  authValidator: GraphAuthValidator;
+  /** Optional pluggable code sandbox evaluator. */
+  codeSandboxEvaluator?: CodeSandboxEvaluator;
+}
+
+/**
+ * Compiles a `{{ ... }}` text template into a JavaScript template literal so
+ * the pluggable code sandbox evaluator can resolve its placeholders against
+ * the same `$input`/`$vars`/`$item` bindings used by expression bindings.
+ *
+ * @param template - The persisted template body.
+ * @returns A backtick-quoted template literal expression.
+ */
+function graphTemplateToExpression(template: string): string {
+  const escaped = template.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
+  const interpolated = escaped.replace(
+    /\{\{\s*([\s\S]*?)\s*\}\}/g,
+    (_match, expression: string) => `\${${expression}}`
+  );
+  return `\`${interpolated}\``;
 }
 
 /**
@@ -136,34 +216,95 @@ export interface GraphExecutionEngineConfig {
  * 9. Returning a complete {@link GraphExecutionResult}.
  */
 export class GraphExecutionEngine
-  implements Observable<[GraphExecutionObserver], [GraphExecutionEvent]> {
-  private readonly emitter: GraphExecutionEventEmitter;
-  private readonly planner: GraphExecutionPlanner;
-  private readonly valueStoreAdapter: GraphValueStoreAdapter;
-  private readonly defaultOptions: Partial<GraphExecutionOptions>;
-  private readonly documentValidator: GraphWorkflowDocumentValidator;
-  /** Pluggable code sandbox evaluator (§22.4); may be undefined. */
-  readonly codeSandboxEvaluator?: CodeSandboxEvaluator;
-
-  constructor(config: GraphExecutionEngineConfig) {
-    this.emitter = config.eventEmitter ?? new GraphExecutionEventEmitter();
-    this.planner = config.planner ?? new GraphExecutionPlanner();
-    this.valueStoreAdapter =
-      config.valueStoreAdapter ?? new InMemoryGraphValueStoreAdapter();
-    this.defaultOptions = config.defaultOptions ?? {};
-    this.codeSandboxEvaluator = config.codeSandboxEvaluator;
-    this.config = config;
-    this.documentValidator =
-      config.documentValidator ??
-      new GraphWorkflowDocumentValidator({
-        catalogue: config.catalogue ?? config.registry.catalog,
-        limits: config.documentLimits,
-        credentialAuthorizer: config.credentialAuthorizer,
-      });
-    config.onEngineCreated?.(this);
+  extends ClientBasedService<
+    GraphExecutionEngineClient,
+    GraphExecutionEngineConfig
+  >
+{
+  constructor() {
+    super();
   }
 
-  private readonly config: GraphExecutionEngineConfig;
+  /**
+   * Resolves the engine's configuration and runtime collaborators.
+   *
+   * `Service.boot` may call this with only a decaf `Context`; an explicit
+   * `initialize(config)` is required before the engine can execute.
+   *
+   * @param args - The engine config, optionally followed by a decaf `Context`.
+   * @returns The resolved config and runtime client bundle.
+   */
+  override async initialize(
+    ...args: ContextualArgs<any>
+  ): Promise<{
+    config: GraphExecutionEngineConfig;
+    client: GraphExecutionEngineClient;
+  }> {
+    const config = args[0] as GraphExecutionEngineConfig;
+    if (!config || typeof config !== "object" || !config.registry) {
+      this._config = undefined;
+      this._client = undefined;
+      return { config: undefined as never, client: undefined as never };
+    }
+    const catalogue = config.catalogue ?? config.registry.catalog;
+    const valueAdapter = config.valueAdapter ?? Adapter.current;
+    if (!valueAdapter) {
+      throw new GraphExecutionError(
+        "GraphExecutionEngine requires a Decaf adapter for cached/pinned values: pass `valueAdapter` or configure one via `Adapter.setCurrent(...)`",
+        "GRAPH_VALUE_ADAPTER_MISSING"
+      );
+    }
+    const client: GraphExecutionEngineClient = {
+      registry: config.registry,
+      catalogue,
+      planner: config.planner ?? new GraphExecutionPlanner(),
+      valueAdapter,
+      eventEmitter: config.eventEmitter ?? new GraphExecutionEventEmitter(),
+      documentValidator:
+        config.documentValidator ??
+        new GraphWorkflowDocumentValidator({
+          catalogue,
+          limits: config.documentLimits,
+          credentialAuthorizer: config.credentialAuthorizer,
+        }),
+      authValidator: new GraphAuthValidator({
+        enabled: config.authEnabled === true,
+        ...(config.authMatch ? { match: config.authMatch } : {}),
+      }),
+      ...(config.codeSandboxEvaluator
+        ? { codeSandboxEvaluator: config.codeSandboxEvaluator }
+        : {}),
+    };
+    this._config = config;
+    this._client = client;
+    await config.onEngineCreated?.(this);
+    return { config, client };
+  }
+
+  /** Pluggable code sandbox evaluator (§22.4); may be undefined. */
+  get codeSandboxEvaluator(): CodeSandboxEvaluator | undefined {
+    return this.client.codeSandboxEvaluator;
+  }
+
+  private get emitter(): GraphExecutionEventEmitter {
+    return this.client.eventEmitter;
+  }
+
+  private get planner(): GraphExecutionPlanner {
+    return this.client.planner;
+  }
+
+  private get valueAdapter(): Adapter<any, any, any, any> {
+    return this.client.valueAdapter;
+  }
+
+  private get defaultOptions(): Partial<GraphExecutionOptions> {
+    return this.config.defaultOptions ?? {};
+  }
+
+  private get documentValidator(): GraphWorkflowDocumentValidator {
+    return this.client.documentValidator;
+  }
 
   /**
    * Registers an observer on the engine's event pipeline.
@@ -171,7 +312,7 @@ export class GraphExecutionEngine
    * @param observer - The observer to register.
    * @returns An unsubscribe function that removes the observer.
    */
-  observe(observer: GraphExecutionObserver): () => void {
+  override observe(observer: GraphExecutionObserver): () => void {
     return this.emitter.observe(observer);
   }
 
@@ -180,7 +321,7 @@ export class GraphExecutionEngine
    *
    * @param observer - The observer to remove.
    */
-  unObserve(observer: GraphExecutionObserver): void {
+  override unObserve(observer: GraphExecutionObserver): void {
     this.emitter.unObserve(observer);
   }
 
@@ -189,7 +330,7 @@ export class GraphExecutionEngine
    *
    * @param event - The event to distribute.
    */
-  async updateObservers(event: GraphExecutionEvent): Promise<void> {
+  async dispatchEvent(event: GraphExecutionEvent): Promise<void> {
     await this.emitter.updateObservers(event);
   }
 
@@ -212,14 +353,23 @@ export class GraphExecutionEngine
   async execute(
     document: GraphWorkflowDocument,
     inputs: GraphExecutionValues = {},
-    options: GraphExecutionOptions = {}
+    options: GraphExecutionOptions = {},
+    ...args: MaybeContextualArg<Context>
   ): Promise<GraphExecutionResult> {
+    const { log, ctx } = (await this.logCtx(args, "execute", true)).for(this.execute);
+    log.debug(`Executing workflow '${document.id || document.name}'`);
     const opts = this.mergeOptions(options);
     this.assertNotAborted(opts);
+    // Resolve the authenticated principal from the run context (bound by the host
+    // AuthHandler) and/or the explicit option, and bind its app parameters onto
+    // the run metadata so `ctx.logger` carries them for the whole run.
+    const auth = mergeGraphAuthData(graphAuthDataOf(ctx), opts.auth);
+    opts.auth = auth;
+    opts.metadata = { ...(opts.metadata ?? {}), ...auth };
     const runId = opts.runId ?? this.generateRunId();
     const path = opts.path ?? [];
     const eventFactory = new GraphExecutionEventFactory();
-    const valueStore = new GraphValueStore(this.valueStoreAdapter);
+    const valueStore = createGraphValueRepository(this.valueAdapter);
     valueStore.seedWorkflowInputs(
       this.withWorkflowInputDefaults(document, inputs)
     );
@@ -261,7 +411,7 @@ export class GraphExecutionEngine
       status: GraphExecutionStatus.PLANNING,
     });
 
-    const validation = await this.documentValidator.validate(document);
+    const validation = await this.documentValidator.validate(document, 0, ctx);
 
     if (!validation.valid || !validation.resolved) {
       await emitValidationEvent({
@@ -283,7 +433,18 @@ export class GraphExecutionEngine
 
     this.assertNotAborted(opts);
 
-    const plan = this.planner.plan(validation.resolved);
+    const plan = await this.planner.plan(validation.resolved);
+
+    // Authorize the full workflow AND every planned node against the
+    // authenticated principal before any node executes. A workflow/node that
+    // declares namespaces fails closed when the principal holds none of them.
+    this.client.authValidator.validate(document, plan, auth, log);
+    log.debug(
+      `Authorized workflow '${document.id || document.name}' for user ${
+        auth.user ?? "anonymous"
+      }`
+    );
+
     const frame = new GraphExecutionFrame(
       runId,
       plan,
@@ -349,6 +510,13 @@ export class GraphExecutionEngine
         opts.metadata
       );
     } catch (error) {
+      // A cooperative `GraphBreakSignal` is loop-control flow, not a workflow
+      // failure: propagate it unchanged so the enclosing loop executor can stop
+      // iterating instead of seeing a failed child run.
+      if (error instanceof GraphBreakSignal) {
+        frame.finish();
+        throw error;
+      }
       frame.finish();
       const errorPayload = this.toErrorPayload(error);
 
@@ -421,7 +589,7 @@ export class GraphExecutionEngine
    * adapter.
    */
   private createPinningService(): GraphPinningService {
-    const store = new GraphValueStore(this.valueStoreAdapter);
+    const store = createGraphValueRepository(this.valueAdapter);
     return new GraphPinningService(
       store,
       new GraphPinningPolicy(),
@@ -599,14 +767,21 @@ export class GraphExecutionEngine
         emitFn,
         opts.metadata,
         this,
-        opts.abortSignal
+        opts.abortSignal,
+        this.executionLimits(opts)
+      );
+
+      const parameters = await this.resolveNodeParameters(
+        planNode,
+        inputs,
+        opts
       );
 
       const request: GraphNodeExecutionRequest = {
         nodeId: planNode.id,
         kind: planNode.kind,
         inputs,
-        parameters: planNode.instance.parameters ?? {},
+        parameters,
         credentials: this.collectCredentials(planNode),
         metadata: planNode.instance.metadata,
       };
@@ -647,6 +822,9 @@ export class GraphExecutionEngine
         GraphExecutionStatus.SUCCEEDED
       );
     } catch (error) {
+      // Loop-control flow is not a node failure: rethrow the break token so
+      // the enclosing loop executor observes it rather than a FAILED node.
+      if (error instanceof GraphBreakSignal) throw error;
       const finishedAt = new Date();
       const errorPayload = this.toErrorPayload(error);
       const result: GraphNodeExecutionResult = {
@@ -1014,6 +1192,66 @@ export class GraphExecutionEngine
   }
 
   /**
+   * Resolves a node's persisted parameters at execution time, evaluating any
+   * `GraphValueTemplate` user property through the code-evaluator VM and
+   * leaving straight literal values unchanged.
+   */
+  private async resolveNodeParameters(
+    planNode: GraphExecutionPlanNode,
+    inputs: GraphExecutionValues,
+    opts: GraphExecutionOptions
+  ): Promise<Record<string, GraphJsonValue>> {
+    const parameters = planNode.instance.parameters ?? {};
+    const resolved: Record<string, GraphJsonValue> = {};
+    for (const [key, value] of Object.entries(parameters)) {
+      resolved[key] = isGraphValueTemplate(value)
+        ? await this.evaluateValueTemplate(value, planNode, inputs, opts)
+        : value;
+    }
+    return resolved;
+  }
+
+  /**
+   * Evaluates a persisted `GraphValueTemplate` with the pluggable
+   * {@link CodeSandboxEvaluator} (DECAF-32 §22.4) — no new evaluator.
+   * `expression` mode evaluates the body directly; `template` mode compiles its
+   * `{{ ... }}` placeholders into a JavaScript template literal evaluated in
+   * the same sandbox, so both modes share the code-evaluator VM.
+   */
+  private async evaluateValueTemplate(
+    template: GraphValueTemplate,
+    planNode: GraphExecutionPlanNode,
+    inputs: GraphExecutionValues,
+    opts: GraphExecutionOptions
+  ): Promise<GraphJsonValue> {
+    const evaluator = this.codeSandboxEvaluator;
+    if (!evaluator) {
+      throw new GraphExecutionError(
+        `Value template on node '${planNode.id}' requires a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator`,
+        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
+        { nodeId: planNode.id }
+      );
+    }
+    const language =
+      template.language ?? graphValueTemplateDefaultLanguage(template.mode);
+    const code =
+      template.mode === "template"
+        ? graphTemplateToExpression(template.expression)
+        : template.expression;
+    const md = opts.metadata as Record<string, unknown> | undefined;
+    const result = await evaluator.evaluate({
+      code,
+      language: language === "typescript" ? "typescript" : "javascript",
+      input: inputs,
+      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
+      item: md?.item,
+      index: md?.index as number | undefined,
+      abortSignal: opts.abortSignal,
+    });
+    return result as GraphJsonValue;
+  }
+
+  /**
    * Evaluates an expression binding with the EXISTING allowed-expression
    * machinery only (the pluggable {@link CodeSandboxEvaluator}, DECAF-32
    * §22.4) — no new evaluator. The expression sees the already-routed input
@@ -1252,12 +1490,27 @@ export class GraphExecutionEngine
       failFast: true,
       validateInputs: true,
       validateOutputs: true,
+      maxLoopIterations: GRAPH_MAX_LOOP_ITERATIONS,
+      maxForeachIterations: GRAPH_MAX_FOREACH_ITERATIONS,
       usePinnedValues: true,
       writeThroughCache: false,
       path: [],
       metadata: {},
       ...this.defaultOptions,
       ...options,
+    };
+  }
+
+  /**
+   * Resolves the effective loop-iteration ceilings for a run. A node-level
+   * `maxIterations` can never exceed these; loop executors read them from the
+   * node context.
+   */
+  private executionLimits(opts: GraphExecutionOptions): GraphExecutionLimits {
+    return {
+      maxLoopIterations: opts.maxLoopIterations ?? GRAPH_MAX_LOOP_ITERATIONS,
+      maxForeachIterations:
+        opts.maxForeachIterations ?? GRAPH_MAX_FOREACH_ITERATIONS,
     };
   }
 

@@ -8,7 +8,6 @@ import { GraphBreakSignal } from "../../../src/engine/errors/GraphBreakSignal";
 import { GraphExecutionContext } from "../../../src/engine/execution/GraphExecutionContext";
 import { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
 import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
-import { GraphNodeCatalogue } from "../../../src/engine/catalog/GraphNodeCatalogue";
 import { defineGraphNode } from "../../../src/engine/catalog/GraphNodeRegistration";
 import { registerBuiltInGraphNodes } from "../../../src/engine/catalog/GraphBuiltInRegistrations";
 import { GraphInputError } from "../../../src/engine/errors/GraphInputError";
@@ -18,10 +17,14 @@ import type {
 } from "../../../src/shared/graph";
 import type { GraphResolvedNodeManifest } from "../../../src/shared/graph";
 import {
+  bootEngine,
   documentEdge,
   documentNode,
   documentPort,
+  executeNode,
+  freshCatalogue,
   nodeExecutionRequest,
+  nodeExecutor,
 } from "./engine-fixtures";
 
 /**
@@ -91,7 +94,7 @@ function buildEngine(breakAt: number | null = null): GraphExecutionEngine {
 describe("GraphForeachLoopNode.execute", () => {
   it("iterates once per item and collects results", async () => {
     const engine = buildEngine();
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext({ body: {}, itemPort: "item", resultPort: "result" }, engine);
     const out = await executor.execute(
       nodeExecutionRequest({ items: [1, 2, 3] }),
@@ -104,7 +107,7 @@ describe("GraphForeachLoopNode.execute", () => {
   });
 
   it("rejects non-array items", async () => {
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext({ body: {} }, buildEngine());
     await expect(
       executor.execute(nodeExecutionRequest({ items: "nope" }), ctx)
@@ -114,7 +117,7 @@ describe("GraphForeachLoopNode.execute", () => {
   });
 
   it("groups items into slices and iterates once per slice", async () => {
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext(
       { body: {}, slice: 2, itemPort: "item", resultPort: "result" },
       buildEngine()
@@ -130,7 +133,7 @@ describe("GraphForeachLoopNode.execute", () => {
   });
 
   it("stops early when the body throws a GraphBreakSignal", async () => {
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext(
       { body: {}, itemPort: "item", resultPort: "result" },
       buildEngine(1)
@@ -146,7 +149,7 @@ describe("GraphForeachLoopNode.execute", () => {
   });
 
   it("uses slice from input port over metadata", async () => {
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext(
       { body: {}, slice: 5, itemPort: "item", resultPort: "result" },
       buildEngine()
@@ -159,7 +162,7 @@ describe("GraphForeachLoopNode.execute", () => {
   });
 
   it("throws GRAPH_ENGINE_NOT_AVAILABLE when the context has no engine", async () => {
-    const executor = GraphForeachLoopNode;
+    const executor = nodeExecutor(GraphForeachLoopNode);
     const ctx = buildContext({ body: {} });
     await expect(
       executor.execute(nodeExecutionRequest({ items: [1] }), ctx)
@@ -169,7 +172,7 @@ describe("GraphForeachLoopNode.execute", () => {
 
 describe("BreakFlowNode.execute", () => {
   it("throws a GraphBreakSignal carrying the input value", () => {
-    const executor = BreakFlowNode;
+    const executor = nodeExecutor(BreakFlowNode);
     const ctx = buildContext({});
     expect(() =>
       executor.execute(nodeExecutionRequest({ value: "stop" }), ctx)
@@ -188,14 +191,14 @@ describe("GraphForeachLoopNode.execute — real engine with a switch body (DECAF
    * Builds a real engine over the built-in registrations plus two branch
    * executors that record their invocation and return the item label.
    */
-  function buildBranchEngine(
+  async function buildBranchEngine(
     onBranch: (branch: string, value: unknown) => void
-  ): GraphExecutionEngine {
-    const catalogue = new GraphNodeCatalogue();
-    const engine = new GraphExecutionEngine({
+  ): Promise<GraphExecutionEngine> {
+    const catalogue = freshCatalogue();
+    const engine = await bootEngine({
       registry: new GraphNodeExecutorRegistry(catalogue),
     });
-    registerBuiltInGraphNodes(catalogue, engine);
+    await registerBuiltInGraphNodes(catalogue);
     const registerBranch = (kind: string, branch: string) =>
       catalogue.register(
         defineGraphNode({
@@ -216,14 +219,14 @@ describe("GraphForeachLoopNode.execute — real engine with a switch body (DECAF
           } as never,
         })
       );
-    registerBranch("sample.foreach-even", "even");
-    registerBranch("sample.foreach-odd", "odd");
+    await registerBranch("sample.foreach-even", "even");
+    await registerBranch("sample.foreach-odd", "odd");
     return engine;
   }
 
   it("collects exactly one non-null result per item when each body iteration routes through a switch branch", async () => {
     const invocations: Array<{ branch: string; value: unknown }> = [];
-    const engine = buildBranchEngine((branch, value) =>
+    const engine = await buildBranchEngine((branch, value) =>
       invocations.push({ branch, value })
     );
 
@@ -312,7 +315,7 @@ describe("GraphForeachLoopNode.execute — real engine with a switch body (DECAF
       { body: bodyDocument, itemPort: "item", resultPort: "result" },
       engine
     );
-    const out = await GraphForeachLoopNode.execute(
+    const out = await executeNode(GraphForeachLoopNode, 
       nodeExecutionRequest({ items }),
       ctx
     );

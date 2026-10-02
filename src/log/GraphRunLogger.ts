@@ -33,6 +33,14 @@ export interface GraphRunLoggerOptions {
   workflowId: string;
   nodeId: string;
   user?: string | null;
+  /** Granted roles of the authenticated principal, bound as a custom attribute. */
+  roles?: string[];
+  /** Granted namespaces of the authenticated principal, bound as a custom attribute. */
+  namespaces?: string[];
+  /** Authenticated organization/tenant, bound as a custom attribute. */
+  organization?: string;
+  /** Client IP address, bound as a custom attribute. */
+  ip?: string;
   /**
    * Callback that forwards a structured log entry to the graph execution
    * Observable (emits a `GRAPH_RUN_LOG` event). Errors are swallowed.
@@ -70,6 +78,10 @@ export class GraphRunLogger implements Logger {
       [GraphLogAttribute.WORKFLOW_ID]: options.workflowId,
       [GraphLogAttribute.RUN_ID]: options.runId,
       [GraphLogAttribute.USER]: options.user ?? null,
+      [GraphLogAttribute.ROLES]: options.roles,
+      [GraphLogAttribute.NAMESPACES]: options.namespaces,
+      [GraphLogAttribute.ORGANIZATION]: options.organization,
+      [GraphLogAttribute.IP]: options.ip,
     };
   }
 
@@ -95,8 +107,22 @@ export class GraphRunLogger implements Logger {
       workflowId: this.baseOptions.workflowId,
       nodeId: this.baseOptions.nodeId,
       user: this.baseOptions.user ?? null,
-      payload: meta,
     };
+    if (this.baseOptions.roles !== undefined) {
+      entry.roles = this.baseOptions.roles;
+    }
+    if (this.baseOptions.namespaces !== undefined) {
+      entry.namespaces = this.baseOptions.namespaces;
+    }
+    if (this.baseOptions.organization !== undefined) {
+      entry.organization = this.baseOptions.organization;
+    }
+    if (this.baseOptions.ip !== undefined) {
+      entry.ip = this.baseOptions.ip;
+    }
+    if (meta !== undefined) {
+      entry.payload = meta;
+    }
     this.baseOptions.forward({
       type: GraphExecutionEventType.GRAPH_RUN_LOG,
       payload: entry,
@@ -179,6 +205,15 @@ export class GraphRunLogger implements Logger {
   action(action: string, meta?: LogMeta): void;
   /** @inheritdoc */
   action(action: string, code: number, meta?: LogMeta): void;
+  /**
+   * Records an action log entry on the wrapped MiniLogger; passes through
+   * unchanged (not forwarded as a structured run event).
+   *
+   * @param {string} action - Action name to record.
+   * @param {number | LogMeta} [codeOrMeta] - Status code (first overload) or metadata (second overload).
+   * @param {LogMeta} [meta] - Optional structured metadata.
+   * @return {void}
+   */
   action(
     action: string,
     codeOrMeta?: number | LogMeta,

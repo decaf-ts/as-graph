@@ -28,6 +28,29 @@ export const GRAPH_DEFAULT_MAX_LOOP_ITERATIONS = 100;
 export const GRAPH_DEFAULT_MAX_FOREACH_ITERATIONS = 1000;
 
 /**
+ * Hard ceiling for `while` and `until` loop iterations. A node-level
+ * `maxIterations` is clamped to the effective engine limit, which defaults to
+ * this value and can be lowered (never raised above it) per run through
+ * `GraphExecutionOptions.maxLoopIterations`.
+ */
+export const GRAPH_MAX_LOOP_ITERATIONS = 1000;
+
+/**
+ * Hard ceiling for `foreach` loop iterations. A node-level `maxIterations` is
+ * clamped to the effective engine limit, which defaults to this value and can be
+ * lowered (never raised above it) per run through
+ * `GraphExecutionOptions.maxForeachIterations`.
+ */
+export const GRAPH_MAX_FOREACH_ITERATIONS = 10_000;
+
+/**
+ * Default hard ceiling, in milliseconds, for the Code node's user-controllable
+ * sandbox `timeoutMs`. A node value is clamped to this bound unless a host
+ * overrides it through `GraphEnvironment.graph.execution.maxCodeTimeoutMs`.
+ */
+export const GRAPH_CODE_MAX_TIMEOUT_MS = 30_000;
+
+/**
  * Metadata key under which pinning information is stored on a graph node.
  */
 export const GRAPH_PINNING_METADATA_KEY = "graph.pinnable";

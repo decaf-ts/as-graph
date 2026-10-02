@@ -17,7 +17,7 @@ import { GraphPinningError } from "../errors/GraphPinningError";
 import type { GraphExecutionPlan } from "../planning/GraphExecutionPlan";
 import type { GraphExecutionPlanNode } from "../planning/GraphExecutionPlanNode";
 import { GraphTopology } from "../planning/GraphTopology";
-import type { GraphValueStore } from "../store/GraphValueStore";
+import type { GraphValueRepository } from "../store/GraphValueRepository";
 import type { GraphValueKey } from "../store/GraphValueKey";
 import type { GraphCachedValue } from "../store/GraphCachedValue";
 import type {
@@ -35,7 +35,7 @@ import type { GraphPinningDependencyResolver } from "./GraphPinningDependencyRes
  */
 export class GraphPinningService {
   constructor(
-    private readonly store: GraphValueStore,
+    private readonly store: GraphValueRepository,
     private readonly policy: GraphPinningPolicy,
     private readonly dependencyResolver: GraphPinningDependencyResolver
   ) {}

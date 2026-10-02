@@ -36,6 +36,17 @@
         "default": "./lib/cjs/nest/index.cjs"
       },
       "default": "./lib/esm/nest/index.js"
+    },
+    "./ram": {
+      "import": {
+        "types": "./lib/types/ram/index.d.mts",
+        "default": "./lib/esm/ram/index.js"
+      },
+      "require": {
+        "types": "./lib/types/ram/index.d.cts",
+        "default": "./lib/cjs/ram/index.cjs"
+      },
+      "default": "./lib/esm/ram/index.js"
     }
   },
   "main": "./lib/cjs/index.cjs",
@@ -59,10 +70,7 @@
     "test:unit": "jest --testPathPatterns=\"/tests/unit\" --passWithNoTests --detectOpenHandles",
     "test:integration": "jest --testPathPatterns=\"/tests/(integration)\" --passWithNoTests --detectOpenHandles",
     "test:e2e": "jest --testPathPatterns=\"/tests/(e2e)\" --passWithNoTests --detectOpenHandles",
-    "test:all": "jest --testPathPatterns=\"/tests\" --passWithNoTests --detectOpenHandles && npm run test:ui",
-    "test:ui": "jest --config=jest.ui.config.cjs --passWithNoTests --detectOpenHandles",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build",
+    "test:all": "jest --testPathPatterns=\"/tests\" --passWithNoTests --detectOpenHandles",
     "test:dist": "TEST_TARGET=lib npm run test:all && TEST_TARGET=dist npm run test:all",
     "test:circular": "dpdm -T --no-warning --no-tree ./src/index.ts",
     "prepare-it-tests": "echo \"prepare-it-tests: no infra to boot\"",
@@ -97,7 +105,8 @@
   },
   "files": [
     "lib",
-    "dist"
+    "dist",
+    "assets"
   ],
   "keywords": [
     "graph",
@@ -126,6 +135,7 @@
     "@decaf-ts/decorator-validation": "latest",
     "@decaf-ts/for-http": "latest",
     "@decaf-ts/for-nest": "latest",
+    "@decaf-ts/integrations": "^0.10.8",
     "@decaf-ts/ui-decorators": "latest",
     "@nestjs/common": "^11.2.6",
     "@nestjs/core": "^11.2.6",
@@ -142,13 +152,9 @@
   "devDependencies": {
     "@decaf-ts/utils": "latest",
     "@nestjs/testing": "^11.2.6",
-    "@storybook/addon-docs": "^10.6.0",
-    "@storybook/html-vite": "^10.6.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^6.0.3",
-    "jest-environment-jsdom": "^30.5.2",
-    "storybook": "^10.6.0",
     "supertest": "^7.3.0"
   }
 }

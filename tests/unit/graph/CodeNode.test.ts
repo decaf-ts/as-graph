@@ -15,7 +15,11 @@ import type {
   GraphWorkflowDocument,
 } from "../../../src/shared/graph";
 import type { GraphResolvedNodeManifest } from "../../../src/shared/graph";
-import { nodeExecutionRequest } from "./engine-fixtures";
+import {
+  bootCodeSandboxEvaluator,
+  executeNode,
+  nodeExecutionRequest,
+} from "./engine-fixtures";
 
 /**
  * Minimal engine facade exposing the `codeSandboxEvaluator` the Code node
@@ -35,12 +39,13 @@ function engineWith(
 function buildContext(
   nodeMetadata: Record<string, unknown> = {},
   contextMetadata: Record<string, unknown> = {},
-  engine?: GraphExecutionEngine
+  engine?: GraphExecutionEngine,
+  nodeParameters: Record<string, unknown> = {}
 ): GraphExecutionContext {
   const node: GraphNodeInstance = {
     id: "CodeNode",
     kind: "core.utility.code",
-    parameters: {},
+    parameters: nodeParameters as never,
     metadata: nodeMetadata as never,
   };
   const document: GraphWorkflowDocument = {
@@ -74,12 +79,17 @@ function buildContext(
 
 describe("CodeNode.execute", () => {
   describe("with a registered CodeSandboxEvaluator", () => {
-    const evaluator = new IsolatedVmCodeSandboxEvaluator();
-    const engine = engineWith(evaluator);
+    let evaluator: IsolatedVmCodeSandboxEvaluator;
+    let engine: GraphExecutionEngine;
+
+    beforeAll(async () => {
+      evaluator = await bootCodeSandboxEvaluator();
+      engine = engineWith(evaluator);
+    });
 
     it("executes a simple expression and returns the result on the result port", async () => {
       const ctx = buildContext({}, { vars: { a: 2, b: 3 } }, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return $vars.a + $vars.b;" }),
         ctx
       );
@@ -88,7 +98,7 @@ describe("CodeNode.execute", () => {
 
     it("executes a statement-mode code with return", async () => {
       const ctx = buildContext({}, { vars: { a: 3, b: 4 } }, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "const sum = $vars.a + $vars.b; return sum * 2;" }),
         ctx
       );
@@ -97,7 +107,7 @@ describe("CodeNode.execute", () => {
 
     it("passes $vars from context metadata", async () => {
       const ctx = buildContext({}, { vars: { topic: "hello" } }, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return $vars.topic;" }),
         ctx
       );
@@ -106,7 +116,7 @@ describe("CodeNode.execute", () => {
 
     it("passes $item and $index from context metadata (loop body)", async () => {
       const ctx = buildContext({}, { item: "apple", index: 2 }, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return { item: $item, index: $index };" }),
         ctx
       );
@@ -121,7 +131,7 @@ describe("CodeNode.execute", () => {
         { nodes: { Research: { output: { summary: "found" } } } },
         engine
       );
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: 'return $node["Research"].output.summary;' }),
         ctx
       );
@@ -130,7 +140,7 @@ describe("CodeNode.execute", () => {
 
     it("defaults language to javascript when not set in metadata", async () => {
       const ctx = buildContext({}, {}, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return 42;" }),
         ctx
       );
@@ -139,11 +149,29 @@ describe("CodeNode.execute", () => {
 
     it("exposes $input as the full input values object (including code)", async () => {
       const ctx = buildContext({}, {}, engine);
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return $input.code.length;" }),
         ctx
       );
       expect(result).toEqual({ result: "return $input.code.length;".length });
+    });
+
+    it("forwards the node's timeoutMs to the sandbox evaluator execution call", async () => {
+      const evaluateSpy = jest.spyOn(evaluator, "evaluate");
+      try {
+        const ctx = buildContext({}, {}, engine, { timeoutMs: 2500 });
+        await executeNode(
+          CodeNode,
+          nodeExecutionRequest({ code: "return 1;" }),
+          ctx
+        );
+        expect(evaluateSpy).toHaveBeenCalledTimes(1);
+        expect(evaluateSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ timeoutMs: 2500 })
+        );
+      } finally {
+        evaluateSpy.mockRestore();
+      }
     });
   });
 
@@ -151,67 +179,72 @@ describe("CodeNode.execute", () => {
     it("throws GRAPH_CODE_SANDBOX_NOT_CONFIGURED", async () => {
       const ctx = buildContext();
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "return 1;" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "return 1;" }), ctx)
       ).rejects.toThrow(GraphExecutionError);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "return 1;" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "return 1;" }), ctx)
       ).rejects.toThrow(/CodeSandboxEvaluator.*registered/i);
     });
 
     it("throws when the engine is undefined", async () => {
       const ctx = buildContext();
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "return 1;" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "return 1;" }), ctx)
       ).rejects.toThrow(/CodeSandboxEvaluator.*registered/i);
     });
   });
 
   describe("validation", () => {
-    const evaluator = new IsolatedVmCodeSandboxEvaluator();
-    const engine = engineWith(evaluator);
+    let evaluator: IsolatedVmCodeSandboxEvaluator;
+    let engine: GraphExecutionEngine;
+
+    beforeAll(async () => {
+      evaluator = await bootCodeSandboxEvaluator();
+      engine = engineWith(evaluator);
+    });
 
     it("throws GraphInputError when input.code is empty", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "" }), ctx)
       ).rejects.toThrow(GraphInputError);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "" }), ctx)
       ).rejects.toThrow(/no code to execute/i);
     });
 
     it("throws GraphInputError when input.code is whitespace", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "   " }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "   " }), ctx)
       ).rejects.toThrow(/no code to execute/i);
     });
 
     it("throws GraphInputError when input.code is missing", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({}), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({}), ctx)
       ).rejects.toThrow(/no code to execute/i);
     });
 
     it("throws GraphInputError when input.code is not a string", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: 123 }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: 123 }), ctx)
       ).rejects.toThrow(/no code to execute/i);
     });
 
     it("propagates forbidden-token errors from the sandbox", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(nodeExecutionRequest({ code: "require('fs')" }), ctx)
+        executeNode(CodeNode, nodeExecutionRequest({ code: "require('fs')" }), ctx)
       ).rejects.toThrow(/Identifier "require".*not allowed/i);
     });
 
     it("propagates runtime errors from the sandbox", async () => {
       const ctx = buildContext({}, {}, engine);
       await expect(
-        CodeNode.execute(
+        executeNode(CodeNode, 
           nodeExecutionRequest({ code: "return undefinedVar.foo;" }),
           ctx
         )
@@ -225,7 +258,7 @@ describe("CodeNode.execute", () => {
         evaluate: (ctx) => `custom:${ctx.code}`,
       };
       const ctx = buildContext({}, {}, engineWith(custom));
-      const result = await CodeNode.execute(
+      const result = await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return 1;" }),
         ctx
       );
@@ -245,7 +278,7 @@ describe("CodeNode.execute", () => {
         },
       };
       const ctx = buildContext({}, {}, engineWith(custom));
-      await CodeNode.execute(
+      await executeNode(CodeNode, 
         nodeExecutionRequest({ code: "return 1;" }),
         ctx
       );

@@ -255,7 +255,7 @@ describe("GraphRunLifecycle (§4.19 nest row, SAA-516)", () => {
       edges: [
         documentEdge("e_in", ["workflow", "count"], ["node", "sw", "value"]),
         documentEdge("e_case", ["node", "sw", "case_1"], ["node", "log", "value"]),
-        documentEdge("e_out", ["node", "log", "logged"], ["workflow", "result"]),
+        documentEdge("e_out", ["node", "log", "value"], ["workflow", "result"]),
       ],
     };
 

@@ -9,6 +9,12 @@
  * against the trusted backend catalogue happens upstream, in
  * {@link GraphWorkflowDocumentValidator}.
  */
+import {
+  Service,
+  service,
+  type Context,
+  type MaybeContextualArg,
+} from "@decaf-ts/core";
 import { GRAPH_WORKFLOW_BOUNDARY } from "../constants";
 import { GraphCycleError } from "../errors/GraphCycleError";
 import { GraphTopologyError } from "../errors/GraphTopologyError";
@@ -23,7 +29,12 @@ import type { GraphExecutionPlanLayer } from "./GraphExecutionPlanLayer";
  * Planner that turns a {@link GraphResolvedWorkflow} into a
  * {@link GraphExecutionPlan} with topological layers.
  */
-export class GraphExecutionPlanner {
+@service()
+export class GraphExecutionPlanner extends Service {
+  constructor() {
+    super();
+  }
+
   /**
    * Plans a resolved workflow for execution.
    *
@@ -34,7 +45,12 @@ export class GraphExecutionPlanner {
    * @throws {GraphTopologyError} when the input is not a resolved workflow.
    * @throws {GraphCycleError} when the workflow contains an unsupported cycle.
    */
-  plan(workflow: GraphResolvedWorkflow): GraphExecutionPlan {
+  async plan(
+    workflow: GraphResolvedWorkflow,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphExecutionPlan> {
+    const { log } = (await this.logCtx(args, "plan", true)).for(this.plan);
+    log.debug(`Planning resolved workflow '${workflow?.document?.id ?? "unknown"}'`);
     if (!isGraphResolvedWorkflow(workflow)) {
       throw new GraphTopologyError(
         "GraphExecutionPlanner.plan accepts only a GraphResolvedWorkflow produced by the nine-stage validation gate; raw workflow definitions and inline node definitions are rejected",

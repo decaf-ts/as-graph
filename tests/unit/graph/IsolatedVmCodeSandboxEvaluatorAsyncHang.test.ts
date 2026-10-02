@@ -17,7 +17,7 @@
  * owned by the linked remediation issue SAA-1939; do not patch production code.
  */
 import { describe, it, expect } from "@jest/globals";
-import { IsolatedVmCodeSandboxEvaluator } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
+import { bootCodeSandboxEvaluator } from "./engine-fixtures";
 import { GraphExecutionError } from "../../../src/engine/errors/GraphExecutionError";
 
 /** Configured in-isolate sandbox timeout. */
@@ -64,10 +64,10 @@ async function settleWithin<T>(
 
 describe("IsolatedVmCodeSandboxEvaluator — never-settling async body (SAA-1938 F1)", () => {
   it("rejects a never-settling async body within a bounded multiple of the sandbox timeout", async () => {
-    const evaluator = new IsolatedVmCodeSandboxEvaluator(
-      SANDBOX_TIMEOUT_MS,
-      8
-    );
+    const evaluator = await bootCodeSandboxEvaluator({
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      memoryMb: 8,
+    });
     const startedAt = Date.now();
 
     const outcome = await settleWithin(

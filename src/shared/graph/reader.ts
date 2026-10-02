@@ -16,6 +16,7 @@ import type {
 } from "./constants";
 import { PortDirection } from "./constants";
 import { resolveEffectiveColor, resolveEffectiveIcon } from "./constants";
+import { graphNamespacesOfModel } from "./auth";
 import "@decaf-ts/ui-decorators";
 
 type GraphModelLike<M extends Model = Model> = Constructor<M> | M;
@@ -202,7 +203,8 @@ function graphPortDefinitionOfInternal(
   ) as Record<string, any> | undefined;
   const designType = Metadata.type(resolved, propertyKey);
   const typeName = asString(
-    validation?.[ValidationKeys.TYPE]?.customTypes?.[0]?.name ??
+    graph.type ??
+      validation?.[ValidationKeys.TYPE]?.customTypes?.[0]?.name ??
       element?.props?.type ??
       uiProp?.type ??
       designType?.name
@@ -313,6 +315,10 @@ export function graphDefinitionOf<M extends Model>(
   const tag = ui?.tag || resolved.name;
   const ports = graphPortsOf(resolved);
   const portGroups = resolvePortGroups(resolved, graph);
+  const declaredNamespaces = graph.namespaces?.length
+    ? graph.namespaces
+    : graphNamespacesOfModel(resolved);
+  const namespaces = declaredNamespaces.length ? declaredNamespaces : undefined;
 
   return {
     name: resolved.name,
@@ -337,6 +343,7 @@ export function graphDefinitionOf<M extends Model>(
     graph,
     ports,
     portGroups,
+    namespaces,
   };
 }
 

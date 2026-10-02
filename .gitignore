@@ -1,6 +1,5 @@
 /lib
 /dist
-/storybook-static
 /docs
 /workdocs/drawings/*
 !/workdocs/drawings/*.drawio

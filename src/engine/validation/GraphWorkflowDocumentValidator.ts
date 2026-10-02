@@ -38,6 +38,7 @@ import {
   isGraphWorkflowDocumentShape,
 } from "../../shared/graph";
 
+import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import { GRAPH_WORKFLOW_BOUNDARY } from "../constants";
 import type { GraphNodeCatalogue } from "../catalog/GraphNodeCatalogue";
 import type {
@@ -219,9 +220,10 @@ export class GraphWorkflowDocumentValidator {
    * {@link GraphDocumentValidationError} carrying every structured issue.
    */
   async validateOrThrow(
-    document: GraphWorkflowDocument
+    document: GraphWorkflowDocument,
+    ...args: MaybeContextualArg<Context>
   ): Promise<GraphResolvedWorkflow> {
-    const result = await this.validate(document);
+    const result = await this.validate(document, 0, ...args);
     if (!result.valid || !result.resolved) {
       throw new GraphDocumentValidationError(
         `Graph workflow document '${document.id}' failed validation with ${result.issues.length} issue(s)`,
@@ -245,7 +247,8 @@ export class GraphWorkflowDocumentValidator {
    */
   async validate(
     document: GraphWorkflowDocument,
-    depth = 0
+    depth = 0,
+    ...args: MaybeContextualArg<Context>
   ): Promise<GraphWorkflowValidationResult> {
     const issues: GraphValidationIssue[] = [];
     const limits = {
@@ -256,7 +259,7 @@ export class GraphWorkflowDocumentValidator {
     // ------------------------------------------------------------------
     // Stage 1 — workflow structure.
     // ------------------------------------------------------------------
-    if (!(await this.validateStructure(document, limits, depth, issues))) {
+    if (!(await this.validateStructure(document, limits, depth, issues, ...args))) {
       return { valid: false, issues };
     }
 
@@ -266,7 +269,8 @@ export class GraphWorkflowDocumentValidator {
     const nodeById = await this.nodeValidator.resolveNodes(
       document.nodes,
       issues,
-      this.options.resolutionContext
+      this.options.resolutionContext,
+      ...args
     );
     const resolvedNodes: GraphResolvedNodeInstance[] = document.nodes
       .filter((node) => nodeById.has(node.id))
@@ -390,7 +394,8 @@ export class GraphWorkflowDocumentValidator {
     document: GraphWorkflowDocument,
     limits: Required<GraphWorkflowDocumentValidationLimits>,
     depth: number,
-    issues: GraphValidationIssue[]
+    issues: GraphValidationIssue[],
+    ...args: MaybeContextualArg<Context>
   ): Promise<boolean> {
     if (!isGraphWorkflowDocumentShape(document)) {
       issues.push({
@@ -458,7 +463,7 @@ export class GraphWorkflowDocumentValidator {
 
     // Recursive nested-workflow validation: every loop body is itself a
     // canonical document and runs through the same nine stages.
-    await this.validateNestedBodies(document, depth, issues);
+    await this.validateNestedBodies(document, depth, issues, ...args);
 
     return true;
   }
@@ -572,18 +577,26 @@ export class GraphWorkflowDocumentValidator {
   private async validateNestedBodies(
     document: GraphWorkflowDocument,
     depth: number,
-    issues: GraphValidationIssue[]
+    issues: GraphValidationIssue[],
+    ...args: MaybeContextualArg<Context>
   ): Promise<void> {
     for (const node of document.nodes) {
-      const body = node.loop?.body;
-      if (!body) continue;
-      const nested = await this.validate(body, depth + 1);
-      for (const issue of nested.issues) {
-        issues.push({
-          ...issue,
-          path: `nodes[${node.id}].loop.body.${issue.path}`,
-          nodeId: issue.nodeId ?? node.id,
-        });
+      const bodies: Array<[string, GraphWorkflowDocument | undefined]> = [
+        ["loop.body", node.loop?.body],
+        ["errorBoundary.try", node.errorBoundary?.try],
+        ["errorBoundary.catch", node.errorBoundary?.catch],
+        ["errorBoundary.finally", node.errorBoundary?.finally],
+      ];
+      for (const [label, body] of bodies) {
+        if (!body) continue;
+        const nested = await this.validate(body, depth + 1, ...args);
+        for (const issue of nested.issues) {
+          issues.push({
+            ...issue,
+            path: `nodes[${node.id}].${label}.${issue.path}`,
+            nodeId: issue.nodeId ?? node.id,
+          });
+        }
       }
     }
   }

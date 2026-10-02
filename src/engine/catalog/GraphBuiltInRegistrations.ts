@@ -3,14 +3,15 @@
  * @summary Built-in graph node registrations (DECAF-50 §4.12, §4.26 R2-1).
  * @description Derives every built-in {@link GraphNodeRegistration} from its
  * authoritative backend node class: the published manifest comes from
- * `GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND` and the executor is the class's
- * `execute` static method. Because node classes reach the engine through
- * `GraphExecutionContext.engine`, no executor needs an engine back-reference and
- * every built-in kind is registered in a single pass.
+ * `GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND` and the executor instantiates the
+ * class, hydrates its configuration from the executing canonical node instance,
+ * and invokes the **instance** `execute` method. Because node classes reach the
+ * engine through `GraphExecutionContext.engine`, no executor needs an engine
+ * back-reference and every built-in kind is registered in a single pass.
  */
-import type { GraphExecutionValues, GraphNodeExecutionRequest } from "../types";
+import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import type { GraphNodeExecutor } from "../execution/GraphNodeExecutor";
-import type { GraphExecutionContext } from "../execution/GraphExecutionContext";
+import { graphNodeConfig, type GraphNodeClass } from "../../node/base";
 import {
   GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND,
   GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
@@ -21,16 +22,20 @@ import {
   type GraphNodeRegistration,
 } from "./GraphNodeRegistration";
 
-function executorOf(
-  nodeClass: {
-    execute(
-      request: GraphNodeExecutionRequest,
-      context: GraphExecutionContext
-    ): GraphExecutionValues | Promise<GraphExecutionValues>;
-  }
-): GraphNodeExecutor {
+function executorOf(nodeClass: GraphNodeClass): GraphNodeExecutor {
   return {
-    execute: (request, context) => nodeClass.execute(request, context),
+    execute: (request, context) => {
+      // Hydrate the node from the flattened canonical configuration, letting the
+      // engine-resolved parameters win over the raw persisted values. The engine
+      // resolves `GraphValueTemplate` user properties into `request.parameters`
+      // at execution time, so a built-in node must hydrate from the resolved
+      // parameters to observe them (DECAF-32 §22.4).
+      const instance = nodeClass.instantiate({
+        ...graphNodeConfig(context.node),
+        ...(request.parameters as Record<string, unknown>),
+      });
+      return instance.execute(request, context);
+    },
   };
 }
 
@@ -59,10 +64,11 @@ export function builtInGraphNodeRegistrations(): GraphNodeRegistration[] {
  * {@link GraphNodeCatalogue} and returns it for chaining.
  */
 export function registerBuiltInGraphNodes(
-  catalogue: GraphNodeCatalogue
+  catalogue: GraphNodeCatalogue,
+  ...args: MaybeContextualArg<Context>
 ): GraphNodeCatalogue {
   for (const registration of builtInGraphNodeRegistrations()) {
-    catalogue.register(registration);
+    catalogue.register(registration, {}, ...args);
   }
   return catalogue;
 }

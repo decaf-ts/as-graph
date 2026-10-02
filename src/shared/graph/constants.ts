@@ -101,6 +101,13 @@ export type GraphNodeMetadata = {
    * map to the inputs/outputs panes. Frontend-safe metadata only.
    */
   inspection?: GraphNodeIoMetadata;
+  /**
+   * Namespaces required to execute this node/workflow. Populated from the
+   * `@decaf-ts/integrations` `@namespace(...)` decorator (metadata key
+   * `"auth-namespace"`) and/or an explicit `namespaces` option. The engine
+   * validates them against the authenticated principal before execution.
+   */
+  namespaces?: string[];
 };
 
 /**
@@ -233,6 +240,15 @@ export type GraphPortMetadata = {
    */
   category?: string;
   /**
+   * Marks a user-controllable property declared with BOTH `@uielement` AND
+   * `@input` (DECAF-50 node rules): the user fills the value and saves it
+   * (serialized with the graph; `execute` reads it via `this.<prop>`), OR
+   * exposes it as a port and the graph passes the value in. The manifest
+   * compiler marks such ports `configurable` so the renderer offers the
+   * expose/not-expose choice.
+   */
+  userControlled?: boolean;
+  /**
    * Marks this port as a "Schema port" declared via `@input` / `@output`.
    *
    * When `true` AND the property type is a Decaf `Model` (a "Schema"), the
@@ -258,6 +274,15 @@ export type GraphPortMetadata = {
    * Set via `@input({ model: SomeSchema })` / `@output({ model: SomeSchema })`.
    */
   model?: unknown;
+  /**
+   * Explicit value-schema type name for the port (e.g. `"object"`), taking
+   * precedence over the `@uielement`/`design:type`-derived name. Use when the
+   * property's TypeScript type is an interface/alias that cannot be recovered
+   * from `design:type` (e.g. a `ConditionExpression` object).
+   *
+   * Set via `@input({ type: "object" })` / `@output({ type: "object" })`.
+   */
+  type?: string;
 };
 
 /**
@@ -354,6 +379,12 @@ export type GraphNodeDefinition = {
    * `toggle: "all"`.
    */
   portGroups?: GraphPortGroupMetadata[];
+  /**
+   * Namespaces required to execute this node/workflow, folded from the
+   * `@namespace(...)` decorator metadata (or an explicit
+   * {@link GraphNodeMetadata.namespaces} option) by `graphDefinitionOf`.
+   */
+  namespaces?: string[];
 };
 
 /**
@@ -607,6 +638,10 @@ export enum GraphLogAttribute {
   WORKFLOW_ID = "workflowId",
   RUN_ID = "runId",
   USER = "user",
+  ROLES = "roles",
+  NAMESPACES = "namespaces",
+  ORGANIZATION = "organization",
+  IP = "ip",
 }
 
 /**

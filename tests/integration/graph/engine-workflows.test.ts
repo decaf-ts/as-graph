@@ -15,21 +15,30 @@
 import { describe, it, expect } from "@jest/globals";
 
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
-import { CODE_GRAPH_NODE_MANIFEST, CodeNode } from "../../../src/node";
+import {
+  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
+  CodeNode,
+} from "../../../src/node";
 import { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
-import { IsolatedVmCodeSandboxEvaluator } from "../../../src/engine/execution/IsolatedVmCodeSandboxEvaluator";
 import { GraphNodeCatalogue } from "../../../src/engine/catalog/GraphNodeCatalogue";
 import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
 import { registerBuiltInGraphNodes } from "../../../src/engine/catalog/GraphBuiltInRegistrations";
 import { defineGraphNode } from "../../../src/engine/catalog/GraphNodeRegistration";
 import { GraphExecutionPlanner } from "../../../src/engine/planning/GraphExecutionPlanner";
-import type { SwitchNodeMetadata } from "../../../src/node/flow-control/switch";
+import type { SwitchNodeMetadata } from "../../../src/node/flow/switch/node";
 import {
+  bootCodeSandboxEvaluator,
+  bootEngine,
   documentEdge,
   documentNode,
   documentPort,
+  executeNode,
+  freshCatalogue,
   resolveDocument,
 } from "../../unit/graph/engine-fixtures";
+
+const CODE_GRAPH_NODE_MANIFEST =
+  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.utility.code"];
 
 const START_CODE = "return ($input.data ?? 0) + 1;";
 const BIG_CODE = "return $input.data * 10;";
@@ -49,17 +58,17 @@ const LOW_CODE = "return 'LOW:' + $input.data;";
  * re-registered with a string schema for `code` (the executor stays the real
  * `CodeNode` + sandbox), so canonical documents can bind code literally.
  */
-function buildEngine(): {
+async function buildEngine(): Promise<{
   engine: GraphExecutionEngine;
   catalogue: GraphNodeCatalogue;
-} {
-  const catalogue = new GraphNodeCatalogue();
-  const engine = new GraphExecutionEngine({
+}> {
+  const catalogue = freshCatalogue();
+  const engine = await bootEngine({
     registry: new GraphNodeExecutorRegistry(catalogue),
-    codeSandboxEvaluator: new IsolatedVmCodeSandboxEvaluator(),
+    codeSandboxEvaluator: await bootCodeSandboxEvaluator(),
   });
-  registerBuiltInGraphNodes(catalogue, engine);
-  catalogue.register(
+  await registerBuiltInGraphNodes(catalogue);
+  await catalogue.register(
     defineGraphNode({
       manifest: {
         ...CODE_GRAPH_NODE_MANIFEST,
@@ -68,7 +77,7 @@ function buildEngine(): {
         ),
       },
       executor: {
-        execute: (request, context) => CodeNode.execute(request, context),
+        execute: (request, context) => executeNode(CodeNode, request, context),
       },
     }),
     { replace: true }
@@ -85,12 +94,17 @@ function codeNode(
   code: string,
   extra: Record<string, unknown> = {}
 ) {
-  return documentNode(id, "core.utility.code", {}, {
-    ...extra,
-    inputBindings: {
-      code: { mode: "literal", value: code },
-    },
-  });
+  return documentNode(
+    id,
+    "core.utility.code",
+    {},
+    {
+      ...extra,
+      inputBindings: {
+        code: { mode: "literal", value: code },
+      },
+    }
+  );
 }
 
 /**
@@ -158,9 +172,17 @@ function linearCodeConditionCodeDocument(): GraphWorkflowDocument {
     ],
     edges: [
       documentEdge("e1", ["workflow", "n"], ["node", "start", "data"]),
-      documentEdge("e2", ["node", "start", "result"], ["node", "gate", "value"]),
+      documentEdge(
+        "e2",
+        ["node", "start", "result"],
+        ["node", "gate", "value"]
+      ),
       documentEdge("e3", ["node", "gate", "big"], ["node", "big", "data"]),
-      documentEdge("e4", ["node", "gate", "default"], ["node", "small", "data"]),
+      documentEdge(
+        "e4",
+        ["node", "gate", "default"],
+        ["node", "small", "data"]
+      ),
       documentEdge("e5", ["node", "big", "result"], ["workflow", "result"]),
       documentEdge("e6", ["node", "small", "result"], ["workflow", "result"]),
     ],
@@ -205,7 +227,11 @@ function foreachWorkflowDocument(): GraphWorkflowDocument {
     ],
     edges: [
       documentEdge("f1", ["workflow", "items"], ["node", "loop", "items"]),
-      documentEdge("f2", ["node", "loop", "completed"], ["node", "collect", "data"]),
+      documentEdge(
+        "f2",
+        ["node", "loop", "completed"],
+        ["node", "collect", "data"]
+      ),
       documentEdge("f3", ["node", "collect", "result"], ["workflow", "result"]),
     ],
   };
@@ -231,18 +257,38 @@ function switchBranchPinningDocument(): GraphWorkflowDocument {
     ],
     edges: [
       documentEdge("p1", ["workflow", "n"], ["node", "classify", "data"]),
-      documentEdge("p2", ["node", "classify", "result"], ["node", "route", "value"]),
-      documentEdge("p3", ["node", "route", "high"], ["node", "highBranch", "data"]),
-      documentEdge("p4", ["node", "route", "default"], ["node", "lowBranch", "data"]),
-      documentEdge("p5", ["node", "highBranch", "result"], ["workflow", "result"]),
-      documentEdge("p6", ["node", "lowBranch", "result"], ["workflow", "result"]),
+      documentEdge(
+        "p2",
+        ["node", "classify", "result"],
+        ["node", "route", "value"]
+      ),
+      documentEdge(
+        "p3",
+        ["node", "route", "high"],
+        ["node", "highBranch", "data"]
+      ),
+      documentEdge(
+        "p4",
+        ["node", "route", "default"],
+        ["node", "lowBranch", "data"]
+      ),
+      documentEdge(
+        "p5",
+        ["node", "highBranch", "result"],
+        ["workflow", "result"]
+      ),
+      documentEdge(
+        "p6",
+        ["node", "lowBranch", "result"],
+        ["workflow", "result"]
+      ),
     ],
   };
 }
 
 describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
   it("runs a linear code -> switch condition -> code workflow and records per-node intermediate inputs/outputs", async () => {
-    const { engine, catalogue } = buildEngine();
+    const { engine, catalogue } = await buildEngine();
     const document = linearCodeConditionCodeDocument();
     await resolveDocument(document, catalogue);
 
@@ -267,7 +313,7 @@ describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
   });
 
   it("routes the linear workflow down the default branch when the condition does not match", async () => {
-    const { engine, catalogue } = buildEngine();
+    const { engine, catalogue } = await buildEngine();
     const document = linearCodeConditionCodeDocument();
     await resolveDocument(document, catalogue);
 
@@ -288,7 +334,7 @@ describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
   });
 
   it("runs a foreach workflow with a code body and asserts per-iteration and downstream intermediate values", async () => {
-    const { engine, catalogue } = buildEngine();
+    const { engine, catalogue } = await buildEngine();
     const document = foreachWorkflowDocument();
     await resolveDocument(document, catalogue);
 
@@ -310,10 +356,10 @@ describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
   });
 
   it("runs a switch-branch workflow and serves a pinned classifier node from the engine cache on re-run", async () => {
-    const { engine, catalogue } = buildEngine();
+    const { engine, catalogue } = await buildEngine();
     const document = switchBranchPinningDocument();
     const resolved = await resolveDocument(document, catalogue);
-    const plan = new GraphExecutionPlanner().plan(resolved);
+    const plan = await new GraphExecutionPlanner().plan(resolved);
 
     const first = await engine.execute(document, { n: 42 });
     expect(first.status).toBe("succeeded");
@@ -342,9 +388,13 @@ describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
       includeDependencies: false,
     });
 
-    const cached = await engine.execute(document, { n: 42 }, {
-      usePinnedValues: true,
-    });
+    const cached = await engine.execute(
+      document,
+      { n: 42 },
+      {
+        usePinnedValues: true,
+      }
+    );
     expect(cached.status).toBe("succeeded");
     expect(cached.outputs.result).toBe("HIGH:high");
     expect(cached.nodeResults.classify.fromCache).toBe(true);
@@ -354,9 +404,13 @@ describe("as-graph integration — backend engine workflows (SAA-1930)", () => {
       result: "HIGH:high",
     });
 
-    const changed = await engine.execute(document, { n: 3 }, {
-      usePinnedValues: true,
-    });
+    const changed = await engine.execute(
+      document,
+      { n: 3 },
+      {
+        usePinnedValues: true,
+      }
+    );
     expect(changed.status).toBe("succeeded");
     expect(changed.outputs.result).toBe("LOW:low");
     expect(changed.nodeResults.classify.fromCache).not.toBe(true);
