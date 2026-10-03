@@ -6,12 +6,17 @@
 import { GraphUntilLoopNode } from "../../../../src/node";
 import { GraphInputError } from "../../../../src/engine/errors/GraphInputError";
 import { GraphLoopLimitError } from "../../../../src/engine/errors/GraphLoopLimitError";
+import type { CodeSandboxEvaluator } from "../../../../src/engine/execution/CodeSandboxEvaluator";
 import {
   GraphExecutionEventType,
   graphNodeManifest,
 } from "../../../../src/shared/graph";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
-import { buildNodeContext, loopEngine } from "./node-test-utils";
+import {
+  buildNodeContext,
+  codeSandboxEngine,
+  loopEngine,
+} from "./node-test-utils";
 
 /** Body workflow whose `state` output increments the routed `n`. */
 function incrementEngine() {
@@ -200,6 +205,83 @@ describe("GraphUntilLoopNode", () => {
       expect((error as GraphLoopLimitError).graphCode).toBe(
         "GRAPH_LOOP_LIMIT_ERROR"
       );
+    });
+  });
+
+  describe("CodeCondition (code mode, SAA-66)", () => {
+    /** Increments `state.n` and returns it under `state`. */
+    function incrementState(
+      inputs: Record<string, unknown>
+    ): Record<string, unknown> {
+      const state = inputs["state"] as { n: number };
+      return { state: { n: state.n + 1 } };
+    }
+
+    it("evaluates the code condition after each iteration and stops when it flips", async () => {
+      const seen: unknown[] = [];
+      const evaluator: CodeSandboxEvaluator = {
+        evaluate: (ctx) => {
+          const state = (ctx.input as { state: { n: number } }).state;
+          seen.push(state.n);
+          return state.n >= 2;
+        },
+      };
+      const context = buildNodeContext("core.loop.until", {
+        parameters: {
+          condition: { type: "code", code: "return $input.state.n >= 2;" },
+        },
+        loop: { body: {} as never },
+        engine: codeSandboxEngine(evaluator, incrementState),
+      });
+      const result = await executeNode(
+        GraphUntilLoopNode,
+        nodeExecutionRequest({ state: { n: 0 } }),
+        context
+      );
+      expect(result).toEqual({ state: { n: 2 }, iterations: 2 });
+      expect(seen).toEqual([1, 2]);
+    });
+
+    it("exposes the current state plus the other inputs to the sandbox as $input", async () => {
+      const seenInputs: Record<string, unknown>[] = [];
+      const evaluator: CodeSandboxEvaluator = {
+        evaluate: (ctx) => {
+          seenInputs.push(ctx.input as Record<string, unknown>);
+          return (ctx.input as { state: { n: number } }).state.n >= 1;
+        },
+      };
+      const context = buildNodeContext("core.loop.until", {
+        parameters: {
+          condition: { type: "code", code: "return true;" },
+        },
+        loop: { body: {} as never },
+        engine: codeSandboxEngine(evaluator, incrementState),
+      });
+      await executeNode(
+        GraphUntilLoopNode,
+        nodeExecutionRequest({ state: { n: 0 }, extra: "keep" }),
+        context
+      );
+      expect(seenInputs).toEqual([{ state: { n: 1 }, extra: "keep" }]);
+    });
+
+    it("throws GRAPH_CODE_SANDBOX_NOT_CONFIGURED without a registered evaluator", async () => {
+      const context = buildNodeContext("core.loop.until", {
+        parameters: {
+          condition: { type: "code", code: "return true;" },
+        },
+        loop: { body: {} as never },
+        engine: incrementEngine(),
+      });
+      await expect(
+        executeNode(
+          GraphUntilLoopNode,
+          nodeExecutionRequest({ state: { n: 0 } }),
+          context
+        )
+      ).rejects.toMatchObject({
+        graphCode: "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
+      });
     });
   });
 });

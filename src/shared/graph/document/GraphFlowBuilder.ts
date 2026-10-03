@@ -12,6 +12,7 @@ import { ValidationError } from "@decaf-ts/db-decorators";
 import { PortDirection } from "../constants";
 import { graphDefinitionOf } from "../reader";
 import type {
+  Condition,
   ConditionExpression,
   SwitchCase,
   SwitchCaseCondition,
@@ -377,7 +378,7 @@ export class GraphFlowBuilder {
    * Adds a `core.flow.if` node and routes the cursor to its `then` output.
    * Must be closed with {@link endIf} (or opened onto an `else` branch).
    */
-  if(condition: ConditionExpression, options: FlowIfOptions = {}): this {
+  if(condition: Condition, options: FlowIfOptions = {}): this {
     const id = uniqueGraphNodeId(options.id ?? "if", this.usedIds);
     this.kinds.set(id, "core.flow.if");
     const parameters: Record<string, GraphJsonValue> = {
@@ -407,7 +408,7 @@ export class GraphFlowBuilder {
    * Opens an `elseIf` branch on the current `if` frame: adds another
    * `core.flow.if` node connected from the parent's `else` output.
    */
-  elseIf(condition: ConditionExpression, options: FlowIfOptions = {}): this {
+  elseIf(condition: Condition, options: FlowIfOptions = {}): this {
     const frame = this.requireBranch("elseIf");
     if (frame.elseUsed) {
       throw new ValidationError(
@@ -621,7 +622,7 @@ export class GraphFlowBuilder {
 
   /** Adds a `core.loop.while` node with the given condition and body. */
   while(
-    condition: ConditionExpression,
+    condition: Condition,
     body: GraphWorkflowDocument,
     options: FlowLoopOptions = {}
   ): this {
@@ -630,7 +631,7 @@ export class GraphFlowBuilder {
 
   /** Adds a `core.loop.until` node with the given condition and body. */
   until(
-    condition: ConditionExpression,
+    condition: Condition,
     body: GraphWorkflowDocument,
     options: FlowLoopOptions = {}
   ): this {
@@ -718,7 +719,7 @@ export class GraphFlowBuilder {
 
   private loop(
     kind: "core.loop.while" | "core.loop.until",
-    condition: ConditionExpression,
+    condition: Condition,
     body: GraphWorkflowDocument,
     options: FlowLoopOptions
   ): this {

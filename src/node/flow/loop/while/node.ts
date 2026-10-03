@@ -65,7 +65,10 @@ export class GraphWhileLoopNode extends GraphNode<
   /**
    * Repeats the body workflow while `condition` evaluates truthy against the
    * carried state, emitting `LOOP_*` events per iteration and executing the
-   * body as a child run through `engine.execute(bodyWorkflow, ...)`.
+   * body as a child run through `engine.execute(bodyWorkflow, ...)`. A
+   * `CodeCondition` is dispatched through the registered
+   * `CodeSandboxEvaluator`; a graphical `ConditionExpression` and the built-in
+   * comparison types are evaluated directly.
    *
    * @param {GraphNodeExecutionRequest<GraphWhileLoopInput>} request - Execution request carrying the `state` input.
    * @param {GraphExecutionContext} context - Execution context providing run metadata and engine access.
@@ -108,7 +111,12 @@ export class GraphWhileLoopNode extends GraphNode<
 
     await context.emit({ type: GraphExecutionEventType.LOOP_STARTED });
 
-    while (new GraphConditionEvaluator().evaluate(condition, state)) {
+    while (
+      await new GraphConditionEvaluator().evaluateAsync(condition, state, context, {
+        ...input,
+        state,
+      })
+    ) {
       if (iteration >= maxIterations) {
         await context.emit({
           type: GraphExecutionEventType.LOOP_LIMIT_REACHED,

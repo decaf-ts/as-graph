@@ -19,6 +19,7 @@ import type { GraphResolvedNodeManifest } from "../shared/graph";
 
 import type { GraphExecutionStatus } from "../shared/graph";
 import type {
+  Condition,
   GraphExecutionErrorPayload,
   GraphExecutionEvent,
 } from "../shared/graph";
@@ -166,6 +167,13 @@ export interface GraphExecutionContextOptions {
 }
 
 /**
+ * A loop condition — a built-in `GraphConditionDefinition`, a graphical
+ * `ConditionExpression`, or a code `CodeCondition`. The loop node classes accept
+ * all three and dispatch them through {@link GraphConditionEvaluator}.
+ */
+export type LoopCondition = GraphConditionDefinition | Condition;
+
+/**
  * Metadata describing a loop node's behaviour.
  */
 export interface GraphLoopMetadata {
@@ -173,7 +181,7 @@ export interface GraphLoopMetadata {
   body: GraphWorkflowDocument;
   maxIterations?: number;
   timeoutMs?: number;
-  condition?: GraphConditionDefinition;
+  condition?: LoopCondition;
   concurrency?: number;
   inputPort?: string;
   outputPort?: string;
@@ -192,8 +200,9 @@ export interface GraphLoopMetadata {
  * Definition of a condition evaluated by the loop condition evaluator.
  *
  * When the condition object carries an `op` field (see {@link ConditionExpression}),
- * the {@link GraphConditionEvaluator} dispatches to the {@link ConditionExpressionEvaluator}
- * instead of the built-in `type`-based switch.
+ * the {@link GraphConditionEvaluator} dispatches to the {@link ConditionExpressionEvaluator};
+ * when it carries `type: "code"` (see {@link CodeCondition}) it dispatches to the
+ * registered `CodeSandboxEvaluator`; otherwise the built-in `type`-based switch is used.
  */
 export interface GraphConditionDefinition {
   type:

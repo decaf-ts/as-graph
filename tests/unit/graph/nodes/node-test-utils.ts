@@ -9,6 +9,7 @@
  * `instance.execute(request, context)`).
  */
 import type { GraphExecutionEngine } from "../../../../src/engine/execution/GraphExecutionEngine";
+import type { CodeSandboxEvaluator } from "../../../../src/engine/execution/CodeSandboxEvaluator";
 import { GraphExecutionContext } from "../../../../src/engine/execution/GraphExecutionContext";
 import type {
   GraphExecutionEvent,
@@ -107,5 +108,24 @@ export function throwingEngine(error: unknown): GraphExecutionEngine {
     execute: async () => {
       throw error;
     },
+  } as unknown as GraphExecutionEngine;
+}
+
+/**
+ * Builds a fake {@link GraphExecutionEngine} exposing both the nested `execute`
+ * contract (for loop bodies) and a registered `codeSandboxEvaluator` (for code
+ * conditions). Used by the flow-control code-mode suites.
+ */
+export function codeSandboxEngine(
+  evaluator: CodeSandboxEvaluator,
+  run: (
+    inputs: Record<string, unknown>
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>
+): GraphExecutionEngine {
+  return {
+    codeSandboxEvaluator: evaluator,
+    execute: async (_workflow: unknown, inputs: Record<string, unknown>) => ({
+      outputs: await run(inputs),
+    }),
   } as unknown as GraphExecutionEngine;
 }

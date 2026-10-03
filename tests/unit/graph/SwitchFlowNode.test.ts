@@ -371,6 +371,9 @@ describe("SwitchFlowNode.execute", () => {
       await expect(executor.execute(nodeExecutionRequest({ value: 1 }), ctx)).rejects.toThrow(
         /Unknown switch case condition/i
       );
+      await expect(executor.execute(nodeExecutionRequest({ value: 1 }), ctx)).rejects.toMatchObject({
+        graphCode: "GRAPH_UNKNOWN_CONDITION_TYPE",
+      });
     });
   });
 

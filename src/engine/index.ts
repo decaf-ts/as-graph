@@ -59,6 +59,7 @@ export * from "./validation";
 
 // Loops (TASK-216)
 export * from "./loops/GraphConditionEvaluator";
+export * from "./loops/ConditionEvaluator";
 export * from "./loops/ConditionExpressionEvaluator";
 export * from "./loops/GraphLoopExecutionContext";
 

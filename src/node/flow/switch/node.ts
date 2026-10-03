@@ -22,9 +22,6 @@ import { graphDefinitionOf } from "../../../shared/graph";
 import type {
   NodeMetadataChange,
   SwitchNodeMetadata,
-  SwitchCaseCondition,
-  ConditionExpression,
-  CodeCondition,
 } from "../../../shared/graph";
 import { GraphNode } from "../../base";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
@@ -32,12 +29,8 @@ import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
-import type {
-  CodeSandboxEvaluator,
-  SandboxLogger,
-} from "../../../engine/execution/CodeSandboxEvaluator";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { ConditionExpressionEvaluator } from "../../../engine/loops/ConditionExpressionEvaluator";
+import { evaluateCondition } from "../../../engine/loops/ConditionEvaluator";
 
 /** Inputs accepted by the switch node. */
 export type SwitchFlowInput = Record<string, unknown>;
@@ -96,66 +89,6 @@ function readSwitchMetadata(
   };
 }
 
-function isCodeCondition(cond: SwitchCaseCondition): cond is CodeCondition {
-  return (
-    typeof cond === "object" && cond !== null && "type" in cond && cond.type === "code"
-  );
-}
-
-function isConditionExpression(
-  cond: SwitchCaseCondition
-): cond is ConditionExpression {
-  return (
-    typeof cond === "object" && cond !== null && "op" in cond && typeof cond.op === "string"
-  );
-}
-
-async function evaluateSwitchCondition(
-  condition: SwitchCaseCondition,
-  conditionState: unknown,
-  fullInput: GraphExecutionValues,
-  context: GraphExecutionContext
-): Promise<boolean> {
-  if (isCodeCondition(condition)) {
-    const evaluator = (
-      context.engine as { codeSandboxEvaluator?: CodeSandboxEvaluator } | undefined
-    )?.codeSandboxEvaluator;
-    if (!evaluator) {
-      throw new GraphExecutionError(
-        "Code conditions require a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator",
-        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
-        { code: condition.code }
-      );
-    }
-    await context.log("Evaluating code condition", {
-      language: condition.language ?? "javascript",
-    });
-    const md = context.metadata as Record<string, unknown> | undefined;
-    const result = await evaluator.evaluate({
-      code: condition.code,
-      language: condition.language,
-      input: fullInput,
-      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
-      item: md?.item,
-      index: md?.index as number | undefined,
-      nodes:
-        (md?.nodes as Record<string, Record<string, unknown>> | undefined) ??
-        undefined,
-      logger: context.logger as unknown as SandboxLogger | undefined,
-      abortSignal: context.abortSignal,
-    });
-    return !!result;
-  }
-  if (isConditionExpression(condition)) {
-    return new ConditionExpressionEvaluator().evaluate(condition, conditionState);
-  }
-  throw new GraphExecutionError(
-    "Unknown switch case condition type — must be ConditionExpression (op) or CodeCondition (type: 'code')",
-    "GRAPH_UNKNOWN_SWITCH_CONDITION",
-    { condition }
-  );
-}
-
 /**
  * Switch flow-control node: routes the input to a matching case output port or `default`.
  */
@@ -208,10 +141,9 @@ export class SwitchFlowNode extends GraphNode<
     const conditionState = switchConditionState(input, inputValue);
 
     for (const switchCase of cases) {
-      const matches = await evaluateSwitchCondition(
+      const matches = await evaluateCondition(
         switchCase.condition,
-        conditionState,
-        input,
+        { input, state: conditionState, label: "switch case" },
         context
       );
       if (matches) {

@@ -1,8 +1,10 @@
 /**
  * @module as-graph/nodes/flow/if
  * @summary If flow-control node declaration (DECAF-32 §22.2.2).
- * @description If — conditional branch. Evaluates a `ConditionExpression`
- * (§22.3) and routes the input to the `then` or `else` output. The `else`
+ * @description If — conditional branch. Evaluates a `Condition` — a declarative
+ * `ConditionExpression` (§22.3, graphical mode) or a `CodeCondition`
+ * (§22.4, code mode, evaluated through the registered `CodeSandboxEvaluator`) —
+ * and routes the input to the `then` or `else` output. The `else`
  * branch is opt-in: it is rendered in CRUD as a boolean and the `else` output
  * port is only exposed (see `ifManifest` in `../../manifests`) when that boolean
  * is `true`. When the condition is `false` and the `else` branch is disabled,
@@ -12,13 +14,14 @@
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
-import type { ConditionExpression } from "../../../shared/graph";
+import type { Condition } from "../../../shared/graph";
 import { GraphNode } from "../../base";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
-import { ConditionExpressionEvaluator } from "../../../engine/loops/ConditionExpressionEvaluator";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { evaluateConditionSync, isCodeCondition, evaluateCodeCondition } from "../../../engine/loops/ConditionEvaluator";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 
 /** Inputs accepted by the if node. */
@@ -71,17 +74,24 @@ function ifConditionState(
 @model()
 export class IfFlowNode extends GraphNode<IfFlowInput, IfFlowOutput> {
   /**
-   * Evaluates the configured `ConditionExpression` against the resolved
-   * condition state and routes the input value to `then` or `else`; throws
-   * when the condition is false and the `else` branch is disabled.
+   * Evaluates the configured `Condition` against the resolved condition state
+   * and routes the input value to `then` or `else`; throws when the condition
+   * is false and the `else` branch is disabled. A `CodeCondition` is dispatched
+   * through the registered `CodeSandboxEvaluator`, mirroring the switch node.
+   *
+   * Graphical conditions evaluate synchronously so the existing synchronous
+   * `GRAPH_IF_NO_CONDITION` / `GRAPH_IF_ELSE_DISABLED` throw contract is
+   * preserved; only code conditions return a promise.
    *
    * @param {GraphNodeExecutionRequest<IfFlowInput>} request - Execution request carrying the `value` input.
-   * @return {GraphExecutionValues} The routed input value under `then` or `else`.
+   * @param {GraphExecutionContext} context - Execution context providing run metadata and the sandbox evaluator for code conditions.
+   * @return {GraphExecutionValues | Promise<GraphExecutionValues>} The routed input value under `then` or `else`.
    * @throws {GraphExecutionError} When no condition is configured (`GRAPH_IF_NO_CONDITION`) or when the condition is false with `else` disabled (`GRAPH_IF_ELSE_DISABLED`).
    */
   override execute(
-    request: GraphNodeExecutionRequest<IfFlowInput>
-  ): GraphExecutionValues {
+    request: GraphNodeExecutionRequest<IfFlowInput>,
+    context: GraphExecutionContext
+  ): GraphExecutionValues | Promise<GraphExecutionValues> {
     const input = request.inputs;
     const inputValue = input["value"] ?? input;
 
@@ -93,10 +103,25 @@ export class IfFlowNode extends GraphNode<IfFlowInput, IfFlowOutput> {
       );
     }
 
-    const matched = new ConditionExpressionEvaluator().evaluate(
+    if (isCodeCondition(this.condition)) {
+      return evaluateCodeCondition(this.condition, input, context).then(
+        (matched) => this.route(matched, inputValue)
+      );
+    }
+
+    const matched = evaluateConditionSync(
       this.condition,
-      ifConditionState(input, inputValue)
+      ifConditionState(input, inputValue),
+      "if"
     );
+    return this.route(matched, inputValue);
+  }
+
+  /**
+   * Routes the input value to `then`/`else`, throwing when the condition is
+   * false and the `else` branch is disabled.
+   */
+  private route(matched: boolean, inputValue: unknown): GraphExecutionValues {
     if (matched) {
       return { then: inputValue };
     }
@@ -127,14 +152,14 @@ export class IfFlowNode extends GraphNode<IfFlowInput, IfFlowOutput> {
   @output({ handle: "then" })
   then!: unknown;
 
-  /** Condition expression (§22.3) evaluated against the resolved condition state. */
+  /** Condition (§22.3 graphical or §22.4 code) evaluated against the resolved condition state. */
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.flow_control.if.fields.condition.label",
     placeholder: "graph.node.flow_control.if.fields.condition.placeholder",
     type: "code",
   })
   @input({ handle: "condition", userControlled: true, type: "object" })
-  condition?: ConditionExpression;
+  condition?: Condition;
 
   /** Enables the `else` output branch; when false, a failed condition throws. */
   @uielement("ngx-decaf-crud-field", {

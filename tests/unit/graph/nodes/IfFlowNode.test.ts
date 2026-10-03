@@ -6,9 +6,18 @@
 import { IfFlowNode } from "../../../../src/node";
 import { graphNodeConfig } from "../../../../src/node/base";
 import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
+import type { CodeSandboxEvaluator } from "../../../../src/engine/execution/CodeSandboxEvaluator";
+import type { GraphExecutionEngine } from "../../../../src/engine/execution/GraphExecutionEngine";
 import { graphNodeManifest } from "../../../../src/shared/graph";
-import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
+import { executeNode, nodeExecutionRequest, bootCodeSandboxEvaluator } from "../engine-fixtures";
 import { buildNodeContext } from "./node-test-utils";
+
+/** Engine facade exposing only the `codeSandboxEvaluator` the if node reads. */
+function engineWith(
+  codeSandboxEvaluator?: CodeSandboxEvaluator
+): GraphExecutionEngine {
+  return { codeSandboxEvaluator } as unknown as GraphExecutionEngine;
+}
 
 describe("IfFlowNode", () => {
   const manifest = graphNodeManifest(IfFlowNode);
@@ -132,6 +141,90 @@ describe("IfFlowNode", () => {
       expect((error as GraphExecutionError).graphCode).toBe(
         "GRAPH_IF_ELSE_DISABLED"
       );
+    });
+  });
+
+  describe("CodeCondition (code mode, SAA-66)", () => {
+    let evaluator: Awaited<ReturnType<typeof bootCodeSandboxEvaluator>>;
+
+    beforeAll(async () => {
+      evaluator = await bootCodeSandboxEvaluator();
+    });
+
+    it("routes to then when the code condition is truthy", async () => {
+      const context = buildNodeContext("core.flow.if", {
+        parameters: {
+          condition: { type: "code", code: "return $input.value === 'yes';" },
+        },
+        engine: engineWith(evaluator),
+      });
+      const result = await executeNode(
+        IfFlowNode,
+        nodeExecutionRequest({ value: "yes" }),
+        context
+      );
+      expect(result).toEqual({ then: "yes" });
+    });
+
+    it("routes to else when the code condition is falsy and else is enabled", async () => {
+      const context = buildNodeContext("core.flow.if", {
+        parameters: {
+          condition: { type: "code", code: "return $input.value === 'yes';" },
+          else: true,
+        },
+        engine: engineWith(evaluator),
+      });
+      const result = await executeNode(
+        IfFlowNode,
+        nodeExecutionRequest({ value: "no" }),
+        context
+      );
+      expect(result).toEqual({ else: "no" });
+    });
+
+    it("throws GRAPH_IF_ELSE_DISABLED when the code condition is falsy and else is disabled", async () => {
+      const context = buildNodeContext("core.flow.if", {
+        parameters: {
+          condition: { type: "code", code: "return $input.value === 'yes';" },
+        },
+        engine: engineWith(evaluator),
+      });
+      await expect(
+        executeNode(IfFlowNode, nodeExecutionRequest({ value: "no" }), context)
+      ).rejects.toMatchObject({ graphCode: "GRAPH_IF_ELSE_DISABLED" });
+    });
+
+    it("throws GRAPH_CODE_SANDBOX_NOT_CONFIGURED without a registered evaluator", async () => {
+      const context = buildNodeContext("core.flow.if", {
+        parameters: {
+          condition: { type: "code", code: "return true;" },
+        },
+      });
+      await expect(
+        executeNode(IfFlowNode, nodeExecutionRequest({ value: "x" }), context)
+      ).rejects.toMatchObject({
+        graphCode: "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
+      });
+    });
+  });
+
+  describe("graphical regression (SAA-66)", () => {
+    it("keeps the synchronous throw contract for a missing condition", () => {
+      const context = buildNodeContext("core.flow.if");
+      expect(() =>
+        executeNode(IfFlowNode, nodeExecutionRequest({ value: "x" }), context)
+      ).toThrow(GraphExecutionError);
+    });
+
+    it("keeps the synchronous throw contract for a disabled else", () => {
+      const context = buildNodeContext("core.flow.if", {
+        parameters: {
+          condition: { op: "eq", left: { const: true }, right: { const: false } },
+        },
+      });
+      expect(() =>
+        executeNode(IfFlowNode, nodeExecutionRequest({ value: "x" }), context)
+      ).toThrow(GraphExecutionError);
     });
   });
 });

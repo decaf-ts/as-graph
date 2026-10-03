@@ -1,19 +1,23 @@
 /**
  * @module as-graph/loops/GraphConditionEvaluator
- * @summary Evaluator for built-in loop condition types and the `ConditionExpression` DSL.
- * @description Supports safe, built-in condition types only. Does NOT evaluate arbitrary JavaScript expressions.
- * When the condition object carries an `op` field (ALFRED-5 §8 / DECAF-32 §22.3), dispatches to the
- * {@link ConditionExpressionEvaluator} instead of the built-in `type`-based switch.
+ * @summary Evaluator for built-in loop condition types, the `ConditionExpression` DSL, and `CodeCondition` code mode.
+ * @description Supports safe, built-in condition types, the declarative `ConditionExpression` DSL, and — through the
+ * shared {@link evaluateCondition} dispatch — pluggable `CodeCondition` code mode. When the condition object carries an
+ * `op` field (ALFRED-5 §8 / DECAF-32 §22.3) it dispatches to the {@link ConditionExpressionEvaluator}; when it carries
+ * `type: "code"` (DECAF-32 §22.4) it dispatches to the registered `CodeSandboxEvaluator`; otherwise the built-in
+ * `type`-based switch is used.
  */
-import type { GraphConditionDefinition } from "../types";
+import type { GraphConditionDefinition, LoopCondition } from "../types";
 import type { ConditionExpression } from "../../shared/graph";
+import type { GraphExecutionContext } from "../execution/GraphExecutionContext";
 import { GraphConditionType } from "../constants";
 import { GraphExecutionError } from "../errors/GraphExecutionError";
 import { ConditionExpressionEvaluator } from "./ConditionExpressionEvaluator";
+import { isCodeCondition, evaluateCodeCondition } from "./ConditionEvaluator";
 
 /**
- * Evaluates loop conditions using built-in comparison types or the
- * `ConditionExpression` DSL.
+ * Evaluates loop conditions using built-in comparison types, the
+ * `ConditionExpression` DSL, or the pluggable code sandbox.
  */
 export class GraphConditionEvaluator {
   private readonly expressionEvaluator = new ConditionExpressionEvaluator();
@@ -69,6 +73,34 @@ export class GraphConditionEvaluator {
           { condition }
         );
     }
+  }
+
+  /**
+   * Evaluates a loop condition that may be a built-in `GraphConditionDefinition`,
+   * a graphical `ConditionExpression`, or a code `CodeCondition`.
+   *
+   * `CodeCondition` evaluation is asynchronous (it runs through the pluggable
+   * `CodeSandboxEvaluator`), so the loop nodes call this method instead of the
+   * synchronous {@link evaluate}. Graphical and built-in conditions delegate to
+   * {@link evaluate} unchanged.
+   *
+   * @param condition - The condition definition.
+   * @param state - The current loop state (the graphical resolution root).
+   * @param context - The run-scoped execution context.
+   * @param input - The value map exposed to code conditions as `$input`.
+   * @returns `true` when the condition passes.
+   * @throws {GraphExecutionError} When no code sandbox evaluator is registered.
+   */
+  async evaluateAsync(
+    condition: LoopCondition,
+    state: unknown,
+    context: GraphExecutionContext,
+    input: Record<string, unknown>
+  ): Promise<boolean> {
+    if (isCodeCondition(condition)) {
+      return evaluateCodeCondition(condition, input, context);
+    }
+    return this.evaluate(condition, state);
   }
 
   /**

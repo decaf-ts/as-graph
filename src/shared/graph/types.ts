@@ -79,11 +79,19 @@ export interface CodeCondition {
 }
 
 /**
+ * A condition accepted by every flow-control carrier (if, elseIf, while, until,
+ * switch) — either a declarative {@link ConditionExpression} (graphical mode) or a
+ * {@link CodeCondition} (code mode). The two modes are dispatched identically by
+ * the engine regardless of which carrier holds the condition.
+ */
+export type Condition = ConditionExpression | CodeCondition;
+
+/**
  * A condition on a Switch case — either a declarative
  * {@link ConditionExpression} (graphical mode) or a {@link CodeCondition}
  * (code mode).
  */
-export type SwitchCaseCondition = ConditionExpression | CodeCondition;
+export type SwitchCaseCondition = Condition;
 
 /**
  * A single case in a Switch node.

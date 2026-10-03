@@ -66,7 +66,10 @@ export class GraphUntilLoopNode extends GraphNode<
    * Runs the body workflow at least once and repeats until `condition`
    * evaluates truthy against the carried state, emitting `LOOP_*` events per
    * iteration and executing the body as a child run through
-   * `engine.execute(bodyWorkflow, ...)`.
+   * `engine.execute(bodyWorkflow, ...)`. A `CodeCondition` is dispatched
+   * through the registered `CodeSandboxEvaluator`; a graphical
+   * `ConditionExpression` and the built-in comparison types are evaluated
+   * directly.
    *
    * @param {GraphNodeExecutionRequest<GraphUntilLoopInput>} request - Execution request carrying the `state` input.
    * @param {GraphExecutionContext} context - Execution context providing run metadata and engine access.
@@ -145,9 +148,11 @@ export class GraphUntilLoopNode extends GraphNode<
         iteration,
       });
 
-      const conditionResult = new GraphConditionEvaluator().evaluate(
+      const conditionResult = await new GraphConditionEvaluator().evaluateAsync(
         condition,
-        state
+        state,
+        context,
+        { ...input, state }
       );
 
       await context.emit({
