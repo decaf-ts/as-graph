@@ -34,6 +34,15 @@ it; do not fork or restate its normative content.
 
 ## Rules
 
+- Whenever **adding new nodes**, all rules defined in the technical
+  documentation (`workdocs/ai/project/technical-docs/design-specification/08-graph-design.md`,
+  umbrella repo root — §0 node rules and the canonical editor UI rules) must be
+  taken into account: the node property taxonomy, port decorators and wrappers,
+  locale-key structure, manifest overlays, and validation decoration are all
+  normative there.
+- Any update to the code must update the technical documentation in the same
+  working change. A code change that leaves the technical documentation stale is
+  **incomplete**.
 - Read the affected skill(s) before changing code; update them in the same change.
 - Keep every skill backend-only; leave renderer/UI guidance to `for-angular/graph`.
 - If a rule is unclear, ask the board/manager — do not guess.
