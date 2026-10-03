@@ -33,6 +33,7 @@ import { DecafRequestContext } from "@decaf-ts/for-nest";
 import type {
   GraphRunEventEnvelope,
   GraphRunLimits,
+  GraphRunModel,
 } from "../../shared/graph";
 import { isGraphRunTerminalEventType } from "../../shared/graph";
 import type {
@@ -41,7 +42,11 @@ import type {
   GraphRunCreateRequest,
 } from "../../";
 import { GraphRunService } from "../../";
-import { graphWorkflowOwnerOf } from "../../engine/services/GraphWorkflowService";
+import {
+  GraphWorkflowService,
+  graphWorkflowOwnerOf,
+} from "../../engine/services/GraphWorkflowService";
+import { toIsoDateString } from "./servingDates";
 
 /** DI token for {@link GraphRunControllerOptions}. */
 export const GRAPH_RUN_OPTIONS = "GRAPH_RUN_OPTIONS";
@@ -108,10 +113,57 @@ function graphRunHttpErrorOf(e: unknown, runId?: string): HttpException {
   return new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
 }
 
+/**
+ * Projects an engine-side {@link GraphRun} to its HTTP JSON shape via a
+ * JSON round-trip (strips `undefined` members and engine-only references).
+ *
+ * @param {GraphRun} run - The engine-side run to serve.
+ * @return {Record<string, unknown>} The run's plain JSON-safe HTTP shape.
+ */
 function graphRunToHttp(run: GraphRun): Record<string, unknown> {
   return JSON.parse(JSON.stringify(run)) as Record<string, unknown>;
 }
 
+/**
+ * Projects a persisted {@link GraphRunModel} row to its HTTP serving shape
+ * (SAA-76): carries the storage-derived members the engine {@link GraphRun}
+ * does not have (`owner`, `inputs`), omits unset optional members, and
+ * formats every date through {@link toIsoDateString} so served dates are
+ * true ISO-8601 strings.
+ *
+ * @param {GraphRunModel} model - The persisted run row to serve.
+ * @return {Record<string, unknown>} The run row's plain JSON-safe HTTP shape.
+ */
+function graphRunModelToHttp(model: GraphRunModel): Record<string, unknown> {
+  return {
+    runId: model.runId,
+    workflowId: model.workflowId,
+    ...(model.owner !== undefined ? { owner: model.owner } : {}),
+    status: model.status,
+    ...(model.documentFingerprint !== undefined
+      ? { documentFingerprint: model.documentFingerprint }
+      : {}),
+    ...(model.inputs !== undefined ? { inputs: model.inputs } : {}),
+    ...(model.result !== undefined ? { result: model.result } : {}),
+    ...(model.error !== undefined ? { error: model.error } : {}),
+    createdAt: toIsoDateString(model.createdAt),
+    updatedAt: toIsoDateString(model.updatedAt),
+    ...(model.startedAt !== undefined
+      ? { startedAt: toIsoDateString(model.startedAt) }
+      : {}),
+    ...(model.finishedAt !== undefined
+      ? { finishedAt: toIsoDateString(model.finishedAt) }
+      : {}),
+  };
+}
+
+/**
+ * Wraps a run event envelope as a Nest SSE {@link MessageEvent} whose `data`
+ * is the JSON-serialized envelope.
+ *
+ * @param {GraphRunEventEnvelope} event - The sequenced envelope to stream.
+ * @return {MessageEvent} The SSE message to emit.
+ */
 function graphRunEventMessage(event: GraphRunEventEnvelope): MessageEvent {
   return {
     type: "message",
@@ -131,6 +183,7 @@ function graphRunEventMessage(event: GraphRunEventEnvelope): MessageEvent {
 export class GraphRunController {
   constructor(
     private readonly runService: GraphRunService,
+    private readonly workflowService: GraphWorkflowService,
     @Optional() @Inject(DecafRequestContext)
     private readonly requestContext?: DecafRequestContext,
     @Optional() @Inject(GRAPH_RUN_OPTIONS)
@@ -156,6 +209,12 @@ export class GraphRunController {
     return this.requestContext;
   }
 
+  /**
+   * Resolves the requesting caller's identity from the injected request
+   * context via {@link graphWorkflowOwnerOf}; `null` for anonymous callers.
+   *
+   * @return {string | null} The authenticated owner user, or `null` when absent.
+   */
   private ownerUserOf(): string | null {
     return graphWorkflowOwnerOf(this.requestContext) ?? null;
   }
@@ -207,6 +266,39 @@ export class GraphRunController {
         eventsUrl: `/graph/runs/${run.runId}/events`,
         resultUrl: `/graph/runs/${run.runId}`,
       };
+    } catch (e: unknown) {
+      throw graphRunHttpErrorOf(e);
+    }
+  }
+
+  /**
+   * Lists a workflow's past runs, newest first (DECAF-50 §4.14).
+   *
+   * The workflow itself is access-checked first (unknown → `404`, foreign
+   * owner → `403`), then the persisted `GraphRunModel` rows for that workflow
+   * are ownership-filtered and returned as their JSON rows. Each row carries
+   * `runId`, `workflowId`, `owner`, `status`, `documentFingerprint`,
+   * `inputs`, `result`, `error`, `createdAt`, `updatedAt`, `startedAt` and
+   * `finishedAt` (dates as ISO strings; optional members are omitted when
+   * unset). Auth follows the controller's configured `auth` mode.
+   *
+   * @param {string} workflowId - Workflow id path parameter.
+   * @return {Promise<Array<Record<string, unknown>>>} The workflow's runs, newest first.
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown workflows/runs, 403 for foreign owners).
+   */
+  @Get("workflows/:workflowId/runs")
+  async listRuns(
+    @Param("workflowId") workflowId: string
+  ): Promise<Record<string, unknown>[]> {
+    const context = this.requireAuthenticatedContext();
+    try {
+      await this.workflowService.assertAccess(workflowId, context);
+      const models = await this.runService.listRunsByWorkflow(
+        workflowId,
+        this.ownerUserOf(),
+        context
+      );
+      return models.map((model) => graphRunModelToHttp(model));
     } catch (e: unknown) {
       throw graphRunHttpErrorOf(e);
     }
@@ -346,6 +438,14 @@ export class GraphRunController {
     });
   }
 
+  /**
+   * Parses the SSE replay cursor: `0` for absent/empty values, otherwise the
+   * parsed non-negative integer.
+   *
+   * @param {string | undefined} afterSequence - Raw `afterSequence` query parameter.
+   * @return {number} The sequence number to replay events after.
+   * @throws {HttpException} `400` when the value is not a non-negative integer.
+   */
   private parseAfterSequence(afterSequence: string | undefined): number {
     if (afterSequence === undefined || afterSequence === "") return 0;
     if (!/^\d+$/.test(afterSequence)) {

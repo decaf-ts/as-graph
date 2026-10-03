@@ -97,4 +97,28 @@ export class RamGraphRunStore implements GraphRunStore {
       return null;
     }
   }
+
+  /**
+   * Lists every persisted run row for the given workflow document as its
+   * persisted {@link GraphRunModel} shape (keeping storage-derived fields such
+   * as `updatedAt` and `inputs`).
+   *
+   * @param {string} workflowId - Workflow document id the runs executed.
+   * @param args - Optional decaf `Context` arguments forwarded to the repository.
+   * @return {Promise<GraphRunModel[]>} The matching rows (empty when none exist).
+   */
+  async listRuns(
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRunModel[]> {
+    try {
+      return (await this.repo.findBy(
+        "workflowId",
+        workflowId,
+        ...args
+      )) as GraphRunModel[];
+    } catch {
+      return [];
+    }
+  }
 }

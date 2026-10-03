@@ -31,7 +31,11 @@ import {
   type GraphRunEventStore,
   type GraphRunStore,
 } from "./types";
-import { assertGraphResourceOwnership } from "./ownership";
+import {
+  assertGraphResourceOwnership,
+  canAccessGraphResource,
+} from "./ownership";
+import type { GraphRunModel } from "../../shared/graph";
 import { GraphRunEventPublisher } from "./GraphRunEventPublisher";
 import { GraphRunDocumentProvider, GraphRunExecutor } from "./GraphRunExecutor";
 
@@ -191,6 +195,37 @@ export class GraphRunService {
     }
     this.assertOwnership(run, ownerUser);
     return run;
+  }
+
+  /**
+   * Lists the persisted run rows for a workflow document, scoped to the
+   * requesting owner and ordered newest first.
+   *
+   * The collection is ownership-filtered with
+   * {@link canAccessGraphResource}: owner-less runs stay visible to everyone,
+   * a named caller sees their own plus owner-less runs, and an anonymous caller
+   * without the explicit `allowAnonymousAccess` tolerance sees only owner-less
+   * runs (SAA-595). The persisted {@link GraphRunModel} rows are returned so
+   * the HTTP boundary can serve the frontend-safe listing shape.
+   *
+   * @param {string} workflowId - Workflow document id to list runs for.
+   * @param {string | null} ownerUser - Identity of the requesting caller.
+   * @param args - An optional decaf `Context` forwarded to the store.
+   * @return {Promise<GraphRunModel[]>} The workflow's runs, newest first.
+   */
+  async listRunsByWorkflow(
+    workflowId: string,
+    ownerUser: string | null,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRunModel[]> {
+    const models = await this.runStore.listRuns(workflowId, ...args);
+    return models
+      .filter((model) =>
+        canAccessGraphResource({ owner: model.owner }, ownerUser, {
+          allowAnonymousAccess: this.options.allowAnonymousAccess === true,
+        })
+      )
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
   /**

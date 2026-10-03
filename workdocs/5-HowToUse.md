@@ -299,8 +299,10 @@ manifests, documents and engine run results into DOM-free render inputs.
 
 `GraphExecutionModule.forRoot(options)` wires the engine into a NestJS app: the node catalogue API
 (`GET /graph/node-types`, `GET /graph/node-types/:kind`, `POST /graph/node-types/:kind/resolve`), canonical
-workflow persistence (`PUT|GET /graph/workflows/:workflowId`, `POST /graph/workflows/validate`) and the
-asynchronous run lifecycle (`POST /graph/runs` → `202`, `GET /graph/runs/:runId/events` SSE, `DELETE /graph/runs/:runId`).
+workflow persistence (`PUT|GET /graph/workflows/:workflowId`, `GET /graph/workflows` ownership-filtered
+summaries, `POST /graph/workflows/validate`) and the asynchronous run lifecycle (`POST /graph/runs` → `202`,
+`GET /graph/workflows/:workflowId/runs` per-workflow run listing, `GET /graph/runs/:runId/events` SSE,
+`DELETE /graph/runs/:runId`).
 The engine provider is a Decaf `ClientBasedService`: the module constructs `new GraphExecutionEngine()`
 and initializes it with `await engine.boot(config)`.
 

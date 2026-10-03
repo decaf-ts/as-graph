@@ -13,6 +13,7 @@
  */
 import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../shared/graph";
+import type { GraphRunModel } from "../../shared/graph";
 import type { GraphExecutionResult, GraphExecutionValues } from "../types";
 import type { GraphExecutionErrorPayload } from "../../shared/graph";
 import type {
@@ -72,7 +73,7 @@ export interface GraphRunEventStore {
   release?(runId: string): void;
 }
 
-/** Persistence port for run records: save and read {@link GraphRun}s by id, with optional leading {@link Context}. */
+/** Persistence port for run records: save, read by id, and list by workflow, with optional leading {@link Context}. */
 export interface GraphRunStore {
   saveRun(
     run: GraphRun,
@@ -82,6 +83,19 @@ export interface GraphRunStore {
     runId: string,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRun | null>;
+  /**
+   * Lists every persisted run row that executed the given workflow document.
+   *
+   * Rows are returned as their persisted {@link GraphRunModel} shape so the
+   * serving list keeps the storage-derived fields (`updatedAt`, `inputs`) that
+   * the engine {@link GraphRun} does not carry. Implementations are free to
+   * return the rows in any order; the run service orders the serving result.
+   * An unknown workflow yields an empty list.
+   */
+  listRuns(
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRunModel[]>;
 }
 
 /** A run-creation request: an inline workflow document, or a saved `workflowId` plus optional input values. */

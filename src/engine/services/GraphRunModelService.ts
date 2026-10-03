@@ -87,4 +87,31 @@ export class GraphRunModelService extends ModelService<GraphRunModel>
       return null;
     }
   }
+
+  /**
+   * Lists every persisted run row for the given workflow document as its
+   * persisted {@link GraphRunModel} shape (keeping storage-derived fields such
+   * as `updatedAt` and `inputs`).
+   *
+   * @param {string} workflowId - Workflow document id the runs executed.
+   * @param args - An optional decaf `Context` forwarded to the model service.
+   * @return {Promise<GraphRunModel[]>} The matching rows (empty when none exist).
+   */
+  async listRuns(
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRunModel[]> {
+    const { ctxArgs } = (await this.logCtx(args, "listRuns", true)).for(
+      this.listRuns
+    );
+    try {
+      return (await this.findBy(
+        "workflowId",
+        workflowId,
+        ...ctxArgs
+      )) as GraphRunModel[];
+    } catch {
+      return [];
+    }
+  }
 }

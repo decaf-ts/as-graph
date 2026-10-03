@@ -1,3 +1,13 @@
+/**
+ * @module as-graph/nest/graph/GraphWorkflowController
+ * @summary Canonical workflow document persistence HTTP API (DECAF-50 §4.10)
+ * plus the ownership-filtered workflow serving list (SAA-76).
+ * @description Serves `PUT`/`GET /graph/workflows/:workflowId`,
+ * `POST /graph/workflows/validate`, and `GET /graph/workflows` on top of
+ * {@link GraphWorkflowService}, enforcing the configured authentication mode,
+ * boundary validation, document resource limits, and fail-closed per-user
+ * ownership; engine errors surface as mapped {@link HttpException}s.
+ */
 import {
   Body,
   Controller,
@@ -19,6 +29,7 @@ import type { GraphWorkflowValidationResult } from "../../";
 import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
 import { GraphWorkflowDocumentRejectedError } from "../../engine/errors/GraphWorkflowErrors";
 import type { GraphWorkflowDocumentLimits } from "../../engine/validation/GraphWorkflowDocumentLimits";
+import { toIsoDateString } from "./servingDates";
 
 /** DI token for {@link GraphWorkflowControllerOptions}. */
 export const GRAPH_WORKFLOW_OPTIONS = "GRAPH_WORKFLOW_OPTIONS";
@@ -50,7 +61,32 @@ export interface GraphWorkflowSaveResponse {
   savedAt: string;
 }
 
-function graphWorkflowHttpErrorOf(e: unknown, workflowId?: string): HttpException {
+/** One row of `GET /graph/workflows`: the serving summary a workflow list binds to. */
+export interface GraphWorkflowSummary {
+  /** Workflow document id (the persistence primary key). */
+  workflowId: string;
+  /** Display name mirrored from the document, when present. */
+  name?: string;
+  /** ISO timestamp of the last save/update. */
+  updatedAt: string;
+}
+
+/**
+ * Maps a thrown Decaf error to the Nest HTTP equivalent for the workflow
+ * persistence/serving API: boundary rejection becomes `422` with structured
+ * issues, ownership/authorization failures `403` (naming the workflow when
+ * known), missing workflows `404`, validation failures `400`, and anything
+ * else surfaces as `500` with its message. Nest {@link HttpException}s pass
+ * through unchanged.
+ *
+ * @param {unknown} e - The caught error from the service call.
+ * @param {string} [workflowId] - Workflow id from the request path, used to name the resource in `403` messages.
+ * @return {HttpException} The HTTP-mapped error to rethrow.
+ */
+function graphWorkflowHttpErrorOf(
+  e: unknown,
+  workflowId?: string
+): HttpException {
   if (e instanceof GraphWorkflowDocumentRejectedError) {
     return new HttpException(
       {
@@ -153,10 +189,36 @@ export class GraphWorkflowController {
       return {
         workflowId,
         ...(model.name ? { name: model.name } : {}),
-        savedAt: model.updatedAt.toISOString(),
+        savedAt: toIsoDateString(model.updatedAt) as string,
       };
     } catch (e: unknown) {
       throw graphWorkflowHttpErrorOf(e, workflowId);
+    }
+  }
+
+  /**
+   * Lists the workflows visible to the requesting caller, newest update first.
+   *
+   * Auth follows the controller's configured `auth` mode (default `"required"`
+   * rejects anonymous calls with `401`). The collection is ownership-filtered
+   * by {@link GraphWorkflowService.listWorkflows}, so a caller only sees their
+   * own plus owner-less (system/standalone) workflows.
+   *
+   * @return {Promise<GraphWorkflowSummary[]>} Visible workflow summaries, newest first.
+   * @throws {HttpException} 401 without an authenticated context.
+   */
+  @Get("workflows")
+  async listWorkflows(): Promise<GraphWorkflowSummary[]> {
+    const context = this.requireAuthenticatedContext();
+    try {
+      const models = await this.workflowService.listWorkflows(context);
+      return models.map((model) => ({
+        workflowId: model.workflowId,
+        ...(model.name !== undefined ? { name: model.name } : {}),
+        updatedAt: toIsoDateString(model.updatedAt) as string,
+      }));
+    } catch (e: unknown) {
+      throw graphWorkflowHttpErrorOf(e);
     }
   }
 
@@ -195,6 +257,13 @@ export class GraphWorkflowController {
     return this.workflowService.validateDocument(document, this.requestContext);
   }
 
+  /**
+   * Detects a canonical snapshot wrapper body (`{ document, ... }`): an
+   * object carrying a `document` member but no bare document `nodes` member.
+   *
+   * @param {unknown} body - The raw request body.
+   * @return {boolean} `true` when the body should be routed to {@link GraphWorkflowService.saveSnapshot}.
+   */
   private isCanonicalWrapper(body: unknown): boolean {
     return (
       !!body &&
@@ -205,6 +274,13 @@ export class GraphWorkflowController {
     );
   }
 
+  /**
+   * Extracts the bare {@link GraphWorkflowDocument} from a request body,
+   * unwrapping a canonical snapshot wrapper when present.
+   *
+   * @param {unknown} body - The raw request body.
+   * @return {GraphWorkflowDocument} The document to validate.
+   */
   private documentOf(body: unknown): GraphWorkflowDocument {
     if (this.isCanonicalWrapper(body)) {
       return (body as { document: GraphWorkflowDocument }).document;

@@ -1,11 +1,26 @@
+/**
+ * @module as-graph/engine/services/GraphWorkflowService
+ * @summary Model-backed persistence for canonical workflow documents
+ * (DECAF-50 §4.10) plus the ownership-filtered workflow serving list (SAA-76).
+ * @description Saves, reads, lists, validates, and access-checks
+ * {@link GraphWorkflowModel} rows via the Decaf {@link ModelService}:
+ * every submitted document passes the boundary validation gate before
+ * persisting, legacy snapshots are handled per DECAF-50 §4.18, and all reads
+ * and listings are fail-closed ownership-scoped through
+ * {@link canAccessGraphResource} / {@link assertGraphResourceOwnership}.
+ */
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import {
   ModelService,
+  OrderDirection,
   service,
   type Context,
   type MaybeContextualArg,
 } from "@decaf-ts/core";
-import { assertGraphResourceOwnership } from "../runs/ownership";
+import {
+  assertGraphResourceOwnership,
+  canAccessGraphResource,
+} from "../runs/ownership";
 import {
   isGraphJsonSafeValue,
   isGraphWorkflowDocumentShape,
@@ -214,6 +229,81 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
     throw new NotFoundError(
       `Graph workflow '${workflowId}' has no canonical document; legacy definition/state snapshots are no longer supported (DECAF-50 §4.26 R2-2)`
     );
+  }
+
+  /**
+   * Lists the workflows visible to the requesting caller, newest update first.
+   *
+   * The collection is ownership-filtered with
+   * {@link canAccessGraphResource}: owner-less system workflows stay visible to
+   * everyone, a named caller sees their own plus owner-less workflows, and an
+   * anonymous caller without the explicit `allowAnonymousAccess` tolerance sees
+   * only owner-less workflows (SAA-595 F3). The full rows are returned so the
+   * HTTP boundary can project the serving summary it exposes.
+   *
+   * @param args - An optional decaf `Context` carrying the requesting principal.
+   * @return {Promise<GraphWorkflowModel[]>} Visible workflows, newest first.
+   */
+  async listWorkflows(
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowModel[]> {
+    const { ctx, ctxArgs } = (
+      await this.logCtx(args, "listWorkflows", true)
+    ).for(this.listWorkflows);
+
+    let models: GraphWorkflowModel[] = [];
+    try {
+      models = (await this.listBy(
+        "workflowId",
+        OrderDirection.ASC,
+        ...ctxArgs
+      )) as GraphWorkflowModel[];
+    } catch {
+      models = [];
+    }
+
+    const owner = graphWorkflowOwnerOf(ctx);
+    return models
+      .filter((model) =>
+        canAccessGraphResource(model, owner, {
+          allowAnonymousAccess: this.allowAnonymousAccess,
+        })
+      )
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  }
+
+  /**
+   * Asserts that the workflow exists and is visible to the requesting caller,
+   * returning the persisted row. Foreign owners surface as a `ForbiddenError`;
+   * unknown workflows as a `NotFoundError` (the read path's own contract).
+   *
+   * @param {string} workflowId - Workflow id to check.
+   * @param args - An optional decaf `Context` carrying the requesting principal.
+   * @return {Promise<GraphWorkflowModel>} The accessible workflow row.
+   * @throws {NotFoundError} When the workflow does not exist.
+   * @throws {ForbiddenError} When the workflow is owned by another user.
+   */
+  async assertAccess(
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowModel> {
+    const { ctx, ctxArgs } = (
+      await this.logCtx(args, "assertAccess", true)
+    ).for(this.assertAccess);
+
+    let model: GraphWorkflowModel | null;
+    try {
+      model = (await this.read(workflowId, ...ctxArgs)) as GraphWorkflowModel;
+    } catch {
+      model = null;
+    }
+    if (!model) {
+      throw new NotFoundError(
+        `No graph workflow found for workflowId '${workflowId}'`
+      );
+    }
+    this.assertOwnership(workflowId, model, graphWorkflowOwnerOf(ctx));
+    return model;
   }
 
   /**
