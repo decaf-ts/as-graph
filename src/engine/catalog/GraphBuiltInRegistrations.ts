@@ -30,9 +30,15 @@ function executorOf(nodeClass: GraphNodeClass): GraphNodeExecutor {
       // resolves `GraphValueTemplate` user properties into `request.parameters`
       // at execution time, so a built-in node must hydrate from the resolved
       // parameters to observe them (DECAF-32 §22.4).
+      //
+      // Persisted user-defined `state` is re-applied last (DECAF-50 §4.5 item 3,
+      // merge order `metadata` → `parameters` → `state`): resolved runtime
+      // parameters must never clobber a `@state()` value, so the node reads it
+      // through `this.*` as authored.
       const instance = nodeClass.instantiate({
         ...graphNodeConfig(context.node),
         ...(request.parameters as Record<string, unknown>),
+        ...((context.node.state as Record<string, unknown>) ?? {}),
       });
       return instance.execute(request, context);
     },

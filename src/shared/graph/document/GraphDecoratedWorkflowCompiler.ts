@@ -7,7 +7,19 @@ import type {
   GraphWorkflowNodeMetadata,
   GraphWorkflowRelationMetadata,
 } from "../constants";
-import { graphLeafPortsOf, graphWorkflowDefinitionOf } from "../reader";
+import {
+  graphLeafPortsOf,
+  graphWorkflowDefinitionOf,
+} from "../reader";
+import {
+  graphDeclaredInputKeysOf,
+  graphNodeClassMetadataOf,
+  graphNodeParameterDefaultsOf,
+  graphNodeStateDefaultsOf,
+  graphNodeStateValuesOf,
+  graphPortDefaultValueOf,
+  uniqueGraphNodeId,
+} from "./GraphNodeDerivation";
 import {
   GRAPH_AUTH_METADATA_KEY,
   graphAuthMetadataOf,
@@ -85,8 +97,17 @@ export function graphDecoratedWorkflowCompiler(
   options: GraphDecoratedWorkflowCompileOptions = {}
 ): GraphWorkflowDocument {
   const definition = resolveGraphWorkflowDefinition(workflow);
-  const nodes = definition.nodes.map((nodeMetadata) =>
-    graphNodeInstanceOf(nodeMetadata, definition, options.positions ?? {})
+  const usedNodeIds = new Set<string>();
+  const resolvedIds = new Map<GraphWorkflowNodeMetadata, string>();
+  const nodes = definition.nodes.map((nodeMetadata, index) =>
+    graphNodeInstanceOf(
+      nodeMetadata,
+      definition,
+      options.positions ?? {},
+      index,
+      usedNodeIds,
+      resolvedIds
+    )
   );
   const builder = new GraphWorkflowDocumentBuilder(
     options.id ?? definition.tag ?? definition.name,
@@ -102,7 +123,9 @@ export function graphDecoratedWorkflowCompiler(
     builder.addNode(node);
   }
   definition.relations.forEach((relation, index) => {
-    builder.addEdge(graphEdgeOf(relation, definition, index));
+    builder.addEdge(
+      graphEdgeOf(relation, definition, index, workflow, resolvedIds)
+    );
   });
   builder.setUi(graphWorkflowUiStateOf(options));
   builder.setMetadata(graphDocumentMetadataOf(definition));
@@ -146,18 +169,6 @@ function graphPortSchemaOf(port: GraphPortDefinition): GraphValueSchema {
   );
 }
 
-function graphPortDefaultValueOf(port: GraphPortDefinition): GraphJsonValue | undefined {
-  const elementValue = port.element?.["props"]?.["value"];
-  const source = elementValue ?? port.prop?.["value"] ?? port.validation?.["defaultValue"];
-  if (source === undefined || typeof source === "function") return undefined;
-  if (!isGraphJsonSafeValue(source)) return undefined;
-  try {
-    return JSON.parse(JSON.stringify(source)) as GraphJsonValue;
-  } catch {
-    return undefined;
-  }
-}
-
 function graphWorkflowUiStateOf(
   options: GraphDecoratedWorkflowCompileOptions
 ): GraphWorkflowUiState | undefined {
@@ -168,26 +179,38 @@ function graphWorkflowUiStateOf(
 function graphNodeInstanceOf(
   nodeMetadata: GraphWorkflowNodeMetadata,
   workflow: GraphWorkflowDefinition,
-  positions: Record<string, { x: number; y: number }>
+  positions: Record<string, { x: number; y: number }>,
+  index: number,
+  usedIds: Set<string>,
+  resolvedIds: Map<GraphWorkflowNodeMetadata, string>
 ): GraphNodeInstance {
   const nodeDefinition = isGraphModelLike(nodeMetadata.node)
     ? graphNodeDefinitionSafely(nodeMetadata.node)
     : undefined;
+  const id = uniqueGraphNodeId(
+    nodeMetadata.id ?? nodeDefinition?.tag ?? nodeDefinition?.kind ?? `n${index}`,
+    usedIds
+  );
+  resolvedIds.set(nodeMetadata, id);
+  const kind =
+    nodeMetadata.kind ??
+    nodeDefinition?.kind ??
+    nodeDefinition?.name ??
+    nodeMetadata.id ??
+    id;
   const instance: GraphNodeInstance = {
-    id: nodeMetadata.id,
-    kind:
-      nodeMetadata.kind ??
-      nodeDefinition?.kind ??
-      nodeDefinition?.name ??
-      nodeMetadata.id,
+    id,
+    kind,
     parameters: graphNodeParametersOf(nodeMetadata, nodeDefinition),
   };
   if (nodeMetadata.label !== undefined) instance.label = nodeMetadata.label;
   const metadata = graphNodeMetadataCollectionOf(nodeMetadata, nodeDefinition);
   if (metadata) instance.metadata = metadata;
-  const loop = graphLoopConfigurationOf(nodeMetadata, nodeDefinition);
+  const state = graphNodeStateOf(nodeMetadata);
+  if (state) instance.state = state;
+  const loop = graphLoopConfigurationOf(nodeMetadata, nodeDefinition, id);
   if (loop) instance.loop = loop;
-  const position = positions[nodeMetadata.id];
+  const position = positions[id] ?? positions[nodeMetadata.id ?? ""];
   if (position) {
     const ui: GraphNodeUiState = { position: { x: position.x, y: position.y } };
     instance.ui = ui;
@@ -195,18 +218,38 @@ function graphNodeInstanceOf(
   return instance;
 }
 
+function graphNodeStateOf(
+  nodeMetadata: GraphWorkflowNodeMetadata
+): Record<string, GraphJsonValue> | undefined {
+  if (!nodeMetadata.node || !isGraphModelLike(nodeMetadata.node)) return undefined;
+  const state =
+    typeof nodeMetadata.node === "function"
+      ? graphNodeStateDefaultsOf(nodeMetadata.node as Constructor)
+      : graphNodeStateValuesOf(nodeMetadata.node as Model);
+  return Object.keys(state).length ? state : undefined;
+}
+
 function graphNodeMetadataCollectionOf(
   nodeMetadata: GraphWorkflowNodeMetadata,
   nodeDefinition: GraphNodeDefinitionShim | undefined
 ): Record<string, GraphJsonValue> | undefined {
-  const collected: Record<string, GraphJsonValue> = {};
-  for (const source of [
-    nodeDefinition?.graph?.metadata,
-    nodeMetadata.metadata as Record<string, unknown> | undefined,
-  ]) {
-    if (!source || typeof source !== "object") continue;
+  const collected: Record<string, GraphJsonValue> = {
+    ...(graphNodeClassMetadataOf(
+      (nodeDefinition ?? {}) as unknown as Parameters<
+        typeof graphNodeClassMetadataOf
+      >[0]
+    ) ?? {}),
+  };
+  const source = nodeMetadata.metadata as Record<string, unknown> | undefined;
+  if (source && typeof source === "object") {
+    const declaredInputs = nodeDefinition
+      ? graphDeclaredInputKeysOf(nodeDefinition.ports)
+      : new Set<string>();
     for (const [key, value] of Object.entries(source)) {
       if (key === "loop") continue;
+      // A node-config entry naming a declared input port is configuration and
+      // is folded into `parameters` by `graphNodeParametersOf`, not metadata.
+      if (declaredInputs.has(key)) continue;
       reflectJsonSafeValue(collected, key, value);
     }
   }
@@ -249,13 +292,26 @@ function graphNodeParametersOf(
   nodeMetadata: GraphWorkflowNodeMetadata,
   nodeDefinition: GraphNodeDefinitionShim | undefined
 ): Record<string, GraphJsonValue> {
-  const parameters: Record<string, GraphJsonValue> = {};
+  const parameters: Record<string, GraphJsonValue> = nodeDefinition
+    ? graphNodeParameterDefaultsOf(nodeDefinition.ports)
+    : {};
+  // Node-configuration `metadata` entries that name a declared input port are
+  // port configuration (e.g. a `code` override for `core.utility.code`), so fold
+  // them into `parameters` to match the canonical document and the manifest's
+  // required-parameter validation.
   if (nodeDefinition) {
-    for (const port of graphLeafPortsOf(nodeDefinition.ports)) {
-      if (port.direction !== "input") continue;
-      const defaultValue = graphPortDefaultValueOf(port);
-      if (defaultValue !== undefined) {
-        parameters[port.path ?? port.property] = defaultValue;
+    const declaredInputs = graphDeclaredInputKeysOf(nodeDefinition.ports);
+    const source = nodeMetadata.metadata as Record<string, unknown> | undefined;
+    if (source && typeof source === "object") {
+      for (const [key, value] of Object.entries(source)) {
+        if (!declaredInputs.has(key)) continue;
+        if (value === undefined || typeof value === "function") continue;
+        if (!isGraphJsonSafeValue(value)) continue;
+        try {
+          parameters[key] = JSON.parse(JSON.stringify(value)) as GraphJsonValue;
+        } catch {
+          // skip non-serializable configuration values
+        }
       }
     }
   }
@@ -296,7 +352,8 @@ function graphLegacyLoopMetadataOf(
 
 function graphLoopConfigurationOf(
   nodeMetadata: GraphWorkflowNodeMetadata,
-  nodeDefinition: GraphNodeDefinitionShim | undefined
+  nodeDefinition: GraphNodeDefinitionShim | undefined,
+  nodeId: string
 ): GraphLoopConfiguration | undefined {
   const loopMetadata =
     ((nodeMetadata.metadata as Record<string, unknown> | undefined)?.["loop"] as
@@ -312,15 +369,17 @@ function graphLoopConfigurationOf(
     body = graphDecoratedWorkflowCompiler(bodySource as GraphDecoratedWorkflowInput);
   } catch (e) {
     throw new ValidationError(
-      `Failed to compile the loop body of node '${nodeMetadata.id}': ${String(e)}`
+      `Failed to compile the loop body of node '${nodeId}': ${String(e)}`
     );
   }
-  return {
-    body,
-    maxIterations: asNumber(config["maxIterations"]),
-    timeoutMs: asNumber(config["timeoutMs"]),
-    concurrency: asNumber(config["concurrency"]),
-  };
+  const loop: GraphLoopConfiguration = { body };
+  const maxIterations = asNumber(config["maxIterations"]);
+  const timeoutMs = asNumber(config["timeoutMs"]);
+  const concurrency = asNumber(config["concurrency"]);
+  if (maxIterations !== undefined) loop.maxIterations = maxIterations;
+  if (timeoutMs !== undefined) loop.timeoutMs = timeoutMs;
+  if (concurrency !== undefined) loop.concurrency = concurrency;
+  return loop;
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -349,15 +408,31 @@ function graphDocumentMetadataOf(
 function graphEdgeOf(
   relation: GraphWorkflowRelationMetadata,
   workflow: GraphWorkflowDefinition,
-  index: number
+  index: number,
+  workflowSelf?: unknown,
+  resolvedIds?: Map<GraphWorkflowNodeMetadata, string>
 ): GraphEdgeInstance {
   const aliases = [...GRAPH_BOUNDARY_ALIASES, workflow.name];
-  const source = graphEndpointOf(relation.source, relation.sourcePort, workflow.nodes, aliases);
-  const target = graphEndpointOf(relation.target, relation.targetPort, workflow.nodes, aliases);
+  const source = graphEndpointOf(
+    relation.source,
+    relation.sourcePort,
+    workflow.nodes,
+    aliases,
+    workflowSelf,
+    resolvedIds
+  );
+  const target = graphEndpointOf(
+    relation.target,
+    relation.targetPort,
+    workflow.nodes,
+    aliases,
+    workflowSelf,
+    resolvedIds
+  );
   const metadata = graphJsonSafeRecordOf(relation.metadata);
   const edge: GraphEdgeInstance = {
     id: `re${index}`,
-    type: graphEdgeTypeOf(relation, workflow),
+    type: graphEdgeTypeOf(relation, workflow, workflowSelf),
     source,
     target,
   };
@@ -368,10 +443,19 @@ function graphEdgeOf(
 
 function graphEdgeTypeOf(
   relation: GraphWorkflowRelationMetadata,
-  workflow: GraphWorkflowDefinition
+  workflow: GraphWorkflowDefinition,
+  workflowSelf?: unknown
 ): "data" | "connection" {
-  const sourceDefinition = graphNodeDefinitionFor(relation.source, workflow);
-  const targetDefinition = graphNodeDefinitionFor(relation.target, workflow);
+  const sourceDefinition = graphNodeDefinitionFor(
+    relation.source,
+    workflow,
+    workflowSelf
+  );
+  const targetDefinition = graphNodeDefinitionFor(
+    relation.target,
+    workflow,
+    workflowSelf
+  );
   if (isConnectionPort(sourceDefinition, relation.sourcePort)) return "connection";
   if (isConnectionPort(targetDefinition, relation.targetPort)) return "connection";
   return "data";
@@ -390,8 +474,10 @@ function isConnectionPort(
 
 function graphNodeDefinitionFor(
   reference: unknown,
-  workflow: GraphWorkflowDefinition
+  workflow: GraphWorkflowDefinition,
+  workflowSelf?: unknown
 ): GraphNodeDefinitionShim | undefined {
+  if (workflowSelf !== undefined && reference === workflowSelf) return undefined;
   const matched = findGraphNodeMatch(
     reference,
     workflow.name ? [...GRAPH_BOUNDARY_ALIASES, workflow.name] : GRAPH_BOUNDARY_ALIASES,
@@ -418,22 +504,28 @@ function graphEndpointOf(
   value: unknown,
   port: string | undefined,
   nodes: GraphWorkflowNodeMetadata[],
-  aliases: string[]
+  aliases: string[],
+  workflowSelf?: unknown,
+  resolvedIds?: Map<GraphWorkflowNodeMetadata, string>
 ): GraphEndpoint {
   const resolvedPort = port ?? "";
+  if (workflowSelf !== undefined && value === workflowSelf) {
+    return { scope: "workflow", port: resolvedPort } satisfies GraphWorkflowEndpoint;
+  }
   if (typeof value === "string" && aliases.includes(value)) {
     return { scope: "workflow", port: resolvedPort } satisfies GraphWorkflowEndpoint;
   }
   const matched = findGraphNodeMatch(value, aliases, nodes);
   if (matched) {
+    const nodeId = resolvedIds?.get(matched) ?? matched.id ?? "";
     const endpoint: GraphNodeEndpoint = {
       scope: "node",
-      nodeId: matched.id,
+      nodeId,
       port: resolvedPort,
     };
     if (!resolvedPort) {
       throw new ValidationError(
-        `Workflow relation references node '${matched.id}' without a port identifier`
+        `Workflow relation references node '${nodeId}' without a port identifier`
       );
     }
     return endpoint;

@@ -1,4 +1,6 @@
 import { ValidationError } from "@decaf-ts/db-decorators";
+import type { Constructor } from "@decaf-ts/decoration";
+import type { Model } from "@decaf-ts/decorator-validation";
 import type { GraphJsonValue } from "./GraphJsonValue";
 import {
   isGraphJsonSafeValue,
@@ -6,13 +8,22 @@ import {
 } from "./GraphJsonValue";
 import type { GraphEndpoint, GraphNodeEndpoint, GraphWorkflowEndpoint } from "./GraphEndpoint";
 import { isGraphEndpoint, isGraphNodeEndpoint, isGraphWorkflowEndpoint } from "./GraphEndpoint";
+import type { GraphInputBinding, GraphOutputBinding } from "./GraphNodeBinding";
 import { isGraphInputBinding } from "./GraphNodeBinding";
 import type { GraphErrorBoundaryConfiguration } from "./GraphErrorBoundaryConfiguration";
 import type { GraphValueReference } from "./GraphLoopConfiguration";
 import type { GraphLoopConfiguration } from "./GraphLoopConfiguration";
-import type { GraphWorkflowUiState } from "./GraphWorkflowUiState";
+import type { GraphWorkflowUiState, GraphNodeUiState } from "./GraphWorkflowUiState";
 import type { GraphEdgeInstance } from "./GraphEdgeInstance";
 import type { GraphNodeInstance } from "./GraphNodeInstance";
+import {
+  graphNodeClassMetadataOf,
+  graphNodeParameterDefaultsOf,
+  graphNodeStateDefaultsOf,
+  graphNodeStateValuesOf,
+  uniqueGraphNodeId,
+} from "./GraphNodeDerivation";
+import { graphDefinitionOf, graphNodeMetadataOf } from "../reader";
 import type {
   GraphWorkflowDocument,
   GraphWorkflowPortInstance,
@@ -32,6 +43,45 @@ export interface GraphWorkflowDocumentBuilderOptions {
 }
 
 /**
+ * Optional per-node overrides accepted when {@link
+ * GraphWorkflowDocumentBuilder.addNode} is given a node class or a decorated
+ * node instance. Every key is merged on top of the value derived from the
+ * node's decoration metadata, so callers can tune one field without restating
+ * the rest of the node.
+ */
+export interface GraphNodeOverrideOptions {
+  /** Explicit node id; when omitted an id is derived from the class tag/kind. */
+  id?: string;
+  /** Human-readable label; defaults to the class tag. */
+  label?: string;
+  /**
+   * Parameter values merged on top of the class's declared port defaults.
+   * Override keys win; unspecified keys keep their derived defaults.
+   */
+  parameters?: Record<string, GraphJsonValue>;
+  /** Editor/display metadata merged on top of the class's `graph.metadata`. */
+  metadata?: Record<string, GraphJsonValue>;
+  /**
+   * Persisted `@state()` values merged on top of the class defaults (for a
+   * class) or the instance's current values (for an instance). Override keys
+   * win.
+   */
+  state?: Record<string, GraphJsonValue>;
+  /** Explicit input bindings; when omitted the class-derived value is used. */
+  inputBindings?: Record<string, GraphInputBinding>;
+  /** Explicit output bindings; when omitted the class-derived value is used. */
+  outputBindings?: Record<string, GraphOutputBinding>;
+  /** Marks the node disabled in the document. */
+  disabled?: boolean;
+  /** Loop configuration for the node (overrides any derived value). */
+  loop?: GraphLoopConfiguration;
+  /** Error-boundary configuration for the node. */
+  errorBoundary?: GraphErrorBoundaryConfiguration;
+  /** Editor UI state for the node (e.g. canvas position). */
+  ui?: GraphNodeUiState;
+}
+
+/**
  * Fluent builder for the canonical {@link GraphWorkflowDocument}
  * (DECAF-50 §4.4.4). Collects boundary ports, node instances, edges, and
  * optional settings/metadata/UI state, then validates and freezes a
@@ -39,6 +89,7 @@ export interface GraphWorkflowDocumentBuilderOptions {
  */
 export class GraphWorkflowDocumentBuilder {
   private readonly document: GraphWorkflowDocument;
+  private readonly nodeIds = new Set<string>();
 
   /**
    * @param id Document id.
@@ -67,13 +118,118 @@ export class GraphWorkflowDocumentBuilder {
     return this;
   }
 
-  /** Appends a node instance, defaulting `parameters` to an empty object. */
-  addNode(node: GraphNodeInstance): this {
-    this.document.nodes.push({
+  /**
+   * Appends a node. Accepts either a hand-built {@link GraphNodeInstance} or a
+   * node class / decorated node instance, in which case the canonical instance
+   * is derived from the node's decoration metadata (ports → `parameters`,
+   * `graph.metadata` → `metadata`, `@state()` → `state`) and any `overrides`
+   * are merged on top.
+   *
+   * @returns this builder, for chaining.
+   */
+  addNode(node: GraphNodeInstance): this;
+  addNode(nodeClass: Constructor, overrides?: GraphNodeOverrideOptions): this;
+  addNode(nodeInstance: Model, overrides?: GraphNodeOverrideOptions): this;
+  addNode(
+    node: GraphNodeInstance | Constructor | Model,
+    overrides?: GraphNodeOverrideOptions
+  ): this {
+    if (isDecoratedNodeInput(node)) {
+      this.addDerivedNode(node as Constructor | Model, overrides);
+    } else {
+      this.appendNode(node as GraphNodeInstance);
+    }
+    return this;
+  }
+
+  /**
+   * Derives and appends a canonical node instance from a node class or a
+   * decorated node instance, merging `overrides` on top of the derived values.
+   *
+   * @returns the stored {@link GraphNodeInstance}, including its resolved id.
+   */
+  addDerivedNode(
+    node: Constructor | Model,
+    overrides?: GraphNodeOverrideOptions
+  ): GraphNodeInstance {
+    const definition = graphDefinitionOf(node as never);
+    const kind = definition.kind ?? definition.tag;
+    const id = uniqueGraphNodeId(
+      overrides?.id ?? definition.tag ?? kind,
+      this.nodeIds
+    );
+    const parameters: Record<string, GraphJsonValue> = {
+      ...graphNodeParameterDefaultsOf(definition.ports),
+      ...(overrides?.parameters ?? {}),
+    };
+    const metadata = mergeGraphRecords(
+      graphNodeClassMetadataOf(definition),
+      overrides?.metadata
+    );
+    const state = mergeGraphRecords(
+      typeof node === "function"
+        ? graphNodeStateDefaultsOf(node)
+        : graphNodeStateValuesOf(node),
+      overrides?.state
+    );
+    const instance: GraphNodeInstance = { id, kind, parameters };
+    const label = overrides?.label ?? definition.tag;
+    if (label !== undefined) instance.label = label;
+    if (metadata) instance.metadata = metadata;
+    if (state) instance.state = state;
+    if (overrides?.inputBindings) instance.inputBindings = overrides.inputBindings;
+    if (overrides?.outputBindings) instance.outputBindings = overrides.outputBindings;
+    if (overrides?.disabled !== undefined) instance.disabled = overrides.disabled;
+    if (overrides?.loop) instance.loop = overrides.loop;
+    if (overrides?.errorBoundary) instance.errorBoundary = overrides.errorBoundary;
+    if (overrides?.ui) instance.ui = overrides.ui;
+    return this.appendNode(instance);
+  }
+
+  private appendNode(node: GraphNodeInstance): GraphNodeInstance {
+    const stored: GraphNodeInstance = {
       ...node,
       parameters: node.parameters ?? {},
-    });
+    };
+    this.document.nodes.push(stored);
+    this.nodeIds.add(stored.id);
+    return stored;
+  }
+
+  /**
+   * Merges `patch` into an already-added node, addressed by id. Used by
+   * {@link GraphFlowBuilder} to apply late `state`/`ui`/`pinned`/`else` updates
+   * after a node has been appended. The node's `id` and `kind` cannot be changed.
+   *
+   * @throws ValidationError when no node with `nodeId` has been added.
+   */
+  patchNode(
+    nodeId: string,
+    patch: Partial<Omit<GraphNodeInstance, "id" | "kind">>
+  ): this {
+    const node = this.document.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) {
+      throw new ValidationError(
+        `Cannot patch node '${nodeId}': it is not part of the document`
+      );
+    }
+    Object.assign(node, patch);
     return this;
+  }
+
+  /** Returns the added node with `nodeId`, when present. */
+  getNode(nodeId: string): GraphNodeInstance | undefined {
+    return this.document.nodes.find((candidate) => candidate.id === nodeId);
+  }
+
+  /** Returns whether the node with `nodeId` carries a configuration under `key`. */
+  hasNodeConfig(nodeId: string, key: string): boolean {
+    const node = this.getNode(nodeId);
+    if (!node) return false;
+    if (key === "loop") return node.loop !== undefined;
+    if (key === "state") return node.state !== undefined;
+    if (key === "errorBoundary") return node.errorBoundary !== undefined;
+    return key in (node as unknown as Record<string, unknown>);
   }
 
   /** Appends an edge instance. */
@@ -308,6 +464,36 @@ function assertGraphNodeValid(node: GraphNodeInstance, nodeIds: Set<string>): vo
       `Node '${node.id}' parameters must be JSON-safe: functions, class instances, undefined, NaN/Infinity, symbol keys, or unsafe prototype keys are not allowed`
     );
   }
+  if (node.state !== undefined) {
+    if (!node.state || typeof node.state !== "object" || Array.isArray(node.state)) {
+      throw new ValidationError(
+        `Node '${node.id}' state must be an object when present`
+      );
+    }
+    if (!isGraphJsonSafeValue(node.state)) {
+      throw new ValidationError(
+        `Node '${node.id}' state must be JSON-safe: functions, class instances, undefined, NaN/Infinity, symbol keys, or unsafe prototype keys are not allowed`
+      );
+    }
+  }
+}
+
+function isDecoratedNodeInput(value: unknown): boolean {
+  if (typeof value === "function") return true;
+  if (!value || typeof value !== "object") return false;
+  try {
+    return !!graphNodeMetadataOf(value as never);
+  } catch {
+    return false;
+  }
+}
+
+function mergeGraphRecords(
+  base: Record<string, GraphJsonValue> | undefined,
+  override: Record<string, GraphJsonValue> | undefined
+): Record<string, GraphJsonValue> | undefined {
+  if (!base && !override) return undefined;
+  return { ...(base ?? {}), ...(override ?? {}) };
 }
 
 function assertGraphLoopConfigurationValid(

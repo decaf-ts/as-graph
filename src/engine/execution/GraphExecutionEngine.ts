@@ -1158,11 +1158,25 @@ export class GraphExecutionEngine
           edges[0].sourcePort
         );
       } else {
+        let definedValue: unknown;
+        let hasDefined = false;
         for (const edge of edges) {
-          inputs[edge.sourcePort] = frame.valueStore.getPort(
+          const value = frame.valueStore.getPort(
             edge.sourceNodeId,
             edge.sourcePort
           );
+          inputs[edge.sourcePort] = value;
+          if (value !== undefined) {
+            definedValue = value;
+            hasDefined = true;
+          }
+        }
+        // Branch merges route several mutually-exclusive outputs onto the same
+        // target port (e.g. an if/switch branch). The port-keyed map above
+        // preserves distinct source ports, but the target port must also receive
+        // the single defined branch value so the node reads its own port.
+        if (hasDefined && inputs[targetPort] === undefined) {
+          inputs[targetPort] = definedValue;
         }
       }
     }

@@ -164,6 +164,7 @@ export class CodeNode extends GraphNode<CodeNodeInput, CodeNodeOutput> {
     const config = this.input;
     const code =
       (input["code"] as string | undefined) ??
+      (request.parameters?.["code"] as string | undefined) ??
       (config?.code as string | undefined) ??
       this.defaultCode;
     const language =

@@ -2,6 +2,8 @@
  * Barrel re-exporting the canonical workflow-document contracts (DECAF-50 §4.5).
  */
 export * from "./GraphDecoratedWorkflowCompiler";
+export * from "./GraphFlowBuilder";
+export * from "./GraphNodeDerivation";
 export * from "./GraphEdgeInstance";
 export * from "./GraphErrorBoundaryConfiguration";
 export * from "./GraphEndpoint";

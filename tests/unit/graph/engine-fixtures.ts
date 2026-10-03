@@ -345,10 +345,14 @@ export function nodeExecutionRequest(
  * registrations.
  *
  * The node instance is hydrated from the flattened `context.node` configuration
- * with the engine-resolved `request.parameters` merged on top. The engine
- * resolves `GraphValueTemplate` user properties into `request.parameters` at
- * execution time (DECAF-32 §22.4), so the harness must let the resolved values
- * win over the raw persisted ones for templates to reach the node.
+ * with the engine-resolved `request.parameters` merged on top and the persisted
+ * user-defined `state` re-applied last — matching
+ * `GraphBuiltInRegistrations.executorOf` exactly. The engine resolves
+ * `GraphValueTemplate` user properties into `request.parameters` at execution
+ * time (DECAF-32 §22.4), so the harness must let the resolved values win over the
+ * raw persisted ones for templates to reach the node. Persisted `@state()` values
+ * are re-applied last so they always win over a same-named parameter (DECAF-50
+ * §4.5 item 3, merge order `metadata` → `parameters` → `state`).
  */
 export function executeNode(
   nodeClass: GraphNodeClass,
@@ -358,6 +362,7 @@ export function executeNode(
   const instance = nodeClass.instantiate({
     ...graphNodeConfig(context.node),
     ...(request.parameters as Record<string, unknown>),
+    ...((context.node.state as Record<string, unknown>) ?? {}),
   });
   return instance.execute(request, context);
 }

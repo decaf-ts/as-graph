@@ -68,6 +68,34 @@ function switchConditionState(
   return input;
 }
 
+/**
+ * Resolves the effective switch metadata from both accepted carriers
+ * (DECAF-50 §4.4.4 item 4): the canonical `parameters.cases` /
+ * `parameters.hasDefault` / `parameters.defaultPort` (hydrated onto `this.*` by
+ * `graphNodeConfig`) and the `metadata.switch` bag emitted by the decorated
+ * compiler and the {@link GraphFlowBuilder}. The `metadata.switch` carrier wins
+ * when present so both authoring paths route identically.
+ */
+function readSwitchMetadata(
+  context: GraphExecutionContext,
+  node: SwitchFlowNode
+): SwitchNodeMetadata {
+  const declared: SwitchNodeMetadata = {
+    cases: node.cases ?? [],
+    defaultPort: node.defaultPort ?? "default",
+    hasDefault: node.hasDefault === true,
+  };
+  const raw = (context.node.metadata as Record<string, unknown> | undefined)?.[
+    "switch"
+  ] as SwitchNodeMetadata | undefined;
+  if (!raw || !Array.isArray(raw.cases)) return declared;
+  return {
+    cases: raw.cases,
+    defaultPort: raw.defaultPort ?? declared.defaultPort,
+    hasDefault: raw.hasDefault === true || declared.hasDefault,
+  };
+}
+
 function isCodeCondition(cond: SwitchCaseCondition): cond is CodeCondition {
   return (
     typeof cond === "object" && cond !== null && "type" in cond && cond.type === "code"
@@ -173,7 +201,8 @@ export class SwitchFlowNode extends GraphNode<
     request: GraphNodeExecutionRequest<SwitchFlowInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
-    const cases = this.cases ?? [];
+    const meta = readSwitchMetadata(context, this);
+    const cases = meta.cases;
     const input = request.inputs;
     const inputValue = input["value"] ?? input;
     const conditionState = switchConditionState(input, inputValue);
@@ -190,14 +219,14 @@ export class SwitchFlowNode extends GraphNode<
       }
     }
 
-    if (this.hasDefault !== true) {
+    if (meta.hasDefault !== true) {
       throw new GraphExecutionError(
         "No switch case matched and default port is not enabled",
         "GRAPH_SWITCH_NO_MATCH",
         { cases: cases.map((c) => c.id) }
       );
     }
-    const defaultPort = this.defaultPort ?? "default";
+    const defaultPort = meta.defaultPort ?? "default";
     return { [defaultPort]: inputValue };
   }
 

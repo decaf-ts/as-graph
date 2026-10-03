@@ -32,6 +32,17 @@ export interface GraphNodeInstance {
   outputBindings?: Record<string, GraphOutputBinding>;
   disabled?: boolean;
   metadata?: Record<string, GraphJsonValue>;
+  /**
+   * Persisted, user-defined node internal state (DECAF-50 §4.5, item 3).
+   *
+   * Declared on the node class with `@state({ schema, defaultValue })` and
+   * folded into the document by the builder (class defaults or instance values)
+   * and the decorated compiler. Unlike `parameters` (I/O port values) and
+   * `metadata` (editor/display data), `state` is hydrated back onto the node
+   * instance by `graphNodeConfig` (merge order `metadata` → `parameters` →
+   * `state`, state last) so `execute` reads it via `this.*`.
+   */
+  state?: Record<string, GraphJsonValue>;
   loop?: GraphLoopConfiguration;
   errorBoundary?: GraphErrorBoundaryConfiguration;
   ui?: GraphNodeUiState;

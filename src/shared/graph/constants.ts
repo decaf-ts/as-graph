@@ -6,6 +6,7 @@ export enum GraphKeys {
   NODE = `${GraphKeys.GRAPH}.node`,
   EDGE = `${GraphKeys.GRAPH}.edge`,
   PORT = `${GraphKeys.GRAPH}.port`,
+  STATE = `${GraphKeys.GRAPH}.state`,
 }
 
 /**
@@ -114,7 +115,13 @@ export type GraphNodeMetadata = {
  * Metadata of a node instance inside a `@graph()` workflow definition.
  */
 export type GraphWorkflowNodeMetadata = {
-  id: string;
+  /**
+   * Optional node instance id. When omitted, the compiler derives it from the
+   * referenced node class's tag/kind (falling back to `n${index}`) and
+   * auto-suffixes on collision, so a workflow may reference node classes
+   * without repeating a hand-assigned id.
+   */
+  id?: string;
   kind?: GraphNodeKind;
   label?: string;
   description?: string;
@@ -125,6 +132,17 @@ export type GraphWorkflowNodeMetadata = {
    * Frontend-safe metadata only.
    */
   inspection?: GraphNodeIoMetadata;
+};
+
+/**
+ * Prop-level metadata stored by the `@state()` decorator, declaring a
+ * user-defined node property as persisted internal state.
+ */
+export type GraphStateMetadata = {
+  /** Optional value schema for the persisted state property. */
+  schema?: unknown;
+  /** Default value folded into the node instance's `state` when authored from a class. */
+  defaultValue?: unknown;
 };
 
 /**

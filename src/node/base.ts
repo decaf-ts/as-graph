@@ -28,9 +28,11 @@ import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
  *
  * The node's own `metadata` supplies defaults first and the executing
  * `parameters` override them (matching the pre-existing built-in registration
- * hydration order), with the loop configuration appended when present. The
- * resulting object is what {@link GraphNode}'s constructor feeds to
- * `Model.fromModel`.
+ * hydration order), with the persisted user-defined `state` overriding both and the
+ * loop configuration appended when present. The state is applied last so a
+ * `@state()` value always wins over a same-named parameter, and `execute` reads
+ * it via `this.*` unchanged. The resulting object is what {@link GraphNode}'s
+ * constructor feeds to `Model.fromModel`.
  *
  * @param instance - The canonical node instance from the workflow document.
  * @returns The flattened node configuration, or `undefined` when there is none.
@@ -42,6 +44,7 @@ export function graphNodeConfig(
   const config: Record<string, unknown> = {
     ...((instance.metadata as Record<string, unknown>) ?? {}),
     ...((instance.parameters as Record<string, unknown>) ?? {}),
+    ...((instance.state as Record<string, unknown>) ?? {}),
   };
   if (instance.loop) config["loop"] = instance.loop;
   return config;

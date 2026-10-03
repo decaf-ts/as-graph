@@ -11,6 +11,7 @@ import type {
   GraphPortDefinition,
   GraphPortGroupMetadata,
   GraphPortMetadata,
+  GraphStateMetadata,
   GraphWorkflowDefinition,
   GraphWorkflowMetadata,
 } from "./constants";
@@ -131,6 +132,35 @@ export function graphPortMetadataOf<M extends Model>(
   return Metadata.get(resolved, Metadata.key(GraphKeys.PORT, String(property))) as
     | GraphPortMetadata
     | undefined;
+}
+
+/**
+ * Returns the `@state()` metadata for a property, when present.
+ *
+ * @param {string} property - The property key to read state metadata for.
+ */
+export function graphStateMetadataOf<M extends Model>(
+  model: GraphModelLike<M>,
+  property: keyof M | string
+): GraphStateMetadata | undefined {
+  const resolved = resolveModel(model);
+  return Metadata.get(resolved, Metadata.key(GraphKeys.STATE, String(property))) as
+    | GraphStateMetadata
+    | undefined;
+}
+
+/**
+ * Returns the names of every `@state()`-decorated property of a node class or
+ * instance, in declaration order.
+ */
+export function graphStatePropertiesOf<M extends Model>(
+  model: GraphModelLike<M>
+): string[] {
+  const resolved = resolveModel(model);
+  const properties = Metadata.properties(resolved) || [];
+  return properties
+    .map((property) => String(property))
+    .filter((property) => !!graphStateMetadataOf(resolved, property));
 }
 
 /**

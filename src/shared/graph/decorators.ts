@@ -8,7 +8,14 @@ import {
 import type { Constructor } from "@decaf-ts/decoration";
 import { uimodel } from "@decaf-ts/ui-decorators";
 import { GraphKeys, PortDirection } from "./constants";
-import type { GraphNodeMetadata, GraphPortMetadata, GraphWorkflowMetadata } from "./constants";
+import type {
+  GraphNodeMetadata,
+  GraphPortMetadata,
+  GraphStateMetadata,
+  GraphWorkflowMetadata,
+} from "./constants";
+import type { GraphValueSchema } from "./catalog/GraphValueSchema";
+import type { GraphJsonValue } from "./document/GraphJsonValue";
 import { graphPortsOf } from "./reader";
 import { registerNode, registerWorkflow } from "./registry";
 
@@ -159,6 +166,59 @@ export function output(graph?: Partial<Omit<GraphPortMetadata, "direction">>) {
  */
 export function connection(graph?: Partial<Omit<GraphPortMetadata, "direction">>) {
   return port(PortDirection.CONNECTION, graph);
+}
+
+/**
+ * Options for the `@state()` decorator: an optional value schema and an
+ * optional default value folded into the node instance's `state` record.
+ */
+export interface GraphStateOptions {
+  /** Optional value schema for the persisted state property. */
+  schema?: GraphValueSchema;
+  /** Default value folded into `state` when the node is authored from a class. */
+  defaultValue?: GraphJsonValue;
+}
+
+/**
+ * Declares a user-defined node property as persisted internal state.
+ *
+ * State is a first-class, JSON-safe record on the node instance
+ * (`GraphNodeInstance.state`), distinct from `parameters` (I/O port values) and
+ * `metadata` (editor/display data). The builder derives it from a node class's
+ * declared defaults or from an already-constructed instance's property values, the
+ * compiler emits it for decorated nodes, and the engine hydrates it onto `this.*`
+ * so `execute` reads it unchanged.
+ *
+ * Usage:
+ * ```ts
+ * @node("ai.workspace", { kind: "ai.workspace" })
+ * @model()
+ * class WorkspaceNode extends GraphNode {
+ *   @state({ schema: { type: "object" }, defaultValue: { files: [] } })
+ *   index!: { files: string[] };
+ *   @state() cursor!: number;
+ * }
+ * ```
+ */
+export function state(options?: GraphStateOptions) {
+  function state(options?: GraphStateOptions) {
+    return function innerState(target: object, propertyKey?: any) {
+      const meta: GraphStateMetadata = {
+        schema: options?.schema,
+        defaultValue: options?.defaultValue,
+      };
+      return apply(
+        propMetadata(Metadata.key(GraphKeys.STATE, propertyKey), meta)
+      )(target, propertyKey);
+    };
+  }
+
+  return Decoration.for(GraphKeys.STATE)
+    .define({
+      decorator: state,
+      args: [options],
+    })
+    .apply();
 }
 
 /**
