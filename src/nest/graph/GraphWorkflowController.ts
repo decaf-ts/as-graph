@@ -6,7 +6,9 @@
  * `POST /graph/workflows/validate`, and `GET /graph/workflows` on top of
  * {@link GraphWorkflowService}, enforcing the configured authentication mode,
  * boundary validation, document resource limits, and fail-closed per-user
- * ownership; engine errors surface as mapped {@link HttpException}s.
+ * ownership; engine errors surface as mapped {@link HttpException}s, with any
+ * unmapped error served as a constant generic `500` and logged server-side
+ * only.
  */
 import {
   Body,
@@ -33,6 +35,11 @@ import {
 import { GraphWorkflowDocumentRejectedError } from "../../engine/errors/GraphWorkflowErrors";
 import type { GraphWorkflowDocumentLimits } from "../../engine/validation/GraphWorkflowDocumentLimits";
 import { toIsoDateString } from "./servingDates";
+import {
+  GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
+  logUnmappedGraphServingError,
+  type GraphServingErrorCorrelation,
+} from "./servingErrors";
 
 /** DI token for {@link GraphWorkflowControllerOptions}. */
 export const GRAPH_WORKFLOW_OPTIONS = "GRAPH_WORKFLOW_OPTIONS";
@@ -75,17 +82,18 @@ export interface GraphWorkflowSummary {
  * Maps a thrown Decaf error to the Nest HTTP equivalent for the workflow
  * persistence/serving API: boundary rejection becomes `422` with structured
  * issues, ownership/authorization failures `403` (naming the workflow when
- * known), missing workflows `404`, validation failures `400`, and anything
- * else surfaces as `500` with its message. Nest {@link HttpException}s pass
- * through unchanged.
+ * known), missing workflows `404`, validation failures `400`, and any unmapped
+ * error surfaces as a constant generic `500` — the underlying error
+ * message/stack is logged server-side only (SAA-116). Nest
+ * {@link HttpException}s pass through unchanged.
  *
  * @param {unknown} e - The caught error from the service call.
- * @param {string} [workflowId] - Workflow id from the request path, used to name the resource in `403` messages.
+ * @param {GraphServingErrorCorrelation} [correlation] - Request/workflow correlation ids attached to the server-side log.
  * @return {HttpException} The HTTP-mapped error to rethrow.
  */
 function graphWorkflowHttpErrorOf(
   e: unknown,
-  workflowId?: string
+  correlation: GraphServingErrorCorrelation = {}
 ): HttpException {
   if (e instanceof GraphWorkflowDocumentRejectedError) {
     return new HttpException(
@@ -98,8 +106,8 @@ function graphWorkflowHttpErrorOf(
   }
   if (e instanceof ForbiddenError || e instanceof AuthorizationError) {
     return new HttpException(
-      workflowId
-        ? `Graph workflow '${workflowId}' is owned by another user`
+      correlation.workflowId
+        ? `Graph workflow '${correlation.workflowId}' is owned by another user`
         : e.message,
       HttpStatus.FORBIDDEN
     );
@@ -111,8 +119,11 @@ function graphWorkflowHttpErrorOf(
     return new HttpException(e.message, HttpStatus.BAD_REQUEST);
   }
   if (e instanceof HttpException) return e;
-  const message = e instanceof Error ? e.message : String(e);
-  return new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+  logUnmappedGraphServingError("GraphWorkflowController", e, correlation);
+  return new HttpException(
+    GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
+    HttpStatus.INTERNAL_SERVER_ERROR
+  );
 }
 
 /**
@@ -125,9 +136,7 @@ function graphWorkflowHttpErrorOf(
  *   legacy persisted snapshots are converted losslessly on the read path.
  * - `POST /graph/workflows/validate` — run boundary validation and return
  *   structured issues (`code`, `path`, `nodeId`, `edgeId`, `message`,
- *   safe `details`).
- *
- * @class GraphWorkflowController
+ * safe `details`).
  */
 @Controller("graph")
 export class GraphWorkflowController {
@@ -199,7 +208,7 @@ export class GraphWorkflowController {
         savedAt: toIsoDateString(model.updatedAt) as string,
       };
     } catch (e: unknown) {
-      throw graphWorkflowHttpErrorOf(e, workflowId);
+      throw graphWorkflowHttpErrorOf(e, { workflowId });
     }
   }
 
@@ -252,7 +261,7 @@ export class GraphWorkflowController {
     try {
       return await this.workflowService.getDocument(workflowId, context);
     } catch (e: unknown) {
-      throw graphWorkflowHttpErrorOf(e, workflowId);
+      throw graphWorkflowHttpErrorOf(e, { workflowId });
     }
   }
 

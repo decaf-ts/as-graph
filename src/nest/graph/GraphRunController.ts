@@ -5,7 +5,8 @@
  * (`GET /graph/runs/:runId`), cancels (`DELETE /graph/runs/:runId`), and
  * replays (`SSE /graph/runs/:runId/events`) graph runs on top of
  * {@link GraphRunService}, enforcing authentication, run limits, and
- * ownership; engine errors surface as `500` with their message while Nest
+ * ownership; unmapped engine errors surface as a constant generic `500`
+ * (the underlying error is logged server-side only) while Nest
  * {@link HttpException}s pass through unchanged.
  */
 import {
@@ -48,6 +49,11 @@ import {
 } from "../../engine/services/GraphWorkflowService";
 import { canAccessGraphResourcePayload } from "../../engine/runs/ownership";
 import { toIsoDateString } from "./servingDates";
+import {
+  GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
+  logUnmappedGraphServingError,
+  type GraphServingErrorCorrelation,
+} from "./servingErrors";
 
 /** DI token for {@link GraphRunControllerOptions}. */
 export const GRAPH_RUN_OPTIONS = "GRAPH_RUN_OPTIONS";
@@ -72,32 +78,48 @@ export interface GraphRunControllerOptions {
 
 /** Response of `POST /graph/runs`: the queued run's identity and its event/result URLs. */
 export interface GraphRunCreatedResponse {
+  /** Queued run's id. */
   runId: string;
+  /** Id of the workflow the run executes. */
   workflowId: string;
+  /** Constant `"queued"`: the run is scheduled, not yet started. */
   status: "queued";
+  /** SSE stream URL for the run's event envelopes. */
   eventsUrl: string;
+  /** Read URL for the run's lifecycle state. */
   resultUrl: string;
 }
 
 /** Request body for creating a run: an inline workflow document or a saved `workflowId`, plus optional inputs. */
 export interface GraphRunRequestBody {
+  /** Inline workflow document to execute, when not referencing a saved workflow. */
   workflow?: GraphWorkflowDocument;
+  /** Saved workflow id to execute, when no inline document is provided. */
   workflowId?: string;
+  /** Optional execution inputs forwarded to the run. */
   inputs?: GraphExecutionValues;
 }
 
 /**
  * Maps a thrown Decaf error to the Nest HTTP equivalent for the run
  * lifecycle API: ownership/authorization failures become `403` (naming the
- * run), missing runs `404`, validation failures `400`, and anything else
- * surfaces as `500` with its message. Nest {@link HttpException}s pass
+ * run), missing runs `404`, validation failures `400`, and any unmapped error
+ * surfaces as a constant generic `500` — the underlying error message/stack is
+ * logged server-side only (SAA-116). Nest {@link HttpException}s pass
  * through unchanged.
+ *
+ * @param {unknown} e - The caught error from the service call.
+ * @param {GraphServingErrorCorrelation} [correlation] - Request/run correlation ids attached to the server-side log.
+ * @return {HttpException} The HTTP-mapped error to rethrow.
  */
-function graphRunHttpErrorOf(e: unknown, runId?: string): HttpException {
+function graphRunHttpErrorOf(
+  e: unknown,
+  correlation: GraphServingErrorCorrelation = {}
+): HttpException {
   if (e instanceof ForbiddenError || e instanceof AuthorizationError) {
     return new HttpException(
-      runId
-        ? `Graph run '${runId}' is owned by another user`
+      correlation.runId
+        ? `Graph run '${correlation.runId}' is owned by another user`
         : e.message,
       HttpStatus.FORBIDDEN
     );
@@ -109,8 +131,11 @@ function graphRunHttpErrorOf(e: unknown, runId?: string): HttpException {
     return new HttpException(e.message, HttpStatus.BAD_REQUEST);
   }
   if (e instanceof HttpException) return e;
-  const message = e instanceof Error ? e.message : String(e);
-  return new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+  logUnmappedGraphServingError("GraphRunController", e, correlation);
+  return new HttpException(
+    GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
+    HttpStatus.INTERNAL_SERVER_ERROR
+  );
 }
 
 /**
@@ -333,7 +358,10 @@ export class GraphRunController {
         resultUrl: `/graph/runs/${run.runId}`,
       };
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(e);
+      throw graphRunHttpErrorOf(
+        e,
+        body?.workflowId !== undefined ? { workflowId: body.workflowId } : {}
+      );
     }
   }
 
@@ -377,7 +405,7 @@ export class GraphRunController {
       }
       return rows;
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(e);
+      throw graphRunHttpErrorOf(e, { workflowId });
     }
   }
 
@@ -400,7 +428,7 @@ export class GraphRunController {
       const run = await this.runService.getRun(runId, callerOwner, context);
       return graphRunToHttp(run, callerOwner);
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(e, runId);
+      throw graphRunHttpErrorOf(e, { runId });
     }
   }
 
@@ -425,7 +453,7 @@ export class GraphRunController {
       );
       return graphRunToHttp(run, callerOwner);
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(e, runId);
+      throw graphRunHttpErrorOf(e, { runId });
     }
   }
 
@@ -457,7 +485,7 @@ export class GraphRunController {
     try {
       run = await this.runService.getRun(runId, owner, context);
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(e, runId);
+      throw graphRunHttpErrorOf(e, { runId });
     }
     const includePayload = canAccessGraphResourcePayload(
       { owner: run.ownerUser },
