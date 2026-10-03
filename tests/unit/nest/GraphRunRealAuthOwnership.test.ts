@@ -15,11 +15,13 @@
  * - `DecafAuthHandler.prime` binds the bearer token onto the request context so
  *   `graphWorkflowOwnerOf(ctx)` resolves the caller, and an unbound `Context`
  *   resolves to `undefined`;
- * - `auth: "optional"` + `allowAnonymousAccess: true`: the owner reads her run
- *   (200), a different user is denied (403) on the status/result and the
- *   event stream, and an anonymous caller is tolerated (200);
+ * - `auth: "optional"` + `allowAnonymousAccess: true` (the tolerance is a
+ *   run *service* option, SAA-93 F3): the owner reads her run (200), a
+ *   different user is denied (403) on the status/result and the event stream,
+ *   and an anonymous caller is tolerated (200);
  * - secure defaults (`auth: "required"`, `allowAnonymousAccess: false`): the
- *   anonymous caller is denied (403, fail-closed).
+ *   anonymous caller is rejected `401` before ownership is checked (SAA-93 F2:
+ *   the required gate now needs a resolved owner, not just a context).
  */
 import { jest, describe, beforeAll, afterAll, it, expect } from "@jest/globals";
 
@@ -39,6 +41,7 @@ import {
 
 import { GraphExecutionModule } from "../../../src/nest/graph";
 import type { GraphRunControllerOptions } from "../../../src/nest/graph";
+import type { GraphRunServiceOptions } from "../../../src/engine/runs/GraphRunService";
 import { GraphRunService } from "../../../src";
 import { graphWorkflowOwnerOf } from "../../../src/engine/services/GraphWorkflowService";
 import {
@@ -56,7 +59,9 @@ const AUTH_HEADER = "authorization";
  * resolved by {@link DecafAuthHandler} and bound to the request-scoped
  * `DecafRequestContext` by `AuthMiddleware`, exactly as in production.
  */
-async function buildRealAuthApp(runs: GraphRunControllerOptions): Promise<{
+async function buildRealAuthApp(
+  runs: GraphRunControllerOptions & GraphRunServiceOptions
+): Promise<{
   app: INestApplication;
   runService: GraphRunService;
 }> {
@@ -161,7 +166,7 @@ describe("GraphRunRealAuthOwnership (SAA-1377)", () => {
     });
   });
 
-  describe("secure defaults (auth: required, allowAnonymousAccess: false)", () => {
+  describe("secure defaults (auth: required, allowAnonymousAccess: false service option)", () => {
     let app: INestApplication;
     let runService: GraphRunService;
 
@@ -182,7 +187,7 @@ describe("GraphRunRealAuthOwnership (SAA-1377)", () => {
 
     const api = () => request(app.getHttpServer());
 
-    it("3. an anonymous caller is denied (403) on an owned run under secure defaults", async () => {
+    it("3. an anonymous caller is denied (401) on an owned run under secure defaults", async () => {
       const createRes = await api()
         .post("/graph/runs")
         .set(AUTH_HEADER, "Bearer alice")
@@ -196,8 +201,12 @@ describe("GraphRunRealAuthOwnership (SAA-1377)", () => {
         .set(AUTH_HEADER, "Bearer alice");
       expect(ownerStatus.status).toBe(200);
 
+      // SAA-93 F2: the request context exists (the real auth middleware
+      // installs one for every request) but resolves no owner user, so the
+      // required-auth gate rejects 401 before the ownership check.
       const anonStatus = await api().get(`/graph/runs/${runId}`);
-      expect(anonStatus.status).toBe(403);
+      expect(anonStatus.status).toBe(401);
+      expect(anonStatus.body.message).toContain("requires an authenticated user");
     });
   });
 });

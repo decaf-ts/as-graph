@@ -12,8 +12,9 @@
  *   ownership-filtered (own + owner-less visible, foreign owners excluded);
  * - `GET /graph/workflows/:workflowId/runs` access-checks the workflow first
  *   (unknown → `404`, foreign owner → `403`), then returns the persisted
- *   `GraphRunModel` rows newest first, ownership-filtered by run owner, with an
- *   empty array for a known workflow with no runs;
+ *   `GraphRunModel` rows newest first, scoped to exactly the requested
+ *   `workflowId` (no runs from another workflow) and ownership-filtered by run
+ *   owner, with an empty array for a known workflow with no runs;
  * - the serving controllers/services resolve through the real module wiring (the
  *   new `GraphWorkflowService` constructor dependency on
  *   {@link GraphRunController}).

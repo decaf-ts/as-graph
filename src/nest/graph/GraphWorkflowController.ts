@@ -26,7 +26,10 @@ import { AuthorizationError, ForbiddenError } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../shared/graph";
 import { DecafRequestContext } from "@decaf-ts/for-nest";
 import type { GraphWorkflowValidationResult } from "../../";
-import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
+import {
+  GraphWorkflowService,
+  graphWorkflowOwnerOf,
+} from "../../engine/services/GraphWorkflowService";
 import { GraphWorkflowDocumentRejectedError } from "../../engine/errors/GraphWorkflowErrors";
 import type { GraphWorkflowDocumentLimits } from "../../engine/validation/GraphWorkflowDocumentLimits";
 import { toIsoDateString } from "./servingDates";
@@ -37,19 +40,16 @@ export const GRAPH_WORKFLOW_OPTIONS = "GRAPH_WORKFLOW_OPTIONS";
 /** Options for the workflow persistence HTTP API (DECAF-50 §4.10): authentication mode and document resource limits. */
 export interface GraphWorkflowControllerOptions {
   /**
-   * `"required"` rejects unauthenticated calls with `401` (default,
-   * SAA-595 secure-defaults alignment); `"optional"` tolerates
-   * anonymous/system callers for standalone module runs (DECAF-48 §4.15)
-   * while still enforcing ownership between distinct users — pair it with an
-   * explicit `allowAnonymousAccess` decision.
+   * `"required"` rejects a request with no request context **and** a request
+   * whose context carries no resolved owner user with `401` (SAA-93 F2): in a
+   * host that installs the request-context machinery a context exists for every
+   * request, so gating on context existence alone would admit unauthenticated
+   * callers as anonymous. `"optional"` tolerates anonymous/system callers for
+   * standalone module runs (DECAF-48 §4.15) while still enforcing ownership
+   * between distinct users — pair it with an explicit `allowAnonymousAccess`
+   * decision on the workflow service options.
    */
   auth?: "required" | "optional";
-  /**
-   * Explicit DECAF-48 §4.15 standalone tolerance: when `true`, anonymous
-   * callers are tolerated on owned workflows. Defaults to `false` —
-   * ownership checks fail closed for absent identities (SAA-595 F3).
-   */
-  allowAnonymousAccess?: boolean;
   /** Backend-enforced resource limits (DECAF-50 §4.16). */
   limits?: GraphWorkflowDocumentLimits;
 }
@@ -141,9 +141,10 @@ export class GraphWorkflowController {
 
   /**
    * Enforces the configured authentication mode: `auth` defaults to
-   * `"required"` (SAA-595 secure-defaults alignment) and rejects
-   * unauthenticated calls with `401`; `"optional"` admits anonymous
-   * requests for standalone module runs (DECAF-48 §4.15).
+   * `"required"` (SAA-595 secure-defaults alignment) and rejects a request
+   * with no request context, or with a context that carries no resolved owner
+   * user, with `401` (SAA-93 F2); `"optional"` admits anonymous requests
+   * for standalone module runs (DECAF-48 §4.15).
    */
   private requireAuthenticatedContext(): DecafRequestContext | undefined {
     if ((this.options.auth ?? "required") !== "required") {
@@ -152,6 +153,12 @@ export class GraphWorkflowController {
     if (!this.requestContext) {
       throw new HttpException(
         "Graph workflow access requires an authenticated request context",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+    if (graphWorkflowOwnerOf(this.requestContext) === undefined) {
+      throw new HttpException(
+        "Graph workflow access requires an authenticated user",
         HttpStatus.UNAUTHORIZED
       );
     }
@@ -202,21 +209,29 @@ export class GraphWorkflowController {
    * Auth follows the controller's configured `auth` mode (default `"required"`
    * rejects anonymous calls with `401`). The collection is ownership-filtered
    * by {@link GraphWorkflowService.listWorkflows}, so a caller only sees their
-   * own plus owner-less (system/standalone) workflows.
+   * own plus owner-less (system/standalone) workflows. A row whose `updatedAt`
+   * cannot be projected to an ISO string is skipped per row so a single corrupt
+   * persisted date never 500s the whole collection (SAA-93 F4).
    *
    * @return {Promise<GraphWorkflowSummary[]>} Visible workflow summaries, newest first.
-   * @throws {HttpException} 401 without an authenticated context.
+   * @throws {HttpException} 401 without an authenticated caller.
    */
   @Get("workflows")
   async listWorkflows(): Promise<GraphWorkflowSummary[]> {
     const context = this.requireAuthenticatedContext();
     try {
       const models = await this.workflowService.listWorkflows(context);
-      return models.map((model) => ({
-        workflowId: model.workflowId,
-        ...(model.name !== undefined ? { name: model.name } : {}),
-        updatedAt: toIsoDateString(model.updatedAt) as string,
-      }));
+      const summaries: GraphWorkflowSummary[] = [];
+      for (const model of models) {
+        const updatedAt = toIsoDateString(model.updatedAt);
+        if (updatedAt === undefined) continue;
+        summaries.push({
+          workflowId: model.workflowId,
+          ...(model.name !== undefined ? { name: model.name } : {}),
+          updatedAt,
+        });
+      }
+      return summaries;
     } catch (e: unknown) {
       throw graphWorkflowHttpErrorOf(e);
     }

@@ -105,20 +105,18 @@ export class RamGraphRunStore implements GraphRunStore {
    *
    * @param {string} workflowId - Workflow document id the runs executed.
    * @param args - Optional decaf `Context` arguments forwarded to the repository.
-   * @return {Promise<GraphRunModel[]>} The matching rows (empty when none exist).
+   * @return {Promise<GraphRunModel[]>} The matching rows — empty only when no
+   * runs exist for the workflow. A store failure now propagates to the caller
+   * instead of being swallowed into an empty list (SAA-93 R1).
    */
   async listRuns(
     workflowId: string,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRunModel[]> {
-    try {
-      return (await this.repo.findBy(
-        "workflowId",
-        workflowId,
-        ...args
-      )) as GraphRunModel[];
-    } catch {
-      return [];
-    }
+    return (await this.repo.findBy(
+      "workflowId",
+      workflowId,
+      ...args
+    )) as GraphRunModel[];
   }
 }

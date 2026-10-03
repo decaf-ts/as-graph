@@ -73,8 +73,16 @@ describe("GraphExecutionModule (unit)", () => {
       imports: [
         TestRequestContextModule,
         // SAA-1950 F3: `initAdapter` defaults to `false`; this standalone
-        // suite installs the RamAdapter explicitly.
-        GraphExecutionModule.forRoot({ initAdapter: true }),
+        // suite installs the RamAdapter explicitly. SAA-93 F2 made the
+        // default `auth: "required"` gate reject a context with no resolved
+        // owner user with 401, so this cutover suite opts into the
+        // anonymous/standalone tolerance explicitly (SAA-93 F3: the tolerance
+        // is a service option supplied through the intersected module options).
+        GraphExecutionModule.forRoot({
+          initAdapter: true,
+          runs: { auth: "optional", allowAnonymousAccess: true },
+          workflows: { auth: "optional", allowAnonymousAccess: true },
+        }),
       ],
     }).compile();
 

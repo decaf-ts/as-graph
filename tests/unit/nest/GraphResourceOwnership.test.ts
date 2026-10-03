@@ -14,6 +14,7 @@ import { ForbiddenError } from "@decaf-ts/core";
 import {
   assertGraphResourceOwnership,
   canAccessGraphResource,
+  canAccessGraphResourcePayload,
 } from "../../../src/engine/runs/ownership";
 
 describe("canAccessGraphResource (SAA-76 fail-closed ownership predicate)", () => {
@@ -94,5 +95,38 @@ describe("canAccessGraphResource (SAA-76 fail-closed ownership predicate)", () =
         resourceId: "wf-1",
       })
     ).not.toThrow();
+  });
+});
+
+describe("canAccessGraphResourcePayload (SAA-93 F1 payload predicate)", () => {
+  it("serves a row's payload only to the caller that owns the row", () => {
+    const owned = { owner: "alice" };
+    expect(canAccessGraphResourcePayload(owned, "alice")).toBe(true);
+    expect(canAccessGraphResourcePayload(owned, "bob")).toBe(false);
+    expect(canAccessGraphResourcePayload(owned, null)).toBe(false);
+    expect(canAccessGraphResourcePayload(owned, undefined)).toBe(false);
+    expect(canAccessGraphResourcePayload(owned, "")).toBe(false);
+  });
+
+  it("hides an owner-less row's payload from a named caller, but serves it to an owner-less caller (the F1 fix)", () => {
+    const ownerLess = [null, undefined, {}, { owner: null }];
+    for (const resource of ownerLess) {
+      // a named caller may still *see* the row by the owner-less visibility
+      // contract, but must never receive its sensitive payload
+      expect(canAccessGraphResourcePayload(resource, "alice")).toBe(false);
+      expect(canAccessGraphResourcePayload(resource, "bob")).toBe(false);
+      // the owner-less (anonymous/standalone) caller keeps the payload
+      expect(canAccessGraphResourcePayload(resource, null)).toBe(true);
+      expect(canAccessGraphResourcePayload(resource, undefined)).toBe(true);
+    }
+  });
+
+  it("is fail-closed even where visibility allows the row: owner-less visible to a named caller, payload still denied", () => {
+    const ownerLess = { owner: null };
+    expect(canAccessGraphResource(ownerLess, "alice")).toBe(true);
+    expect(canAccessGraphResourcePayload(ownerLess, "alice")).toBe(false);
+    const owned = { owner: "alice" };
+    expect(canAccessGraphResource(owned, "bob")).toBe(false);
+    expect(canAccessGraphResourcePayload(owned, "bob")).toBe(false);
   });
 });

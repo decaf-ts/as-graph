@@ -46,6 +46,7 @@ import {
   GraphWorkflowService,
   graphWorkflowOwnerOf,
 } from "../../engine/services/GraphWorkflowService";
+import { canAccessGraphResourcePayload } from "../../engine/runs/ownership";
 import { toIsoDateString } from "./servingDates";
 
 /** DI token for {@link GraphRunControllerOptions}. */
@@ -55,17 +56,16 @@ export const GRAPH_RUN_OPTIONS = "GRAPH_RUN_OPTIONS";
 export interface GraphRunControllerOptions {
   /**
    * Whether an authenticated request context is required (default
-   * `"required"`, SAA-595 secure-defaults alignment). `"optional"` admits
-   * anonymous requests for standalone module runs (DECAF-48 §4.15) — pair it
-   * with an explicit `allowAnonymousAccess` decision.
+   * `"required"`, SAA-595 secure-defaults alignment). `"required"` rejects a
+   * request with no request context **and** a request whose context carries no
+   * resolved owner user with `401` (SAA-93 F2): in a host that installs the
+   * request-context machinery a context exists for every request, so gating on
+   * context existence alone would admit unauthenticated callers as anonymous.
+   * `"optional"` admits anonymous requests for standalone module runs
+   * (DECAF-48 §4.15) — pair it with an explicit `allowAnonymousAccess`
+   * decision on the run service options.
    */
   auth?: "required" | "optional";
-  /**
-   * Explicit DECAF-48 §4.15 standalone tolerance: when `true`, anonymous
-   * callers are tolerated on owned runs. Defaults to `false` — ownership
-   * checks fail closed for absent identities (SAA-595 F3).
-   */
-  allowAnonymousAccess?: boolean;
   /** Run limits forwarded to {@link GraphRunService}. */
   limits?: GraphRunLimits;
 }
@@ -117,11 +117,27 @@ function graphRunHttpErrorOf(e: unknown, runId?: string): HttpException {
  * Projects an engine-side {@link GraphRun} to its HTTP JSON shape via a
  * JSON round-trip (strips `undefined` members and engine-only references).
  *
+ * SAA-93 F1: the same payload projection the list path applies is applied
+ * here too, so a caller cannot bypass the summary-only list projection by
+ * listing the run id and then reading the run directly. The run's `result`/`error`
+ * payload is served only when {@link canAccessGraphResourcePayload} confirms
+ * the caller owns the run; an owner-less run read by a named caller returns
+ * the summary-only record.
+ *
  * @param {GraphRun} run - The engine-side run to serve.
+ * @param {string | null} callerOwner - The requesting caller's resolved owner, or `null` when anonymous.
  * @return {Record<string, unknown>} The run's plain JSON-safe HTTP shape.
  */
-function graphRunToHttp(run: GraphRun): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(run)) as Record<string, unknown>;
+function graphRunToHttp(
+  run: GraphRun,
+  callerOwner: string | null
+): Record<string, unknown> {
+  const projected = JSON.parse(JSON.stringify(run)) as Record<string, unknown>;
+  if (!canAccessGraphResourcePayload({ owner: run.ownerUser }, callerOwner)) {
+    delete projected.result;
+    delete projected.error;
+  }
+  return projected;
 }
 
 /**
@@ -131,10 +147,29 @@ function graphRunToHttp(run: GraphRun): Record<string, unknown> {
  * formats every date through {@link toIsoDateString} so served dates are
  * true ISO-8601 strings.
  *
+ * SAA-93 F1: the sensitive payload members (`inputs`/`result`/`error`) are
+ * projected out unless {@link canAccessGraphResourcePayload} confirms the
+ * caller owns the row. A named caller may still *see* an owner-less row (the
+ * documented owner-less visibility contract), but only an owner-less caller —
+ * the anonymous/standalone identity that created it — receives its payload.
+ * Rows whose required date members cannot be projected are skipped per row so a
+ * single corrupt row never 500s the whole collection (SAA-93 F4).
+ *
  * @param {GraphRunModel} model - The persisted run row to serve.
- * @return {Record<string, unknown>} The run row's plain JSON-safe HTTP shape.
+ * @param {string | null} callerOwner - The requesting caller's resolved owner, or `null` when anonymous.
+ * @return {Record<string, unknown> | undefined} The run row's plain JSON-safe HTTP shape, or `undefined` when a required date is unprojectable.
  */
-function graphRunModelToHttp(model: GraphRunModel): Record<string, unknown> {
+function graphRunModelToHttp(
+  model: GraphRunModel,
+  callerOwner: string | null
+): Record<string, unknown> | undefined {
+  const createdAt = toIsoDateString(model.createdAt);
+  const updatedAt = toIsoDateString(model.updatedAt);
+  if (createdAt === undefined || updatedAt === undefined) return undefined;
+  const includePayload = canAccessGraphResourcePayload(
+    { owner: model.owner },
+    callerOwner
+  );
   return {
     runId: model.runId,
     workflowId: model.workflowId,
@@ -143,11 +178,17 @@ function graphRunModelToHttp(model: GraphRunModel): Record<string, unknown> {
     ...(model.documentFingerprint !== undefined
       ? { documentFingerprint: model.documentFingerprint }
       : {}),
-    ...(model.inputs !== undefined ? { inputs: model.inputs } : {}),
-    ...(model.result !== undefined ? { result: model.result } : {}),
-    ...(model.error !== undefined ? { error: model.error } : {}),
-    createdAt: toIsoDateString(model.createdAt),
-    updatedAt: toIsoDateString(model.updatedAt),
+    ...(includePayload && model.inputs !== undefined
+      ? { inputs: model.inputs }
+      : {}),
+    ...(includePayload && model.result !== undefined
+      ? { result: model.result }
+      : {}),
+    ...(includePayload && model.error !== undefined
+      ? { error: model.error }
+      : {}),
+    createdAt,
+    updatedAt,
     ...(model.startedAt !== undefined
       ? { startedAt: toIsoDateString(model.startedAt) }
       : {}),
@@ -161,13 +202,31 @@ function graphRunModelToHttp(model: GraphRunModel): Record<string, unknown> {
  * Wraps a run event envelope as a Nest SSE {@link MessageEvent} whose `data`
  * is the JSON-serialized envelope.
  *
+ * SAA-93 F1: when `includePayload` is `false` the sensitive `payload`/`error`
+ * members are projected out before streaming, so the event stream cannot be used
+ * to read an owner-less run's execution payloads that the list and single-read
+ * projections already strip.
+ *
  * @param {GraphRunEventEnvelope} event - The sequenced envelope to stream.
+ * @param {boolean} includePayload - Whether the caller owns the run and may see its payload.
  * @return {MessageEvent} The SSE message to emit.
  */
-function graphRunEventMessage(event: GraphRunEventEnvelope): MessageEvent {
+function graphRunEventMessage(
+  event: GraphRunEventEnvelope,
+  includePayload: boolean
+): MessageEvent {
+  if (includePayload) {
+    return {
+      type: "message",
+      data: JSON.stringify(event),
+    };
+  }
+  const projected = { ...event };
+  delete projected.payload;
+  delete projected.error;
   return {
     type: "message",
-    data: JSON.stringify(event),
+    data: JSON.stringify(projected),
   };
 }
 
@@ -192,9 +251,10 @@ export class GraphRunController {
 
   /**
    * Enforces the configured authentication mode: `auth` defaults to
-   * `"required"` (SAA-595 secure-defaults alignment) and rejects
-   * unauthenticated calls with `401`; `"optional"` admits anonymous
-   * requests for standalone module runs (DECAF-48 §4.15).
+   * `"required"` (SAA-595 secure-defaults alignment) and rejects a request
+   * with no request context, or with a context that carries no resolved owner
+   * user, with `401` (SAA-93 F2); `"optional"` admits anonymous requests
+   * for standalone module runs (DECAF-48 §4.15).
    */
   private requireAuthenticatedContext(): DecafRequestContext | undefined {
     if ((this.options.auth ?? "required") !== "required") {
@@ -203,6 +263,12 @@ export class GraphRunController {
     if (!this.requestContext) {
       throw new HttpException(
         "Graph run access requires an authenticated request context",
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+    if (graphWorkflowOwnerOf(this.requestContext) === undefined) {
+      throw new HttpException(
+        "Graph run access requires an authenticated user",
         HttpStatus.UNAUTHORIZED
       );
     }
@@ -280,25 +346,36 @@ export class GraphRunController {
    * `runId`, `workflowId`, `owner`, `status`, `documentFingerprint`,
    * `inputs`, `result`, `error`, `createdAt`, `updatedAt`, `startedAt` and
    * `finishedAt` (dates as ISO strings; optional members are omitted when
-   * unset). Auth follows the controller's configured `auth` mode.
+   * unset). The `inputs`/`result`/`error` payload members are served only
+   * for rows the caller owns (SAA-93 F1): a caller that may see an
+   * owner-less row by the documented owner-less visibility contract but does
+   * not own it receives the summary-only projection. Rows whose required
+   * dates cannot be projected are skipped per row (SAA-93 F4). Auth follows
+   * the controller's configured `auth` mode.
    *
    * @param {string} workflowId - Workflow id path parameter.
    * @return {Promise<Array<Record<string, unknown>>>} The workflow's runs, newest first.
-   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown workflows/runs, 403 for foreign owners).
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown workflows/runs, 403 for foreign owners, 401 without an authenticated caller).
    */
   @Get("workflows/:workflowId/runs")
   async listRuns(
     @Param("workflowId") workflowId: string
   ): Promise<Record<string, unknown>[]> {
     const context = this.requireAuthenticatedContext();
+    const callerOwner = this.ownerUserOf();
     try {
       await this.workflowService.assertAccess(workflowId, context);
       const models = await this.runService.listRunsByWorkflow(
         workflowId,
-        this.ownerUserOf(),
+        callerOwner,
         context
       );
-      return models.map((model) => graphRunModelToHttp(model));
+      const rows: Record<string, unknown>[] = [];
+      for (const model of models) {
+        const row = graphRunModelToHttp(model, callerOwner);
+        if (row !== undefined) rows.push(row);
+      }
+      return rows;
     } catch (e: unknown) {
       throw graphRunHttpErrorOf(e);
     }
@@ -307,6 +384,10 @@ export class GraphRunController {
   /**
    * Reads a run and maps it to its HTTP representation.
    *
+   * The run's `result`/`error` payload is projected out for a caller that
+   * does not own the run (SAA-93 F1): the summary-only projection the list
+   * path applies cannot be bypassed by reading the run by id.
+   *
    * @param {string} runId - Run id path parameter.
    * @return {Promise<Record<string, unknown>>} The run's HTTP shape.
    * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown runs, 403 for foreign owners).
@@ -314,9 +395,10 @@ export class GraphRunController {
   @Get("runs/:runId")
   async getRun(@Param("runId") runId: string): Promise<Record<string, unknown>> {
     const context = this.requireAuthenticatedContext();
+    const callerOwner = this.ownerUserOf();
     try {
-      const run = await this.runService.getRun(runId, this.ownerUserOf(), context);
-      return graphRunToHttp(run);
+      const run = await this.runService.getRun(runId, callerOwner, context);
+      return graphRunToHttp(run, callerOwner);
     } catch (e: unknown) {
       throw graphRunHttpErrorOf(e, runId);
     }
@@ -334,13 +416,14 @@ export class GraphRunController {
     @Param("runId") runId: string
   ): Promise<Record<string, unknown>> {
     const context = this.requireAuthenticatedContext();
+    const callerOwner = this.ownerUserOf();
     try {
       const run = await this.runService.cancelRun(
         runId,
-        this.ownerUserOf(),
+        callerOwner,
         context
       );
-      return graphRunToHttp(run);
+      return graphRunToHttp(run, callerOwner);
     } catch (e: unknown) {
       throw graphRunHttpErrorOf(e, runId);
     }
@@ -350,6 +433,11 @@ export class GraphRunController {
    * SSE stream of a run's event envelopes: replays buffered events after
    * `afterSequence`, then streams live events until the terminal event type
    * completes the stream.
+   *
+   * SAA-93 F1: a caller that may see an owner-less run by the documented
+   * owner-less visibility contract but does not own it receives envelopes with
+   * the `payload`/`error` members projected out, matching the list and
+   * single-read projections.
    *
    * @param {string} runId - Run id path parameter.
    * @param {string} [afterSequence] - Sequence number to replay events after.
@@ -371,6 +459,10 @@ export class GraphRunController {
     } catch (e: unknown) {
       throw graphRunHttpErrorOf(e, runId);
     }
+    const includePayload = canAccessGraphResourcePayload(
+      { owner: run.ownerUser },
+      owner
+    );
 
     const buffered: GraphRunEventEnvelope[] = [];
     let streaming = false;
@@ -382,7 +474,7 @@ export class GraphRunController {
 
     const emit = (event: GraphRunEventEnvelope): void => {
       if (completed || !sink) return;
-      sink.next(graphRunEventMessage(event));
+      sink.next(graphRunEventMessage(event, includePayload));
       if (isGraphRunTerminalEventType(event.type)) {
         completed = true;
         unsubscribe();

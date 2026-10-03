@@ -93,6 +93,9 @@ export class GraphRunModelService extends ModelService<GraphRunModel>
    * persisted {@link GraphRunModel} shape (keeping storage-derived fields such
    * as `updatedAt` and `inputs`).
    *
+   * A store failure propagates instead of being swallowed as `[]` (SAA-93 F4):
+   * silently emptying the list masks an outage as "no runs".
+   *
    * @param {string} workflowId - Workflow document id the runs executed.
    * @param args - An optional decaf `Context` forwarded to the model service.
    * @return {Promise<GraphRunModel[]>} The matching rows (empty when none exist).
@@ -104,14 +107,10 @@ export class GraphRunModelService extends ModelService<GraphRunModel>
     const { ctxArgs } = (await this.logCtx(args, "listRuns", true)).for(
       this.listRuns
     );
-    try {
-      return (await this.findBy(
-        "workflowId",
-        workflowId,
-        ...ctxArgs
-      )) as GraphRunModel[];
-    } catch {
-      return [];
-    }
+    return (await this.findBy(
+      "workflowId",
+      workflowId,
+      ...ctxArgs
+    )) as GraphRunModel[];
   }
 }

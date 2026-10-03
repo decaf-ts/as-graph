@@ -6,9 +6,11 @@
  * bootstrapped (`initAdapter: true`, SAA-1950 F3) — NO auth options — next
  * to the header-driven test request context, and pins the secure defaults the
  * SAA-595 hardening introduced: a run created by an authenticated user
- * (alice) is readable only by its owner — anonymous callers and other users
- * (bob) get `403` on the run status, the run event stream, and the run
- * result — without the DECAF-48 §4.15 `allowAnonymousAccess` tolerance,
+ * (alice) is readable only by its owner — an anonymous caller is rejected
+ * `401` before ownership is even checked (SAA-93 F2: `auth: "required"` now
+ * requires a *resolved owner*, not merely a request context) and another user
+ * (bob) gets `403` on the run status, the run event stream, and the run
+ * result. Without the DECAF-48 §4.15 `allowAnonymousAccess` tolerance,
  * ownership checks fail closed.
  *
  * This suite deliberately does NOT reuse `createGraphRunTestApp`: that
@@ -74,18 +76,21 @@ describe("GraphSecureDefaults (SAA-595 fail-closed defaults, bare forRoot)", () 
     expect(aliceStatus.status).toBe(200);
     expect(aliceStatus.body.status).toBe("succeeded");
 
-    // anonymous (no x-test-user): 403 on all three surfaces
+    // anonymous (no x-test-user): 401 on all three surfaces. SAA-93 F2: the
+    // request context exists (the test module installs it for every request)
+    // but carries no resolved owner user, so the required-auth gate rejects
+    // before the ownership check can return 403.
     const anonStatus = await api().get(`/graph/runs/${runId}`);
-    expect(anonStatus.status).toBe(403);
-    expect(anonStatus.body.message).toContain("owned by another user");
+    expect(anonStatus.status).toBe(401);
+    expect(anonStatus.body.message).toContain("requires an authenticated user");
 
     const anonEvents = await api().get(`/graph/runs/${runId}/events`);
-    expect(anonEvents.status).toBe(403);
+    expect(anonEvents.status).toBe(401);
 
-    // the result is carried by the run status payload: 403 there covers it
+    // the result is carried by the run status payload: 401 there covers it
     const anonResult = await api().get(`/graph/runs/${runId}`);
-    expect(anonResult.status).toBe(403);
-    expect(anonResult.body.message).toContain("owned by another user");
+    expect(anonResult.status).toBe(401);
+    expect(anonResult.body.message).toContain("requires an authenticated user");
 
     // bob: 403 on all three surfaces
     const bobStatus = await api()
@@ -102,5 +107,20 @@ describe("GraphSecureDefaults (SAA-595 fail-closed defaults, bare forRoot)", () 
       .get(`/graph/runs/${runId}`)
       .set(TEST_USER_HEADER, "bob");
     expect(bobResult.status).toBe(403);
+  });
+
+  it("2. GET /graph/workflows rejects an owner-less (anonymous) caller with 401 under the required defaults", async () => {
+    // The request context exists (the test module installs it for every
+    // request) but carries no resolved owner user: the SAA-93 F2 required
+    // gate rejects before the owner-less visibility contract can serve 200.
+    const anon = await api().get("/graph/workflows");
+    expect(anon.status).toBe(401);
+    expect(anon.body.message).toContain("requires an authenticated user");
+
+    // a resolved owner still gets the owner-less collection
+    const alice = await api()
+      .get("/graph/workflows")
+      .set(TEST_USER_HEADER, "alice");
+    expect(alice.status).toBe(200);
   });
 });

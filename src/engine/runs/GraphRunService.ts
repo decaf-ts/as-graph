@@ -33,6 +33,7 @@ import {
 } from "./types";
 import {
   assertGraphResourceOwnership,
+  assertGraphResourceWriteOwnership,
   canAccessGraphResource,
 } from "./ownership";
 import type { GraphRunModel } from "../../shared/graph";
@@ -208,10 +209,16 @@ export class GraphRunService {
    * runs (SAA-595). The persisted {@link GraphRunModel} rows are returned so
    * the HTTP boundary can serve the frontend-safe listing shape.
    *
+   * The newest-first sort is corrupt-date-safe (SAA-93 R2): a row whose
+   * `updatedAt` is missing or not a valid `Date` is treated as oldest
+   * (epoch `0`) instead of producing `NaN` comparisons that would make the
+   * ordering of adjacent rows undefined.
+   *
    * @param {string} workflowId - Workflow document id to list runs for.
    * @param {string | null} ownerUser - Identity of the requesting caller.
    * @param args - An optional decaf `Context` forwarded to the store.
    * @return {Promise<GraphRunModel[]>} The workflow's runs, newest first.
+   * @throws Re-throws any store failure from {@link GraphRunStore.listRuns}.
    */
   async listRunsByWorkflow(
     workflowId: string,
@@ -225,12 +232,25 @@ export class GraphRunService {
           allowAnonymousAccess: this.options.allowAnonymousAccess === true,
         })
       )
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      .sort((a, b) => {
+        const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : NaN;
+        const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : NaN;
+        return (
+          (Number.isFinite(bTime) ? bTime : 0) -
+          (Number.isFinite(aTime) ? aTime : 0)
+        );
+      });
   }
 
   /**
    * Cancels a non-terminal run: aborts in-flight execution and persists the
    * `cancelled` status. Terminal runs are returned unchanged.
+   *
+   * Cancellation is a write and is authorized by strict owner equality
+   * ({@link assertGraphResourceWriteOwnership}, SAA-105 R3): only the run's
+   * recorded owner may cancel it. A named caller can no longer cancel an
+   * owner-less run, and the read-visibility tolerance `allowAnonymousAccess`
+   * never grants a cancellation.
    */
   async cancelRun(
     runId: string,
@@ -241,7 +261,7 @@ export class GraphRunService {
     if (!run) {
       throw new NotFoundError(`No graph run found for runId '${runId}'`);
     }
-    this.assertOwnership(run, ownerUser);
+    this.assertWriteOwnership(run, ownerUser);
 
     if (isGraphRunTerminalStatus(run.status)) {
       return run;
@@ -421,9 +441,24 @@ export class GraphRunService {
     };
   }
 
+  /**
+   * Read-visibility check for a run: honours the owner-less visibility contract
+   * and the explicit `allowAnonymousAccess` tolerance (SAA-595/SAA-93 F1).
+   */
   private assertOwnership(run: GraphRun, ownerUser: string | null): void {
     assertGraphResourceOwnership({ owner: run.ownerUser }, ownerUser, {
       allowAnonymousAccess: this.options.allowAnonymousAccess === true,
+      resourceKind: "Graph run",
+      resourceId: run.runId,
+    });
+  }
+
+  /**
+   * Write-path check for a run: strict owner equality, never the read tolerance
+   * (SAA-105 R3).
+   */
+  private assertWriteOwnership(run: GraphRun, ownerUser: string | null): void {
+    assertGraphResourceWriteOwnership({ owner: run.ownerUser }, ownerUser, {
       resourceKind: "Graph run",
       resourceId: run.runId,
     });

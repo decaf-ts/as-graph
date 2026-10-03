@@ -85,6 +85,21 @@ function cloneWorkflowDocument(
 }
 
 /**
+ * Corrupt-date-safe sort key for the workflow serving list (SAA-93 F4): a
+ * missing or non-finite `updatedAt` sorts last (key `0`) instead of throwing.
+ */
+function graphUpdatedAtMillis(value: Date | null | undefined): number {
+  if (value === undefined || value === null) return 0;
+  let time: number;
+  try {
+    time = value.getTime();
+  } catch {
+    return 0;
+  }
+  return Number.isFinite(time) ? time : 0;
+}
+
+/**
  * Model-backed persistence for canonical workflow documents (DECAF-50
  * §4.10): saves and reads {@link GraphWorkflowModel} rows, validating every
  * submitted document at the boundary (forbidden fields, resource limits,
@@ -241,6 +256,12 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
    * only owner-less workflows (SAA-595 F3). The full rows are returned so the
    * HTTP boundary can project the serving summary it exposes.
    *
+   * A store failure propagates instead of being swallowed as `[]` (SAA-93 F4):
+   * silently emptying the list masks an outage as "no workflows" and hides it
+   * from monitoring. The sort key is computed through a corrupt-date-safe helper
+   * so a bad persisted `updatedAt` cannot throw before the per-row projection
+   * guard at the HTTP boundary skips that row.
+   *
    * @param args - An optional decaf `Context` carrying the requesting principal.
    * @return {Promise<GraphWorkflowModel[]>} Visible workflows, newest first.
    */
@@ -251,16 +272,11 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
       await this.logCtx(args, "listWorkflows", true)
     ).for(this.listWorkflows);
 
-    let models: GraphWorkflowModel[] = [];
-    try {
-      models = (await this.listBy(
-        "workflowId",
-        OrderDirection.ASC,
-        ...ctxArgs
-      )) as GraphWorkflowModel[];
-    } catch {
-      models = [];
-    }
+    const models = (await this.listBy(
+      "workflowId",
+      OrderDirection.ASC,
+      ...ctxArgs
+    )) as GraphWorkflowModel[];
 
     const owner = graphWorkflowOwnerOf(ctx);
     return models
@@ -269,7 +285,11 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
           allowAnonymousAccess: this.allowAnonymousAccess,
         })
       )
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      .sort(
+        (a, b) =>
+          graphUpdatedAtMillis(b.updatedAt) -
+          graphUpdatedAtMillis(a.updatedAt)
+      );
   }
 
   /**

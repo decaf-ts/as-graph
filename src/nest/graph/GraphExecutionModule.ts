@@ -47,6 +47,7 @@ import {
 import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
 import { GraphEnvironment } from "../../engine/services/GraphEnvironment";
 import type { GraphWorkflowServiceOptions } from "../../engine/services/GraphEnvironment";
+import type { GraphRunServiceOptions } from "../../engine/runs/GraphRunService";
 import {
   GraphWorkflowController,
   GRAPH_WORKFLOW_OPTIONS,
@@ -129,8 +130,12 @@ export interface GraphExecutionModuleOptions {
   /**
    * Options for the asynchronous run lifecycle API (DECAF-50 §4.14–§4.15):
    * authentication enforcement and backend-enforced run resource limits.
+   * The service-level `allowAnonymousAccess` tolerance is supplied through the
+   * intersected {@link GraphRunServiceOptions} and forwarded to
+   * {@link GraphRunService}; it is intentionally not a controller option
+   * (SAA-93 F3).
    */
-  runs?: GraphRunControllerOptions;
+  runs?: GraphRunControllerOptions & GraphRunServiceOptions;
   /**
    * Production hosts MUST wire a {@link GraphCredentialAuthorizer} backed by
    * their credential store (DECAF-50 §4.8 stage 8). Without it, stage-8
