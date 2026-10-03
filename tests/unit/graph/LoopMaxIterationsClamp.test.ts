@@ -5,10 +5,7 @@
  * through the foreach/while node classes via `GraphExecutionContext.limits`, and the
  * engine's default/overridden limit resolution.
  */
-import {
-  GraphForeachLoopNode,
-  GraphWhileLoopNode,
-} from "../../../src/node";
+import { GraphForeachLoopNode, GraphWhileLoopNode } from "../../../src/node";
 import { resolveLoopMaxIterations } from "../../../src/node/flow/loop/loop-metadata";
 import {
   GRAPH_DEFAULT_MAX_FOREACH_ITERATIONS,
@@ -36,7 +33,6 @@ import {
   documentEdge,
   documentNode,
   documentPort,
-  executeNode,
   freshCatalogue,
   nodeExecutionRequest,
   nodeExecutor,
@@ -127,10 +123,20 @@ describe("resolveLoopMaxIterations (SAA-2079 M2)", () => {
       Math.min(GRAPH_DEFAULT_MAX_LOOP_ITERATIONS, GRAPH_MAX_LOOP_ITERATIONS)
     );
     expect(
-      resolveLoopMaxIterations(undefined, 50, GRAPH_DEFAULT_MAX_LOOP_ITERATIONS, "while")
+      resolveLoopMaxIterations(
+        undefined,
+        50,
+        GRAPH_DEFAULT_MAX_LOOP_ITERATIONS,
+        "while"
+      )
     ).toBe(50);
     expect(
-      resolveLoopMaxIterations(null, 50, GRAPH_DEFAULT_MAX_LOOP_ITERATIONS, "until")
+      resolveLoopMaxIterations(
+        null,
+        50,
+        GRAPH_DEFAULT_MAX_LOOP_ITERATIONS,
+        "until"
+      )
     ).toBe(50);
   });
 
@@ -152,21 +158,24 @@ describe("resolveLoopMaxIterations (SAA-2079 M2)", () => {
       )
     ).toBe(100);
     expect(
-      resolveLoopMaxIterations(2000, 1000, GRAPH_DEFAULT_MAX_LOOP_ITERATIONS, "while")
+      resolveLoopMaxIterations(
+        2000,
+        1000,
+        GRAPH_DEFAULT_MAX_LOOP_ITERATIONS,
+        "while"
+      )
     ).toBe(1000);
   });
 
   it("floors a fractional configured value", () => {
-    expect(
-      resolveLoopMaxIterations(3.9, 100, 10, "while")
-    ).toBe(3);
+    expect(resolveLoopMaxIterations(3.9, 100, 10, "while")).toBe(3);
   });
 
   it("throws GraphInputError for non-finite or non-positive values", () => {
     for (const bad of ["abc", -1, 0, NaN, Infinity, -Infinity]) {
-      expect(() =>
-        resolveLoopMaxIterations(bad, 1000, 100, "while")
-      ).toThrow(GraphInputError);
+      expect(() => resolveLoopMaxIterations(bad, 1000, 100, "while")).toThrow(
+        GraphInputError
+      );
     }
   });
 });

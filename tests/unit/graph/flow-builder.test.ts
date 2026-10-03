@@ -12,7 +12,6 @@ import { ValidationError } from "@decaf-ts/db-decorators";
 import { Model, model } from "@decaf-ts/decorator-validation";
 import {
   GraphFlowBuilder,
-  PortDirection,
   input,
   node,
   output,
@@ -88,8 +87,16 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("linear", "Linear")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
-      .then(TransformNode, { id: "b", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
+      .then(TransformNode, {
+        id: "b",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .toOutput("result")
       .build();
     expect(edgesOf(document)).toEqual([
@@ -103,7 +110,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("fan", "Fan")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .parallel(SingleNode, SingleNode)
       .join(SingleNode, { id: "join" })
       .toOutput("result")
@@ -122,10 +133,22 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("branch", "Branch")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .if(CONDITION, { id: "branch", withElse: true })
-      .then(TransformNode, { id: "t", inputPort: "value", outputPort: "result" })
-      .else(TransformNode, { id: "f", inputPort: "value", outputPort: "result" })
+      .then(TransformNode, {
+        id: "t",
+        inputPort: "value",
+        outputPort: "result",
+      })
+      .else(TransformNode, {
+        id: "f",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .endIf()
       .toOutput("result")
       .build();
@@ -147,12 +170,28 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("elseif", "ElseIf")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .if(CONDITION, { id: "branch", withElse: true })
-      .then(TransformNode, { id: "t", inputPort: "value", outputPort: "result" })
+      .then(TransformNode, {
+        id: "t",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .elseIf(CONDITION, { id: "branch2", withElse: true })
-      .then(TransformNode, { id: "u", inputPort: "value", outputPort: "result" })
-      .else(TransformNode, { id: "f", inputPort: "value", outputPort: "result" })
+      .then(TransformNode, {
+        id: "u",
+        inputPort: "value",
+        outputPort: "result",
+      })
+      .else(TransformNode, {
+        id: "f",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .endIf()
       .endIf()
       .toOutput("result")
@@ -173,7 +212,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("switch", "Switch")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .switch(
         [
           {
@@ -187,7 +230,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
         ],
         { hasDefault: true }
       )
-      .default(TransformNode, { id: "lowNode", inputPort: "value", outputPort: "result" })
+      .default(TransformNode, {
+        id: "lowNode",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .toOutput("result")
       .build();
     expect(edgesOf(document)).toEqual([
@@ -220,7 +267,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("switch-case", "SwitchCase")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .switch(
         [
           {
@@ -240,7 +291,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
         inputPort: "value",
         options: { id: "midNode", outputPort: "result" },
       })
-      .default(TransformNode, { id: "lowNode", inputPort: "value", outputPort: "result" })
+      .default(TransformNode, {
+        id: "lowNode",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .toOutput("result")
       .build();
     expect(edgesOf(document)).toEqual([
@@ -261,7 +316,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("map", "Map")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .map(orderTriageBodyDocument, {
         maxIterations: ORDER_TRIAGE_LOOP_MAX_ITERATIONS,
         itemPort: "item",
@@ -307,7 +366,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const whileDocument = new GraphFlowBuilder("while", "While")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .while(CONDITION, orderTriageBodyDocument, { maxIterations: 4 })
       .toOutput("result")
       .build();
@@ -322,7 +385,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const untilDocument = new GraphFlowBuilder("until", "Until")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .until(CONDITION, orderTriageBodyDocument, { maxIterations: 4 })
       .toOutput("result")
       .build();
@@ -335,8 +402,16 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("error", "Error")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
-      .onError(orderTriageBodyDocument, orderTriageBodyDocument, orderTriageBodyDocument)
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
+      .onError(
+        orderTriageBodyDocument,
+        orderTriageBodyDocument,
+        orderTriageBodyDocument
+      )
       .toOutput("result")
       .build();
     const node = document.nodes.find((n) => n.id === "errorBoundary");
@@ -356,7 +431,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("connect", "Connect")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .state({ counter: "state-default" })
       .pin({ counter: "pinned" })
       .connect(VaultNode, { toPort: "modelHandle" })
@@ -380,7 +459,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("position", "Position")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .position("a", { x: 12, y: 34 })
       .toOutput("result")
       .build();
@@ -392,7 +475,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
   it("declares input and output boundary ports together", () => {
     const document = new GraphFlowBuilder("boundary", "Boundary")
       .boundary({ inputs: ["n", { id: "m" }], outputs: [{ id: "result" }] })
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .toOutput("result")
       .build();
     expect(document.inputs.map((port) => port.id)).toEqual(["n", "m"]);
@@ -428,7 +515,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
       () =>
         new GraphFlowBuilder("from", "From")
           .inputs(["n"])
-          .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+          .start(TransformNode, {
+            id: "a",
+            inputPort: "value",
+            outputPort: "result",
+          })
           .parallel(SingleNode, SingleNode)
           .from("result"),
       /ambiguous/
@@ -437,7 +528,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
       () =>
         new GraphFlowBuilder("from", "From")
           .inputs(["n"])
-          .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+          .start(TransformNode, {
+            id: "a",
+            inputPort: "value",
+            outputPort: "result",
+          })
           .from("nope"),
       /does not declare output port 'nope'/
     );
@@ -447,7 +542,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
     const document = new GraphFlowBuilder("at", "At")
       .inputs(["n"])
       .outputs(["result"])
-      .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+      .start(TransformNode, {
+        id: "a",
+        inputPort: "value",
+        outputPort: "result",
+      })
       .at("factor")
       .then(TransformNode, { id: "b", outputPort: "result" })
       .toOutput("result")
@@ -464,7 +563,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
       () =>
         new GraphFlowBuilder("at", "At")
           .inputs(["n"])
-          .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+          .start(TransformNode, {
+            id: "a",
+            inputPort: "value",
+            outputPort: "result",
+          })
           .at("factor")
           .at("value"),
       /already called/
@@ -473,7 +576,11 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
       () =>
         new GraphFlowBuilder("at", "At")
           .inputs(["n"])
-          .start(TransformNode, { id: "a", inputPort: "value", outputPort: "result" })
+          .start(TransformNode, {
+            id: "a",
+            inputPort: "value",
+            outputPort: "result",
+          })
           .at("nope")
           .then(TransformNode, { id: "b" }),
       /does not declare input port 'nope'/
@@ -551,7 +658,12 @@ describe("GraphFlowBuilder combinators (SAA-2115 item 4)", () => {
           .outputs(["result"])
           .start(SingleNode, { id: "a" })
           .switch([
-            { id: "c", condition: CONDITION, node: SingleNode, options: { id: "cNode" } },
+            {
+              id: "c",
+              condition: CONDITION,
+              node: SingleNode,
+              options: { id: "cNode" },
+            },
           ])
           .default(SingleNode, { id: "d" })
           .default(SingleNode, { id: "e" }),

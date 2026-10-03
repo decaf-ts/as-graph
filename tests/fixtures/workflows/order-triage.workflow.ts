@@ -124,8 +124,18 @@ export const orderTriageBodyDocument: GraphWorkflowDocument = {
     },
   ],
   relations: [
-    { source: "workflow", sourcePort: "item", target: "double", targetPort: "data" },
-    { source: "double", sourcePort: "result", target: "workflow", targetPort: "result" },
+    {
+      source: "workflow",
+      sourcePort: "item",
+      target: "double",
+      targetPort: "data",
+    },
+    {
+      source: "double",
+      sourcePort: "result",
+      target: "workflow",
+      targetPort: "result",
+    },
   ],
 })
 @model()
@@ -193,7 +203,9 @@ export class OrderTriageForeachNode extends Model {
 
 @node("order-triage-switch", {
   kind: "core.flow.switch",
-  metadata: { switch: ORDER_TRIAGE_SWITCH_METADATA as unknown as Record<string, unknown> },
+  metadata: {
+    switch: ORDER_TRIAGE_SWITCH_METADATA as unknown as Record<string, unknown>,
+  },
 })
 @model()
 export class OrderTriageSwitchNode extends Model {
@@ -257,16 +269,66 @@ export class OrderTriageSwitchNode extends Model {
     },
   ],
   relations: [
-    { source: "workflow", sourcePort: "n", target: "triage", targetPort: "data" },
-    { source: "triage", sourcePort: "result", target: "branch", targetPort: "value" },
-    { source: "branch", sourcePort: "then", target: "escalate", targetPort: "data" },
-    { source: "branch", sourcePort: "else", target: "standard", targetPort: "data" },
-    { source: "escalate", sourcePort: "result", target: "switch", targetPort: "value" },
-    { source: "standard", sourcePort: "result", target: "switch", targetPort: "value" },
-    { source: "switch", sourcePort: "high", target: "foreach", targetPort: "items" },
-    { source: "switch", sourcePort: "default", target: "low", targetPort: "data" },
-    { source: "low", sourcePort: "result", target: "workflow", targetPort: "result" },
-    { source: "foreach", sourcePort: "completed", target: "workflow", targetPort: "result" },
+    {
+      source: "workflow",
+      sourcePort: "n",
+      target: "triage",
+      targetPort: "data",
+    },
+    {
+      source: "triage",
+      sourcePort: "result",
+      target: "branch",
+      targetPort: "value",
+    },
+    {
+      source: "branch",
+      sourcePort: "then",
+      target: "escalate",
+      targetPort: "data",
+    },
+    {
+      source: "branch",
+      sourcePort: "else",
+      target: "standard",
+      targetPort: "data",
+    },
+    {
+      source: "escalate",
+      sourcePort: "result",
+      target: "switch",
+      targetPort: "value",
+    },
+    {
+      source: "standard",
+      sourcePort: "result",
+      target: "switch",
+      targetPort: "value",
+    },
+    {
+      source: "switch",
+      sourcePort: "high",
+      target: "foreach",
+      targetPort: "items",
+    },
+    {
+      source: "switch",
+      sourcePort: "default",
+      target: "low",
+      targetPort: "data",
+    },
+    {
+      source: "low",
+      sourcePort: "result",
+      target: "workflow",
+      targetPort: "result",
+    },
+    {
+      source: "foreach",
+      sourcePort: "completed",
+      target: "workflow",
+      targetPort: "result",
+    },
   ],
 })
 @model()
@@ -594,7 +656,10 @@ export function structuralProjection(document: GraphWorkflowDocument) {
         id: node.id,
         kind: node.kind,
         loop: node.loop
-          ? { bodyId: node.loop.body.id, maxIterations: node.loop.maxIterations }
+          ? {
+              bodyId: node.loop.body.id,
+              maxIterations: node.loop.maxIterations,
+            }
           : undefined,
         config: effectiveNodeConfig(node),
       }))
@@ -611,7 +676,9 @@ export function structuralProjection(document: GraphWorkflowDocument) {
             ? `${edge.target.nodeId}.${edge.target.port}`
             : `$workflow.${edge.target.port}`,
       }))
-      .sort((a, b) => `${a.source}->${a.target}`.localeCompare(`${b.source}->${b.target}`)),
+      .sort((a, b) =>
+        `${a.source}->${a.target}`.localeCompare(`${b.source}->${b.target}`)
+      ),
   };
 }
 
@@ -640,6 +707,7 @@ export class StatefulFixtureNode extends GraphNode<
   result?: unknown;
 
   override execute(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _request: GraphNodeExecutionRequest<Record<string, unknown>>
   ): GraphExecutionValues {
     return { result: this.counter };
@@ -649,11 +717,25 @@ export class StatefulFixtureNode extends GraphNode<
 @graph("fixture-stateful-wf", {
   kind: "fixture.stateful-wf",
   nodes: [
-    { id: "stateful", kind: "fixture.stateful-node", node: StatefulFixtureNode },
+    {
+      id: "stateful",
+      kind: "fixture.stateful-node",
+      node: StatefulFixtureNode,
+    },
   ],
   relations: [
-    { source: "workflow", sourcePort: "value", target: "stateful", targetPort: "value" },
-    { source: "stateful", sourcePort: "result", target: "workflow", targetPort: "result" },
+    {
+      source: "workflow",
+      sourcePort: "value",
+      target: "stateful",
+      targetPort: "value",
+    },
+    {
+      source: "stateful",
+      sourcePort: "result",
+      target: "workflow",
+      targetPort: "result",
+    },
   ],
 })
 @model()
