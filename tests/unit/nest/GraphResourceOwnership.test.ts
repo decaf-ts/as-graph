@@ -13,6 +13,7 @@ import { ForbiddenError } from "@decaf-ts/core";
 
 import {
   assertGraphResourceOwnership,
+  assertGraphResourceWriteOwnership,
   canAccessGraphResource,
   canAccessGraphResourcePayload,
 } from "../../../src/engine/runs/ownership";
@@ -128,5 +129,71 @@ describe("canAccessGraphResourcePayload (SAA-93 F1 payload predicate)", () => {
     const owned = { owner: "alice" };
     expect(canAccessGraphResource(owned, "bob")).toBe(false);
     expect(canAccessGraphResourcePayload(owned, "bob")).toBe(false);
+  });
+});
+
+describe("assertGraphResourceWriteOwnership (SAA-105 R3 strict owner-equality write gate)", () => {
+  const options = { resourceKind: "Graph workflow", resourceId: "wf-1" };
+
+  it("allows an owner-less resource only for an owner-less (anonymous) caller", () => {
+    // A persisted owner column is either a non-empty string or absent, and the
+    // request boundary resolves an absent identity to `null`, so the owner-less
+    // shapes normalize to `null` and match every owner-less caller.
+    const ownerLess = [null, undefined, {}, { owner: null }];
+    for (const resource of ownerLess) {
+      for (const anonymous of [null, undefined]) {
+        expect(() =>
+          assertGraphResourceWriteOwnership(resource, anonymous, options)
+        ).not.toThrow();
+      }
+    }
+    // strict owner equality: an empty-string owner only matches an empty-string
+    // caller (the boundary never emits `""`, and the predicate fails closed on it)
+    expect(() =>
+      assertGraphResourceWriteOwnership({ owner: "" }, "", options)
+    ).not.toThrow();
+    expect(() =>
+      assertGraphResourceWriteOwnership({ owner: "" }, null, options)
+    ).toThrow(ForbiddenError);
+    expect(() =>
+      assertGraphResourceWriteOwnership({ owner: null }, "", options)
+    ).toThrow(ForbiddenError);
+  });
+
+  it("denies a named caller on an owner-less resource with ForbiddenError (closes R3)", () => {
+    const ownerLess = [null, undefined, {}, { owner: null }, { owner: "" }];
+    for (const resource of ownerLess) {
+      for (const named of ["alice", "bob"]) {
+        expect(() =>
+          assertGraphResourceWriteOwnership(resource, named, options)
+        ).toThrow(ForbiddenError);
+      }
+    }
+  });
+
+  it("allows an owned resource for its own owner", () => {
+    expect(() =>
+      assertGraphResourceWriteOwnership({ owner: "alice" }, "alice", options)
+    ).not.toThrow();
+  });
+
+  it("denies every other caller on an owned resource, including an anonymous caller with the read tolerance", () => {
+    for (const caller of ["bob", null, undefined, ""]) {
+      expect(() =>
+        assertGraphResourceWriteOwnership({ owner: "alice" }, caller, options)
+      ).toThrow(ForbiddenError);
+    }
+  });
+
+  it("ignores the read-visibility tolerance: allowAnonymousAccess never reaches the write gate", () => {
+    // The write assertion takes no tolerance option; an anonymous caller on an
+    // owned resource is denied even where canAccessGraphResource would admit it.
+    const owned = { owner: "alice" };
+    expect(
+      canAccessGraphResource(owned, null, { allowAnonymousAccess: true })
+    ).toBe(true);
+    expect(() =>
+      assertGraphResourceWriteOwnership(owned, null, options)
+    ).toThrow(ForbiddenError);
   });
 });

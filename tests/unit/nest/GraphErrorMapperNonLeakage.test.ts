@@ -28,6 +28,15 @@
  * line for the corresponding endpoints, while the raw underlying error message
  * still never reaches the HTTP response. It also pins the SAA-124 `try/catch` guard:
  * `logUnmappedGraphServingError` must not throw when the logger itself fails.
+ *
+ * SAA-147 extension (follow-up to the SAA-140 sign-off gap): the same captured
+ * log line must also carry the underlying error's own detail. The RAW pattern only
+ * surfaces that detail through the `error` argument's stack, so a regression that
+ * drops the argument from `Logging.for(context).error(message, error, meta)`
+ * (`src/nest/graph/servingErrors.ts`) would keep the correlation id in `{message}`
+ * and stay invisible to the SAA-135 assertions. This suite now pins the error
+ * detail's stable message marker in the log line while re-asserting it never reaches
+ * the HTTP response.
  */
 import { jest, describe, beforeAll, afterAll, it, expect } from "@jest/globals";
 import request from "supertest";
@@ -176,6 +185,22 @@ async function captureUnmappedErrorLog(
   }
 }
 
+/**
+ * Asserts the captured unmapped-error log lines carry the underlying error's own
+ * detail. Under the default RAW pattern the underlying error is only surfaced via
+ * the `error` argument's stack, so a regression that drops that argument from
+ * `Logging.for(context).error(message, error, meta)` leaves the correlation id in
+ * `{message}` while silently no longer logging the cause. The assertion targets
+ * the error's stable message marker, not the full adapter stack.
+ *
+ * @param {string[]} lines - The mapper's captured unmapped-error log lines.
+ * @return {void}
+ */
+function expectUnderlyingErrorLogged(lines: string[]): void {
+  expect(lines.length).toBeGreaterThan(0);
+  expect(lines.join("\n")).toContain(SENSITIVE_MESSAGE);
+}
+
 describe("Graph 500 error mappers must not leak raw underlying errors (SAA-116 fails-before)", () => {
   let app: INestApplication;
   let runService: ReturnType<typeof runServiceStub>;
@@ -314,6 +339,24 @@ describe("Graph 500 error mappers must not leak raw underlying errors (SAA-116 f
       expectGenericInternalServerError(result);
       expect(lines.length).toBeGreaterThan(0);
       expect(lines.join("\n")).toContain("wf-correlation-3");
+    });
+  });
+
+  describe("underlying error detail logging (SAA-147)", () => {
+    it("16. GET /graph/runs/:runId logs the underlying error detail while the response stays generic", async () => {
+      const { result, lines } = await captureUnmappedErrorLog(() =>
+        api().get("/graph/runs/run-underlying-error")
+      );
+      expectGenericInternalServerError(result);
+      expectUnderlyingErrorLogged(lines);
+    });
+
+    it("17. GET /graph/workflows/:workflowId logs the underlying error detail while the response stays generic", async () => {
+      const { result, lines } = await captureUnmappedErrorLog(() =>
+        api().get("/graph/workflows/wf-underlying-error")
+      );
+      expectGenericInternalServerError(result);
+      expectUnderlyingErrorLogged(lines);
     });
   });
 

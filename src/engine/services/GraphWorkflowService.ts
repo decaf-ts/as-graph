@@ -5,9 +5,11 @@
  * @description Saves, reads, lists, validates, and access-checks
  * {@link GraphWorkflowModel} rows via the Decaf {@link ModelService}:
  * every submitted document passes the boundary validation gate before
- * persisting, legacy snapshots are handled per DECAF-50 §4.18, and all reads
- * and listings are fail-closed ownership-scoped through
- * {@link canAccessGraphResource} / {@link assertGraphResourceOwnership}.
+ * persisting, legacy snapshots are handled per DECAF-50 §4.18, reads and
+ * listings are fail-closed ownership-scoped through
+ * {@link canAccessGraphResource} / {@link assertGraphResourceOwnership}, and
+ * existing-row overwrites are authorized by strict owner equality through
+ * {@link assertGraphResourceWriteOwnership} (SAA-105 R3).
  */
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import {
@@ -19,6 +21,7 @@ import {
 } from "@decaf-ts/core";
 import {
   assertGraphResourceOwnership,
+  assertGraphResourceWriteOwnership,
   canAccessGraphResource,
 } from "../runs/ownership";
 import {
@@ -107,7 +110,9 @@ function graphUpdatedAtMillis(value: Date | null | undefined): number {
  * previously persisted legacy snapshots to canonical documents on read.
  * Enforces per-user ownership; absent caller identities are denied on owned
  * workflows unless the explicit DECAF-48 §4.15 standalone tolerance
- * (`allowAnonymousAccess`) is set (SAA-595 F3).
+ * (`allowAnonymousAccess`) is set for reads (SAA-595 F3). Overwriting an
+ * existing row is a write and is authorized by strict owner equality, so the
+ * read tolerance never grants an overwrite (SAA-105 R3).
  */
 @service(GraphWorkflowModel)
 export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
@@ -144,6 +149,11 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
    * `document` column, enforcing shape, document-id match, boundary
    * validation, and the DECAF-48 ownership tuple; creates or updates the
    * {@link GraphWorkflowModel} row accordingly.
+   *
+   * A fresh create stamps the caller's own owner and is unconditional. An
+   * overwrite of an existing row is a write authorized by strict owner equality
+   * (SAA-105 R3): a named caller cannot overwrite an owner-less workflow and
+   * the `allowAnonymousAccess` read tolerance never grants an overwrite.
    *
    * @param {string} workflowId - Workflow id from the request path.
    * @param {GraphWorkflowDocument} document - Canonical document to persist (its `id` must equal `workflowId`).
@@ -188,7 +198,12 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
     } catch {
       existing = null;
     }
-    this.assertOwnership(workflowId, existing, owner);
+    // Fresh create is unconditional (the caller stamps their own owner); an
+    // overwrite of an existing row is a write and requires strict owner
+    // equality (SAA-105 R3).
+    if (existing) {
+      this.assertWriteOwnership(workflowId, existing, owner);
+    }
 
     const now = new Date();
     if (existing) {
@@ -357,6 +372,10 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
    * enforcing the DECAF-48 ownership tuple and mirroring the wrapper's
    * document onto the row's canonical columns.
    *
+   * A fresh create is unconditional; an overwrite of an existing row is a write
+   * authorized by strict owner equality (SAA-105 R3) — see
+   * {@link saveDocument}.
+   *
    * @param {string} workflowId - Workflow id from the request path.
    * @param {Record<string, unknown>} snapshot - JSON-safe canonical snapshot wrapper.
    * @param args - An optional decaf `Context` carrying the owning principal.
@@ -395,7 +414,12 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
     } catch {
       existing = null;
     }
-    this.assertOwnership(workflowId, existing, owner);
+    // Fresh create is unconditional (the caller stamps their own owner); an
+    // overwrite of an existing row is a write and requires strict owner
+    // equality (SAA-105 R3).
+    if (existing) {
+      this.assertWriteOwnership(workflowId, existing, owner);
+    }
 
     const now = new Date();
     if (existing) {
@@ -443,7 +467,7 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
   }
 
   /**
-   * Guards a persisted workflow record with the centralized
+   * Read-visibility guard for a persisted workflow record via the centralized
    * {@link assertGraphResourceOwnership} check, honouring this service's
    * configured `allowAnonymousAccess` tolerance (SAA-595 F3).
    */
@@ -454,6 +478,23 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
   ): void {
     assertGraphResourceOwnership(model ?? null, user ?? null, {
       allowAnonymousAccess: this.allowAnonymousAccess,
+      resourceKind: "Graph workflow",
+      resourceId: workflowId,
+    });
+  }
+
+  /**
+   * Write-path guard for an existing workflow record via the centralized
+   * {@link assertGraphResourceWriteOwnership} check: strict owner equality,
+   * never the read tolerance (SAA-105 R3). Only applied to overwrites; fresh
+   * creates are unconditional.
+   */
+  private assertWriteOwnership(
+    workflowId: string,
+    model: GraphWorkflowModel | null | undefined,
+    user: string | undefined
+  ): void {
+    assertGraphResourceWriteOwnership(model ?? null, user ?? null, {
       resourceKind: "Graph workflow",
       resourceId: workflowId,
     });

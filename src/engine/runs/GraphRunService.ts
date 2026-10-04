@@ -4,7 +4,8 @@
  * @description Creates, tracks, cancels, and observes graph runs on top of a
  * {@link GraphRunStore} and {@link GraphRunEventStore}: per-caller run
  * limits (concurrency buckets keyed by owner or caller key, timeout, event
- * payload size), fail-closed ownership scoping on every read/cancel,
+ * payload size), fail-closed ownership scoping on every read, strict
+ * owner-equality on the cancel write path (SAA-105 R3),
  * event-state auto-release after the replay window (SAA-595), and the
  * sequenced event stream the SSE controller replays.
  */
@@ -64,7 +65,8 @@ export interface GraphRunServiceOptions {
  * observes graph runs on top of a {@link GraphRunStore} and
  * {@link GraphRunEventStore}. Enforces per-caller run limits (concurrency
  * buckets keyed by owner or caller key, timeout, event payload size), scopes
- * every read/cancel to the owning user, auto-releases retained event state
+ * every read to the owning user, authorizes cancellation by strict owner
+ * equality (SAA-105 R3), auto-releases retained event state
  * after the configured replay window (SAA-595), and exposes the sequenced
  * event stream the SSE controller replays.
  */
