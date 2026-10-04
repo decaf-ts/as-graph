@@ -160,9 +160,8 @@ function graphPortDirectionOf(
 }
 
 function graphPortIdOf(port: GraphPortDefinition): string {
-  // The decorated `handle` is the port identity consumed by edges, input
-  // bindings and the renderer (see `GraphPortView`); the `path`/`property` is
-  // only the TypeScript field name. They diverge when a node needs two logical
+  // The decorated `handle` is the port identity consumed by edges and input
+  // bindings; the `path`/`property` is only the TypeScript field name. They diverge when a node needs two logical
   // ports named the same (e.g. a passthrough node with `value` in and out).
   // Connection ports are structural (they carry no workflow data) and keep their
   // property/path id.

@@ -47,6 +47,28 @@
         "default": "./lib/cjs/ram/index.cjs"
       },
       "default": "./lib/esm/ram/index.js"
+    },
+    "./mastra": {
+      "import": {
+        "types": "./lib/types/mastra/index.d.mts",
+        "default": "./lib/esm/mastra/index.js"
+      },
+      "require": {
+        "types": "./lib/types/mastra/index.d.cts",
+        "default": "./lib/cjs/mastra/index.cjs"
+      },
+      "default": "./lib/esm/mastra/index.js"
+    },
+    "./dagster": {
+      "import": {
+        "types": "./lib/types/dagster/index.d.mts",
+        "default": "./lib/esm/dagster/index.js"
+      },
+      "require": {
+        "types": "./lib/types/dagster/index.d.cts",
+        "default": "./lib/cjs/dagster/index.cjs"
+      },
+      "default": "./lib/esm/dagster/index.js"
     }
   },
   "main": "./lib/cjs/index.cjs",
@@ -128,6 +150,12 @@
     "url": "https://github.com/decaf-ts/as-graph/issues"
   },
   "homepage": "https://github.com/decaf-ts/as-graph#readme",
+  "dagster": {
+    "distribution": "dagster",
+    "pinnedVersion": "1.13.25",
+    "source": "https://pypi.org/pypi/dagster/json",
+    "note": "Dagster is a Python orchestration engine with no official JavaScript runtime. This pin records the engine contract the generated ./dagster artifacts target; execution is driven through the host-injected DagsterClient port."
+  },
   "dependencies": {
     "@decaf-ts/crypto": "latest",
     "@decaf-ts/db-decorators": "latest",
@@ -137,6 +165,7 @@
     "@decaf-ts/for-nest": "latest",
     "@decaf-ts/integrations": "^0.10.8",
     "@decaf-ts/ui-decorators": "latest",
+    "@mastra/core": "1.74.0",
     "@nestjs/common": "^11.2.6",
     "@nestjs/core": "^11.2.6",
     "@nestjs/platform-express": "^11.2.6",

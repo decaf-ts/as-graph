@@ -698,6 +698,14 @@ export enum GraphExecutionEventType {
   WORKFLOW_COMPLETED = "workflow.completed",
   WORKFLOW_FAILED = "workflow.failed",
   WORKFLOW_CANCELLED = "workflow.cancelled",
+  /**
+   * Engine-agnostic suspend/resume extension point (SAA-196). A backend that
+   * supports suspend/resume reports the suspension and the accepted resume through
+   * these shared event types so observers and the run store stay engine-agnostic.
+   */
+  WORKFLOW_SUSPENDED = "workflow.suspended",
+  /** Engine-agnostic suspend/resume extension point (SAA-196). */
+  WORKFLOW_RESUMED = "workflow.resumed",
 
   NODE_QUEUED = "node.queued",
   NODE_STARTED = "node.started",

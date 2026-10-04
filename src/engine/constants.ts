@@ -13,6 +13,12 @@
 export const GRAPH_WORKFLOW_BOUNDARY = "$workflow";
 
 /**
+ * Flavour under which the built-in {@link LocalGraphExecutionBackend} registers
+ * itself in the {@link GraphExecutionBackendRegistry}.
+ */
+export const GRAPH_LOCAL_EXECUTION_BACKEND = "local";
+
+/**
  * Default concurrency for parallel node execution within a layer.
  */
 export const GRAPH_DEFAULT_CONCURRENCY = 4;

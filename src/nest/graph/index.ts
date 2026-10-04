@@ -9,4 +9,7 @@ export * from "./GraphWorkflowController";
 export * from "./GraphRunController";
 export * from "./GraphExecutorRegistryFactory";
 export * from "./GraphNodeCatalogueController";
+export * from "./GraphEngineCapabilityManifest";
+export * from "./GraphEngineCapabilityService";
+export * from "./GraphEngineController";
 export * from "./GraphExecutionModule";

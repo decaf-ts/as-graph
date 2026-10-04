@@ -24,48 +24,26 @@ import {
   type MaybeContextualArg,
 } from "@decaf-ts/core";
 import type {
-  GraphInputBinding,
-  GraphJsonValue,
-  GraphValueTemplate,
+  GraphExecutionEvent,
   GraphWorkflowDocument,
   GraphWorkflowPortInstance,
-} from "../../shared/graph";
-
-import {
-  graphValueTemplateDefaultLanguage,
-  isGraphValueTemplate,
 } from "../../shared/graph";
 
 import {
   GRAPH_DEFAULT_CONCURRENCY,
   GRAPH_MAX_FOREACH_ITERATIONS,
   GRAPH_MAX_LOOP_ITERATIONS,
-  GRAPH_WORKFLOW_BOUNDARY,
 } from "../constants";
 import {
   GraphExecutionEventType,
   GraphExecutionStatus,
-  GraphVisualState,
 } from "../../shared/graph";
-import {
-  GraphBreakSignal,
-  GraphExecutionError,
-  GraphRunCancelledError,
-} from "../errors";
+import { GraphExecutionError, GraphRunCancelledError } from "../errors";
 import type {
-  GraphExecutionErrorPayload,
-  GraphExecutionEvent,
-} from "../../shared/graph";
-import type {
-  GraphExecutionLimits,
   GraphExecutionOptions,
   GraphExecutionResult,
   GraphExecutionValues,
-  GraphNodeExecutionRequest,
-  GraphNodeExecutionResult,
   GraphPinNodeOptions,
-  GraphResolvedCredentials,
-  GraphRunId,
   GraphUnpinNodeOptions,
 } from "../types";
 import type { GraphExecutionObserver } from "../events/GraphExecutionObserver";
@@ -74,28 +52,29 @@ import { GraphExecutionEventFactory } from "../events/GraphExecutionEventFactory
 import type { GraphNodeExecutorRegistry } from "../registry/GraphNodeExecutorRegistry";
 import type { GraphNodeCatalogue } from "../catalog/GraphNodeCatalogue";
 import { GraphExecutionPlanner } from "../planning/GraphExecutionPlanner";
-import type { GraphExecutionPlan } from "../planning/GraphExecutionPlan";
-import type { GraphExecutionPlanNode } from "../planning/GraphExecutionPlanNode";
-import type { GraphExecutionPlanEdge } from "../planning/GraphExecutionPlanEdge";
 import {
   GraphWorkflowDocumentValidator,
   type GraphWorkflowDocumentValidationLimits,
 } from "../validation/GraphWorkflowDocumentValidator";
 import type { GraphCredentialAuthorizer } from "../validation/GraphCredentialReferenceValidator";
-import {
-  GraphParameterValidator,
-  isGraphCredentialReferenceLike,
-} from "../validation/GraphParameterValidator";
 import { GraphDocumentValidationError } from "../validation/GraphValidationErrors";
 import { createGraphValueRepository } from "../store/GraphValueRepository";
-import type { GraphCachedValue } from "../store/GraphCachedValue";
 import { GraphPinningService } from "../pinning/GraphPinningService";
 import { GraphPinningPolicy } from "../pinning/GraphPinningPolicy";
 import { GraphPinningDependencyResolver } from "../pinning/GraphPinningDependencyResolver";
-import { GraphExecutionContext } from "./GraphExecutionContext";
 import { GraphExecutionFrame } from "./GraphExecutionFrame";
-import { buildGraphExecutionResult } from "./GraphExecutionResult";
 import type { CodeSandboxEvaluator } from "./CodeSandboxEvaluator";
+import {
+  GraphEngineEventSink,
+  resolveGraphBackendCapabilities,
+  type GraphBackendCapabilities,
+  type GraphBackendWorkflowStore,
+  type GraphBackendWorkflowSummary,
+  type GraphExecutionBackend,
+} from "./GraphExecutionBackend";
+import { detectGraphCodeModeSurfaces } from "./GraphCodeMode";
+import { GraphExecutionBackendRegistry } from "./GraphExecutionBackendRegistry";
+import { LocalGraphExecutionBackend } from "./LocalGraphExecutionBackend";
 import {
   GraphAuthValidator,
   graphAuthDataOf,
@@ -131,6 +110,22 @@ export interface GraphExecutionEngineConfig {
    */
   authMatch?: GraphNamespaceMatchOptions;
   planner?: GraphExecutionPlanner;
+  /**
+   * Pluggable execution backend. Defaults to a fresh
+   * {@link LocalGraphExecutionBackend} (the extracted reference interpreter);
+   * remote/translated backends (Dagster, Mastra) are supplied here. The facade
+   * still owns validation, resolution, auth, planning, event sequencing, and
+   * observer dispatch for every backend.
+   */
+  backend?: GraphExecutionBackend;
+  /**
+   * Workflow catalogue port used by the default {@link LocalGraphExecutionBackend}
+   * to back the engine-agnostic `listWorkflows`/`getWorkflow` seam. Hosts pass
+   * their `GraphWorkflowService` here; remote backends surface their own
+   * catalogue through the optional {@link GraphExecutionBackend} extension and
+   * ignore this port.
+   */
+  workflowStore?: GraphBackendWorkflowStore;
   /**
    * Decaf adapter backing cached/pinned value persistence. Defaults to the
    * globally configured adapter (`Adapter.current`); tests pass a `RamAdapter`
@@ -168,6 +163,8 @@ export interface GraphExecutionEngineClient {
   catalogue: GraphNodeCatalogue;
   /** Topological planner. */
   planner: GraphExecutionPlanner;
+  /** Pluggable execution backend (local by default). */
+  backend: GraphExecutionBackend;
   /** Decaf adapter backing cached/pinned value persistence. */
   valueAdapter: Adapter<any, any, any, any>;
   /** Engine event emitter. */
@@ -178,23 +175,6 @@ export interface GraphExecutionEngineClient {
   authValidator: GraphAuthValidator;
   /** Optional pluggable code sandbox evaluator. */
   codeSandboxEvaluator?: CodeSandboxEvaluator;
-}
-
-/**
- * Compiles a `{{ ... }}` text template into a JavaScript template literal so
- * the pluggable code sandbox evaluator can resolve its placeholders against
- * the same `$input`/`$vars`/`$item` bindings used by expression bindings.
- *
- * @param template - The persisted template body.
- * @returns A backtick-quoted template literal expression.
- */
-function graphTemplateToExpression(template: string): string {
-  const escaped = template.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-  const interpolated = escaped.replace(
-    /\{\{\s*([\s\S]*?)\s*\}\}/g,
-    (_match, expression: string) => `\${${expression}}`
-  );
-  return `\`${interpolated}\``;
 }
 
 /**
@@ -254,10 +234,15 @@ export class GraphExecutionEngine
         "GRAPH_VALUE_ADAPTER_MISSING"
       );
     }
+    const backend =
+      config.backend ??
+      GraphExecutionBackendRegistry.current ??
+      new LocalGraphExecutionBackend();
     const client: GraphExecutionEngineClient = {
       registry: config.registry,
       catalogue,
       planner: config.planner ?? new GraphExecutionPlanner(),
+      backend,
       valueAdapter,
       eventEmitter: config.eventEmitter ?? new GraphExecutionEventEmitter(),
       documentValidator:
@@ -277,6 +262,16 @@ export class GraphExecutionEngine
     };
     this._config = config;
     this._client = client;
+    await backend.initialize({
+      valueAdapter,
+      ...(config.codeSandboxEvaluator
+        ? { codeSandboxEvaluator: config.codeSandboxEvaluator }
+        : {}),
+      ...(config.workflowStore
+        ? { workflowStore: config.workflowStore }
+        : {}),
+      engine: this,
+    });
     await config.onEngineCreated?.(this);
     return { config, client };
   }
@@ -367,6 +362,10 @@ export class GraphExecutionEngine
     opts.auth = auth;
     opts.metadata = { ...(opts.metadata ?? {}), ...auth };
     const runId = opts.runId ?? this.generateRunId();
+    // Propagate the resolved run id onto the options so every backend
+    // (including remote/translated backends that never see the local frame)
+    // receives the authoritative run id.
+    opts.runId = runId;
     const path = opts.path ?? [];
     const eventFactory = new GraphExecutionEventFactory();
     const valueStore = createGraphValueRepository(this.valueAdapter);
@@ -374,39 +373,21 @@ export class GraphExecutionEngine
       this.withWorkflowInputDefaults(document, inputs)
     );
 
-    const emitFn = async (partial: Partial<GraphExecutionEvent>) => {
-      await this.emitEvent(frame, {
-        type: partial.type ?? GraphExecutionEventType.NODE_OUTPUT,
-        runId,
-        parentRunId: opts.parentRunId,
-        workflowId: document.id || document.name,
-        nodeId: partial.nodeId,
-        path: partial.path ?? path,
-        ...partial,
-      });
-    };
-    const emitValidationEvent = async (
-      partial: Partial<GraphExecutionEvent> & {
-        type: GraphExecutionEventType;
-      }
-    ): Promise<void> => {
-      const event = eventFactory.create({
-        id: "",
-        sequence: 0,
-        timestamp: new Date(),
-        runId,
-        parentRunId: opts.parentRunId,
-        workflowId: document.id || document.name,
-        path,
-        ...partial,
-      } as Omit<GraphExecutionEvent, "id" | "sequence" | "timestamp">);
-      await this.emitter.updateObservers(event);
-    };
+    const sink = new GraphEngineEventSink(this.emitter, eventFactory, {
+      runId,
+      parentRunId: opts.parentRunId,
+      workflowId: document.id || document.name,
+      path,
+      engine: this,
+      ...(this.codeSandboxEvaluator
+        ? { codeSandboxEvaluator: this.codeSandboxEvaluator }
+        : {}),
+    });
 
     // ------------------------------------------------------------------
     // Validation + resolution (nine-stage gate, §4.8) — internal.
     // ------------------------------------------------------------------
-    await emitValidationEvent({
+    await sink.emit({
       type: GraphExecutionEventType.VALIDATION_STARTED,
       status: GraphExecutionStatus.PLANNING,
     });
@@ -414,7 +395,7 @@ export class GraphExecutionEngine
     const validation = await this.documentValidator.validate(document, 0, ctx);
 
     if (!validation.valid || !validation.resolved) {
-      await emitValidationEvent({
+      await sink.emit({
         type: GraphExecutionEventType.VALIDATION_FAILED,
         status: GraphExecutionStatus.FAILED,
         payload: { issues: validation.issues },
@@ -425,7 +406,7 @@ export class GraphExecutionEngine
       );
     }
 
-    await emitValidationEvent({
+    await sink.emit({
       type: GraphExecutionEventType.VALIDATION_COMPLETED,
       status: GraphExecutionStatus.PLANNING,
       payload: { issues: validation.issues.length },
@@ -445,14 +426,22 @@ export class GraphExecutionEngine
       }`
     );
 
+    // SAA-193 C1: fail closed before delegating a code-mode workflow to a
+    // non-local backend. A remote/translated backend can only run code-mode
+    // surfaces when it declares `codeMode: "hostSide"` AND the facade has a
+    // configured sandbox evaluator; otherwise the run is rejected here, before
+    // any remote launch.
+    this.assertCodeModeSupported(document);
+
     const frame = new GraphExecutionFrame(
       runId,
       plan,
       valueStore,
       eventFactory
     );
+    sink.bindFrame(frame);
 
-    await this.emitEvent(frame, {
+    await sink.emit({
       type: GraphExecutionEventType.WORKFLOW_STARTED,
       runId,
       parentRunId: opts.parentRunId,
@@ -462,7 +451,7 @@ export class GraphExecutionEngine
       payload: { inputs },
     });
 
-    await this.emitEvent(frame, {
+    await sink.emit({
       type: GraphExecutionEventType.WORKFLOW_PLANNED,
       runId,
       parentRunId: opts.parentRunId,
@@ -472,93 +461,189 @@ export class GraphExecutionEngine
       payload: { layers: plan.layers.length, nodes: plan.nodes.length },
     });
 
-    try {
-      for (const layer of plan.layers) {
-        this.assertNotAborted(opts);
-        await this.executeLayer(frame, plan, layer.nodes, opts, emitFn);
-      }
-      this.assertNotAborted(opts);
+    return await this.client.backend.execute(
+      { document, plan, inputs, options: opts, events: sink },
+      ...args
+    );
+  }
 
-      const firstFailure = [...frame.nodeResults.values()].find(
-        (result) => result.status === GraphExecutionStatus.FAILED
+  /**
+   * The active pluggable execution backend. Exposed so the run lifecycle service
+   * can delegate optional backend extensions (e.g. the SAA-196 resume extension)
+   * without re-resolving the configured backend.
+   */
+  get backend(): GraphExecutionBackend {
+    return this.client.backend;
+  }
+
+  /**
+   * Effective capability metadata of the active backend. Hosts and servers read
+   * this to surface what the current backend supports (code-mode handling and
+   * workflow listing/lookup) without probing it, and an unsupported operation is
+   * reported as `not_supported` rather than a silently empty result.
+   */
+  get backendCapabilities(): GraphBackendCapabilities {
+    return resolveGraphBackendCapabilities(this.client.backend);
+  }
+
+  /**
+   * Lists the workflows the active backend can surface, through the engine-agnostic
+   * seam. Works identically for the default local backend (over its wired
+   * workflow store) and any remote/translated backend that implements the
+   * optional catalogue extension.
+   *
+   * @param args - Optional decaf contextual arguments forwarded to the backend.
+   * @returns Workflow summaries.
+   * @throws {GraphExecutionError} with `GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED`
+   *   when the active backend declares no listing support.
+   */
+  async listWorkflows(
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphBackendWorkflowSummary[]> {
+    const backend = this.client.backend;
+    const capabilities = resolveGraphBackendCapabilities(backend);
+    if (
+      capabilities.workflows.list !== "supported" ||
+      typeof backend.listWorkflows !== "function"
+    ) {
+      throw new GraphExecutionError(
+        `Graph execution backend '${this.backendName}' does not support workflow listing`,
+        "GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED",
+        { backend: this.backendName }
       );
-      if (firstFailure?.error) {
-        throw new GraphExecutionError(
-          firstFailure.error.message,
-          firstFailure.error.code ?? "GRAPH_EXECUTION_ERROR",
-          firstFailure.error.details
-        );
-      }
+    }
+    return await backend.listWorkflows(...args);
+  }
 
-      frame.finish();
-
-      await this.emitEvent(frame, {
-        type: GraphExecutionEventType.WORKFLOW_COMPLETED,
-        runId,
-        parentRunId: opts.parentRunId,
-        workflowId: plan.workflowId,
-        path,
-        status: GraphExecutionStatus.SUCCEEDED,
-        payload: { outputs: valueStore.getWorkflowValues() },
-      });
-
-      return buildGraphExecutionResult(
-        frame,
-        document,
-        inputs,
-        GraphExecutionStatus.SUCCEEDED,
-        opts.metadata
+  /**
+   * Looks up a single canonical workflow document through the active backend's
+   * engine-agnostic catalogue seam. The default local backend reads it from its
+   * wired workflow store; remote backends surface their own catalogue.
+   *
+   * @param workflowId - The canonical workflow id to read.
+   * @param args - Optional decaf contextual arguments forwarded to the backend.
+   * @returns The canonical workflow document.
+   * @throws {GraphExecutionError} with `GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED`
+   *   when the active backend declares no lookup support.
+   */
+  async getWorkflow(
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowDocument> {
+    const backend = this.client.backend;
+    const capabilities = resolveGraphBackendCapabilities(backend);
+    if (
+      capabilities.workflows.get !== "supported" ||
+      typeof backend.getWorkflow !== "function"
+    ) {
+      throw new GraphExecutionError(
+        `Graph execution backend '${this.backendName}' does not support workflow lookup`,
+        "GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED",
+        { backend: this.backendName, workflowId }
       );
-    } catch (error) {
-      // A cooperative `GraphBreakSignal` is loop-control flow, not a workflow
-      // failure: propagate it unchanged so the enclosing loop executor can stop
-      // iterating instead of seeing a failed child run.
-      if (error instanceof GraphBreakSignal) {
-        frame.finish();
-        throw error;
-      }
-      frame.finish();
-      const errorPayload = this.toErrorPayload(error);
+    }
+    return await backend.getWorkflow(workflowId, ...args);
+  }
 
-      if (
-        error instanceof GraphRunCancelledError ||
-        opts.abortSignal?.aborted === true
-      ) {
-        await this.emitEvent(frame, {
-          type: GraphExecutionEventType.WORKFLOW_CANCELLED,
-          runId,
-          parentRunId: opts.parentRunId,
-          workflowId: plan.workflowId,
-          path,
-          status: GraphExecutionStatus.CANCELLED,
-          error: errorPayload,
-        });
+  /**
+   * Lists the workflows a *specific* registered backend can surface, resolved by
+   * flavour. This is the flavour-scoped counterpart of {@link listWorkflows}: the
+   * server exposes the engine catalogue per engine id, and every registered backend
+   * is reached through the same engine-agnostic {@link GraphExecutionBackend}
+   * listing seam with the same fail-closed capability gate and error code.
+   *
+   * @param flavour - The registered backend flavour (allowlisted engine id).
+   * @param args - Optional decaf contextual arguments forwarded to the backend.
+   * @returns Workflow summaries.
+   * @throws {GraphExecutionError} with `GRAPH_EXECUTION_BACKEND_NOT_REGISTERED`
+   *   for an unknown flavour, or `GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED` when the
+   *   backend declares no listing support.
+   */
+  async listEngineWorkflows(
+    flavour: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphBackendWorkflowSummary[]> {
+    const backend =
+      GraphExecutionBackendRegistry.getOrFail<GraphExecutionBackend>(flavour);
+    const capabilities = resolveGraphBackendCapabilities(backend);
+    if (
+      capabilities.workflows.list !== "supported" ||
+      typeof backend.listWorkflows !== "function"
+    ) {
+      throw new GraphExecutionError(
+        `Graph execution backend '${flavour}' does not support workflow listing`,
+        "GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED",
+        { backend: flavour }
+      );
+    }
+    return await backend.listWorkflows(...args);
+  }
 
-        return buildGraphExecutionResult(
-          frame,
-          document,
-          inputs,
-          GraphExecutionStatus.CANCELLED,
-          opts.metadata
-        );
-      }
+  /**
+   * Looks up a single canonical workflow document on a *specific* registered
+   * backend, resolved by flavour. Flavour-scoped counterpart of
+   * {@link getWorkflow} with the same capability gate and error code.
+   *
+   * @param flavour - The registered backend flavour (allowlisted engine id).
+   * @param workflowId - The canonical workflow id to read.
+   * @param args - Optional decaf contextual arguments forwarded to the backend.
+   * @returns The canonical workflow document.
+   * @throws {GraphExecutionError} with `GRAPH_EXECUTION_BACKEND_NOT_REGISTERED`
+   *   for an unknown flavour, or `GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED` when the
+   *   backend declares no lookup support.
+   */
+  async getEngineWorkflow(
+    flavour: string,
+    workflowId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowDocument> {
+    const backend =
+      GraphExecutionBackendRegistry.getOrFail<GraphExecutionBackend>(flavour);
+    const capabilities = resolveGraphBackendCapabilities(backend);
+    if (
+      capabilities.workflows.get !== "supported" ||
+      typeof backend.getWorkflow !== "function"
+    ) {
+      throw new GraphExecutionError(
+        `Graph execution backend '${flavour}' does not support workflow lookup`,
+        "GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED",
+        { backend: flavour, workflowId }
+      );
+    }
+    return await backend.getWorkflow(workflowId, ...args);
+  }
 
-      await this.emitEvent(frame, {
-        type: GraphExecutionEventType.WORKFLOW_FAILED,
-        runId,
-        parentRunId: opts.parentRunId,
-        workflowId: plan.workflowId,
-        path,
-        status: GraphExecutionStatus.FAILED,
-        error: errorPayload,
-      });
+  /** Human-readable name of the active backend, for diagnostics. */
+  private get backendName(): string {
+    return this.client.backend.constructor?.name ?? "GraphExecutionBackend";
+  }
 
-      return buildGraphExecutionResult(
-        frame,
-        document,
-        inputs,
-        GraphExecutionStatus.FAILED,
-        opts.metadata
+  /**
+   * SAA-193 C1 fail-closed gate. A non-local backend must not launch a
+   * workflow carrying any code-mode surface unless it declares
+   * `codeMode: "hostSide"` and the facade has a configured sandbox evaluator.
+   * Local backends are not gated: their code-mode surfaces fail naturally
+   * through the existing per-surface `GRAPH_CODE_SANDBOX_NOT_CONFIGURED` path.
+   */
+  private assertCodeModeSupported(
+    document: GraphWorkflowDocument
+  ): void {
+    const backend = this.client.backend;
+    if (backend.local) return;
+    const surfaces = detectGraphCodeModeSurfaces(document);
+    if (surfaces.length === 0) return;
+    if (backend.codeMode === "unsupported") {
+      throw new GraphExecutionError(
+        `Graph execution backend '${this.backendName}' does not support code-mode workflows`,
+        "GRAPH_CODE_MODE_UNSUPPORTED_BACKEND",
+        { backend: this.backendName, surfaces }
+      );
+    }
+    if (!this.codeSandboxEvaluator) {
+      throw new GraphExecutionError(
+        "Code-mode workflows require a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator",
+        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
+        { backend: this.backendName, surfaces }
       );
     }
   }
@@ -638,862 +723,6 @@ export class GraphExecutionEngine
   }
 
   /**
-   * Executes a layer of nodes with the configured concurrency.
-   */
-  private async executeLayer(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    nodes: GraphExecutionPlanNode[],
-    opts: GraphExecutionOptions,
-    emitFn: (event: Partial<GraphExecutionEvent>) => Promise<void>
-  ): Promise<void> {
-    const concurrency = Math.max(
-      1,
-      opts.concurrency ?? GRAPH_DEFAULT_CONCURRENCY
-    );
-    const queue = [...nodes];
-
-    while (queue.length > 0) {
-      const batch = queue.splice(0, concurrency);
-      await Promise.all(
-        batch.map((node) => this.executeNode(frame, plan, node, opts, emitFn))
-      );
-    }
-  }
-
-  /**
-   * Executes a single node, honouring disabled-node semantics (§4.9).
-   */
-  private async executeNode(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    opts: GraphExecutionOptions,
-    emitFn: (event: Partial<GraphExecutionEvent>) => Promise<void>
-  ): Promise<void> {
-    this.assertNotAborted(opts);
-    if (!this.isNodeActivated(frame, plan, planNode)) {
-      await this.skipInactiveNode(frame, plan, planNode, opts);
-      return;
-    }
-    if (planNode.instance.disabled === true) {
-      await this.executeDisabledNode(frame, plan, planNode, opts);
-      return;
-    }
-
-    const startedAt = new Date();
-    const nodePath = [...(opts.path ?? []), planNode.id];
-
-    await this.emitEvent(frame, {
-      type: GraphExecutionEventType.NODE_STARTED,
-      runId: frame.runId,
-      workflowId: plan.workflowId,
-      nodeId: planNode.id,
-      path: nodePath,
-      status: GraphExecutionStatus.RUNNING,
-    });
-    this.emitNodeStateChanged(
-      frame,
-      plan,
-      planNode,
-      nodePath,
-      GraphVisualState.RUNNING,
-      GraphExecutionStatus.RUNNING
-    );
-
-    const inputs = await this.resolveNodeInputs(frame, plan, planNode, opts);
-
-    // Cache-hit: check for a pinned value before executing the node
-    if (opts.usePinnedValues) {
-      const cached = await this.tryPinnedValue(frame, plan, planNode, inputs);
-      if (cached) {
-        frame.valueStore.setNodeOutputs(planNode.id, cached.outputs);
-        this.routeOutgoingEdges(frame, plan, planNode, cached.outputs);
-
-        const finishedAt = new Date();
-        const result: GraphNodeExecutionResult = {
-          nodeId: planNode.id,
-          status: GraphExecutionStatus.CACHED,
-          inputs,
-          outputs: cached.outputs,
-          startedAt,
-          finishedAt,
-          fromCache: true,
-          pinned: true,
-          events: [],
-        };
-        frame.recordNodeResult(result);
-
-        await this.emitEvent(frame, {
-          type: GraphExecutionEventType.NODE_CACHE_HIT,
-          runId: frame.runId,
-          workflowId: plan.workflowId,
-          nodeId: planNode.id,
-          path: nodePath,
-          status: GraphExecutionStatus.CACHED,
-          payload: { outputs: cached.outputs },
-        });
-
-        await this.emitEvent(frame, {
-          type: GraphExecutionEventType.NODE_COMPLETED,
-          runId: frame.runId,
-          workflowId: plan.workflowId,
-          nodeId: planNode.id,
-          path: nodePath,
-          status: GraphExecutionStatus.SUCCEEDED,
-          payload: { outputs: cached.outputs, fromCache: true },
-        });
-        this.emitNodeStateChanged(
-          frame,
-          plan,
-          planNode,
-          nodePath,
-          GraphVisualState.SUCCEEDED,
-          GraphExecutionStatus.SUCCEEDED
-        );
-        return;
-      }
-    }
-
-    try {
-      const context = new GraphExecutionContext(
-        frame.runId,
-        opts.parentRunId,
-        plan.workflowId,
-        plan.resolved.document,
-        planNode.instance,
-        planNode.manifest,
-        nodePath,
-        emitFn,
-        opts.metadata,
-        this,
-        opts.abortSignal,
-        this.executionLimits(opts)
-      );
-
-      const parameters = await this.resolveNodeParameters(
-        planNode,
-        inputs,
-        opts
-      );
-
-      const request: GraphNodeExecutionRequest = {
-        nodeId: planNode.id,
-        kind: planNode.kind,
-        inputs,
-        parameters,
-        credentials: this.collectCredentials(planNode),
-        metadata: planNode.instance.metadata,
-      };
-
-      const rawOutputs = await this.invokeExecutor(planNode, request, context);
-      const outputs = this.validateNodeOutputs(planNode, rawOutputs ?? {});
-
-      frame.valueStore.setNodeOutputs(planNode.id, outputs);
-      this.routeOutgoingEdges(frame, plan, planNode, outputs);
-
-      const finishedAt = new Date();
-      const result: GraphNodeExecutionResult = {
-        nodeId: planNode.id,
-        status: GraphExecutionStatus.SUCCEEDED,
-        inputs,
-        outputs,
-        startedAt,
-        finishedAt,
-        events: [],
-      };
-      frame.recordNodeResult(result);
-
-      await this.emitEvent(frame, {
-        type: GraphExecutionEventType.NODE_COMPLETED,
-        runId: frame.runId,
-        workflowId: plan.workflowId,
-        nodeId: planNode.id,
-        path: nodePath,
-        status: GraphExecutionStatus.SUCCEEDED,
-        payload: { outputs },
-      });
-      this.emitNodeStateChanged(
-        frame,
-        plan,
-        planNode,
-        nodePath,
-        GraphVisualState.SUCCEEDED,
-        GraphExecutionStatus.SUCCEEDED
-      );
-    } catch (error) {
-      // Loop-control flow is not a node failure: rethrow the break token so
-      // the enclosing loop executor observes it rather than a FAILED node.
-      if (error instanceof GraphBreakSignal) throw error;
-      const finishedAt = new Date();
-      const errorPayload = this.toErrorPayload(error);
-      const result: GraphNodeExecutionResult = {
-        nodeId: planNode.id,
-        status: GraphExecutionStatus.FAILED,
-        inputs,
-        error: errorPayload,
-        startedAt,
-        finishedAt,
-        events: [],
-      };
-      frame.recordNodeResult(result);
-
-      await this.emitEvent(frame, {
-        type: GraphExecutionEventType.NODE_FAILED,
-        runId: frame.runId,
-        workflowId: plan.workflowId,
-        nodeId: planNode.id,
-        path: nodePath,
-        status: GraphExecutionStatus.FAILED,
-        error: errorPayload,
-      });
-      this.emitNodeStateChanged(
-        frame,
-        plan,
-        planNode,
-        nodePath,
-        GraphVisualState.FAILED,
-        GraphExecutionStatus.FAILED
-      );
-
-      if (opts.failFast ?? true) throw error;
-    }
-  }
-
-  /**
-   * Resolves whether a plan node is activated for execution under the
-   * DECAF-50 §4.9 branch semantics. A node with no incoming data edges is
-   * a root/source node and always runs. A node fed by one or more data
-   * edges runs only when at least one of those edges was activated by a
-   * routed upstream output port — a branch the upstream switch (or any
-   * partial-output node) did not select leaves its downstream edges
-   * unactivated, so the branch is never executed. Workflow-boundary edges
-   * are active from the start because workflow inputs are seeded before
-   * execution begins.
-   */
-  private isNodeActivated(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode
-  ): boolean {
-    const incoming = (plan.incomingByNode.get(planNode.id) ?? []).filter(
-      (edge) => edge.type === "data"
-    );
-    if (incoming.length === 0) return true;
-    return incoming.some(
-      (edge) =>
-        edge.sourceNodeId === GRAPH_WORKFLOW_BOUNDARY ||
-        frame.isDataEdgeActive(edge.id)
-    );
-  }
-
-  /**
-   * Skips a node whose incoming data edges were all left unactivated by an
-   * upstream branch selection. The node is not executed and its outputs are
-   * never routed or collected into workflow outputs (DECAF-50 §4.9).
-   */
-  private async skipInactiveNode(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    opts: GraphExecutionOptions
-  ): Promise<void> {
-    const startedAt = new Date();
-    const nodePath = [...(opts.path ?? []), planNode.id];
-
-    await this.emitEvent(frame, {
-      type: GraphExecutionEventType.NODE_SKIPPED,
-      runId: frame.runId,
-      workflowId: plan.workflowId,
-      nodeId: planNode.id,
-      path: nodePath,
-      status: GraphExecutionStatus.SKIPPED,
-      payload: { reason: "branchNotSelected" },
-    });
-
-    const result: GraphNodeExecutionResult = {
-      nodeId: planNode.id,
-      status: GraphExecutionStatus.SKIPPED,
-      inputs: {},
-      startedAt,
-      finishedAt: new Date(),
-      events: [],
-    };
-    frame.recordNodeResult(result);
-    this.emitNodeStateChanged(
-      frame,
-      plan,
-      planNode,
-      nodePath,
-      GraphVisualState.SKIPPED,
-      GraphExecutionStatus.SKIPPED
-    );
-  }
-
-  /**
-   * Applies the explicit disabled-node semantics (§4.9):
-   * `skip`, `passThroughFirstInput`, or `emitDefaults`, resolved from the
-   * instance metadata, document settings, and the default.
-   */
-  private async executeDisabledNode(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    opts: GraphExecutionOptions
-  ): Promise<void> {
-    const startedAt = new Date();
-    const nodePath = [...(opts.path ?? []), planNode.id];
-    const behavior = GraphParameterValidator.disabledBehaviorOf(
-      planNode.instance,
-      plan.resolved.document.settings
-    );
-
-    await this.emitEvent(frame, {
-      type: GraphExecutionEventType.NODE_SKIPPED,
-      runId: frame.runId,
-      workflowId: plan.workflowId,
-      nodeId: planNode.id,
-      path: nodePath,
-      status: GraphExecutionStatus.SKIPPED,
-      payload: { disabled: true, behavior },
-    });
-
-    if (behavior === "skip") {
-      const result: GraphNodeExecutionResult = {
-        nodeId: planNode.id,
-        status: GraphExecutionStatus.SKIPPED,
-        inputs: {},
-        startedAt,
-        finishedAt: new Date(),
-        events: [],
-      };
-      frame.recordNodeResult(result);
-      this.emitNodeStateChanged(
-        frame,
-        plan,
-        planNode,
-        nodePath,
-        GraphVisualState.SKIPPED,
-        GraphExecutionStatus.SKIPPED
-      );
-      return;
-    }
-
-    const inputs = await this.resolveNodeInputs(frame, plan, planNode, opts);
-    let outputs: GraphExecutionValues;
-
-    if (behavior === "passThroughFirstInput") {
-      const firstIncoming = (plan.incomingByNode.get(planNode.id) ?? []).find(
-        (edge) => edge.type === "data"
-      );
-      const firstOutput = planNode.manifest.outputs[0]?.id ?? "value";
-      const value = firstIncoming
-        ? frame.valueStore.getPort(
-            firstIncoming.sourceNodeId,
-            firstIncoming.sourcePort
-          )
-        : Object.values(inputs)[0];
-      outputs = { [firstOutput]: value };
-    } else {
-      // emitDefaults — every declared output port is emitted with its
-      // declared default (absent a declared default, undefined).
-      outputs = {};
-      for (const port of planNode.manifest.outputs) {
-        outputs[port.id] = port.metadata?.["defaultValue"];
-      }
-    }
-
-    frame.valueStore.setNodeOutputs(planNode.id, outputs);
-    this.routeOutgoingEdges(frame, plan, planNode, outputs);
-
-    const result: GraphNodeExecutionResult = {
-      nodeId: planNode.id,
-      status: GraphExecutionStatus.SUCCEEDED,
-      inputs,
-      outputs,
-      startedAt,
-      finishedAt: new Date(),
-      events: [],
-    };
-    frame.recordNodeResult(result);
-    this.emitNodeStateChanged(
-      frame,
-      plan,
-      planNode,
-      nodePath,
-      GraphVisualState.SUCCEEDED,
-      GraphExecutionStatus.SUCCEEDED
-    );
-  }
-
-  /**
-   * Invokes the node's catalogue-resolved executor (§4.9 request contract,
-   * post-cutover: every executor receives the full request with
-   * configuration and input data separated).
-   */
-  private async invokeExecutor(
-    planNode: GraphExecutionPlanNode,
-    request: GraphNodeExecutionRequest,
-    context: GraphExecutionContext
-  ): Promise<GraphExecutionValues> {
-    return await planNode.executor.execute(request, context);
-  }
-
-  /**
-   * Validates executor outputs against the effective output manifest
-   * (§4.9): unknown outputs are rejected by default; missing required
-   * outputs fail the node. Lenient transition manifests (legacy
-   * executor-only registrations) are exempt until cutover.
-   */
-  private validateNodeOutputs(
-    planNode: GraphExecutionPlanNode,
-    outputs: GraphExecutionValues
-  ): GraphExecutionValues {
-    const manifest = planNode.manifest;
-    if (manifest.policies?.allowUnknownOutputs === true) {
-      return outputs;
-    }
-
-    const declaredOutputs = new Set(
-      manifest.outputs.map((port) => port.id)
-    );
-    const unknownOutputs = Object.keys(outputs).filter(
-      (key) => !declaredOutputs.has(key)
-    );
-    if (unknownOutputs.length > 0) {
-      throw new GraphExecutionError(
-        `Node '${planNode.id}' of kind '${planNode.kind}' produced unknown output(s): ${unknownOutputs.join(", ")}`,
-        "GRAPH_OUTPUT_VALIDATION_FAILED",
-        { nodeId: planNode.id, unknownOutputs }
-      );
-    }
-
-    const missingRequired = manifest.outputs
-      .filter((port) => port.required === true && !(port.id in outputs))
-      .map((port) => port.id);
-    if (missingRequired.length > 0) {
-      throw new GraphExecutionError(
-        `Node '${planNode.id}' of kind '${planNode.kind}' did not produce required output(s): ${missingRequired.join(", ")}`,
-        "GRAPH_OUTPUT_VALIDATION_FAILED",
-        { nodeId: planNode.id, missingRequired }
-      );
-    }
-
-    return outputs;
-  }
-
-  /**
-   * Collects the resolved credential references for a node: credential-type
-   * parameter values plus the `credentials` record in instance metadata.
-   * Documents carry references only — secret material never enters requests.
-   */
-  private collectCredentials(planNode: GraphExecutionPlanNode): GraphResolvedCredentials {
-    const credentials: GraphResolvedCredentials = {};
-    for (const parameter of planNode.manifest.parameters) {
-      if (parameter.type !== "credential") continue;
-      const value: unknown = (planNode.instance.parameters ?? {})[parameter.id];
-      if (typeof value === "string" && value.length > 0) {
-        credentials[parameter.id] = {
-          credentialId: value,
-          credentialType: parameter.credentialType ?? "",
-        };
-      } else if (isGraphCredentialReferenceLike(value)) {
-        credentials[parameter.id] = {
-          credentialId: value.credentialId,
-          credentialType: value.credentialType,
-        };
-      }
-    }
-    const extra = (planNode.instance.metadata ?? {})["credentials"];
-    if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-      for (const [key, raw] of Object.entries(
-        extra as Record<string, GraphJsonValue>
-      )) {
-        const value: unknown = raw;
-        if (typeof value === "string" && value.length > 0) {
-          credentials[key] = { credentialId: value, credentialType: "" };
-        } else if (isGraphCredentialReferenceLike(value)) {
-          credentials[key] = {
-            credentialId: value.credentialId,
-            credentialType: value.credentialType,
-          };
-        }
-      }
-    }
-    return credentials;
-  }
-
-  /**
-   * Resolves a node's input values from routed data edges, literal bindings,
-   * allowed expression bindings, and manifest port defaults (§4.9).
-   *
-   * When multiple edges target the same port, their values are spread into the
-   * top-level inputs keyed by each edge's `sourcePort`. This allows multiple
-   * workflow input badges to connect to a single port (e.g. the Code node's
-   * `data` port) and have all values accessible directly as
-   * `$input.{sourcePort}` (e.g. `$input.count`, `$input.text`).
-   */
-  private async resolveNodeInputs(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    opts: GraphExecutionOptions
-  ): Promise<GraphExecutionValues> {
-    const inputs: GraphExecutionValues = {};
-    const incoming = (plan.incomingByNode.get(planNode.id) ?? []).filter(
-      (edge) => edge.type === "data"
-    );
-
-    const edgesByTarget = new Map<string, typeof incoming>();
-    for (const edge of incoming) {
-      const list = edgesByTarget.get(edge.targetPort) ?? [];
-      list.push(edge);
-      edgesByTarget.set(edge.targetPort, list);
-    }
-
-    for (const [targetPort, edges] of edgesByTarget) {
-      if (edges.length === 1) {
-        inputs[targetPort] = frame.valueStore.getPort(
-          edges[0].sourceNodeId,
-          edges[0].sourcePort
-        );
-      } else {
-        let definedValue: unknown;
-        let hasDefined = false;
-        for (const edge of edges) {
-          const value = frame.valueStore.getPort(
-            edge.sourceNodeId,
-            edge.sourcePort
-          );
-          inputs[edge.sourcePort] = value;
-          if (value !== undefined) {
-            definedValue = value;
-            hasDefined = true;
-          }
-        }
-        // Branch merges route several mutually-exclusive outputs onto the same
-        // target port (e.g. an if/switch branch). The port-keyed map above
-        // preserves distinct source ports, but the target port must also receive
-        // the single defined branch value so the node reads its own port.
-        if (hasDefined && inputs[targetPort] === undefined) {
-          inputs[targetPort] = definedValue;
-        }
-      }
-    }
-
-    // Literal bindings, expression bindings, and manifest defaults.
-    const bindings = planNode.instance.inputBindings ?? {};
-    for (const port of planNode.manifest.inputs) {
-      const binding: GraphInputBinding | undefined = bindings[port.id];
-      if (binding?.mode === "literal") {
-        inputs[port.id] = binding.value;
-      } else if (binding?.mode === "expression") {
-        inputs[port.id] = await this.evaluateExpressionBinding(
-          planNode,
-          binding.expression,
-          inputs,
-          opts
-        );
-      } else if (inputs[port.id] === undefined) {
-        const defaultValue = port.metadata?.["defaultValue"];
-        if (defaultValue !== undefined) {
-          inputs[port.id] = defaultValue;
-        }
-      }
-    }
-
-    return inputs;
-  }
-
-  /**
-   * Resolves a node's persisted parameters at execution time, evaluating any
-   * `GraphValueTemplate` user property through the code-evaluator VM and
-   * leaving straight literal values unchanged.
-   */
-  private async resolveNodeParameters(
-    planNode: GraphExecutionPlanNode,
-    inputs: GraphExecutionValues,
-    opts: GraphExecutionOptions
-  ): Promise<Record<string, GraphJsonValue>> {
-    const parameters = planNode.instance.parameters ?? {};
-    const resolved: Record<string, GraphJsonValue> = {};
-    for (const [key, value] of Object.entries(parameters)) {
-      resolved[key] = isGraphValueTemplate(value)
-        ? await this.evaluateValueTemplate(value, planNode, inputs, opts)
-        : value;
-    }
-    return resolved;
-  }
-
-  /**
-   * Evaluates a persisted `GraphValueTemplate` with the pluggable
-   * {@link CodeSandboxEvaluator} (DECAF-32 §22.4) — no new evaluator.
-   * `expression` mode evaluates the body directly; `template` mode compiles its
-   * `{{ ... }}` placeholders into a JavaScript template literal evaluated in
-   * the same sandbox, so both modes share the code-evaluator VM.
-   */
-  private async evaluateValueTemplate(
-    template: GraphValueTemplate,
-    planNode: GraphExecutionPlanNode,
-    inputs: GraphExecutionValues,
-    opts: GraphExecutionOptions
-  ): Promise<GraphJsonValue> {
-    const evaluator = this.codeSandboxEvaluator;
-    if (!evaluator) {
-      throw new GraphExecutionError(
-        `Value template on node '${planNode.id}' requires a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator`,
-        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
-        { nodeId: planNode.id }
-      );
-    }
-    const language =
-      template.language ?? graphValueTemplateDefaultLanguage(template.mode);
-    const code =
-      template.mode === "template"
-        ? graphTemplateToExpression(template.expression)
-        : template.expression;
-    const md = opts.metadata as Record<string, unknown> | undefined;
-    const result = await evaluator.evaluate({
-      code,
-      language: language === "typescript" ? "typescript" : "javascript",
-      input: inputs,
-      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
-      item: md?.item,
-      index: md?.index as number | undefined,
-      abortSignal: opts.abortSignal,
-    });
-    return result as GraphJsonValue;
-  }
-
-  /**
-   * Evaluates an expression binding with the EXISTING allowed-expression
-   * machinery only (the pluggable {@link CodeSandboxEvaluator}, DECAF-32
-   * §22.4) — no new evaluator. The expression sees the already-routed input
-   * values as `$input` and the run metadata as context.
-   */
-  private async evaluateExpressionBinding(
-    planNode: GraphExecutionPlanNode,
-    expression: string,
-    inputs: GraphExecutionValues,
-    opts: GraphExecutionOptions
-  ): Promise<unknown> {
-    const evaluator = this.codeSandboxEvaluator;
-    if (!evaluator) {
-      throw new GraphExecutionError(
-        `Expression binding on node '${planNode.id}' requires a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator`,
-        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
-        { nodeId: planNode.id, expression }
-      );
-    }
-    const md = opts.metadata as Record<string, unknown> | undefined;
-    return await evaluator.evaluate({
-      code: expression,
-      language: "javascript",
-      input: inputs,
-      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
-      item: md?.item,
-      index: md?.index as number | undefined,
-      abortSignal: opts.abortSignal,
-    });
-  }
-
-  /**
-   * Attempts to read a pinned value for the node. Returns the cached outputs
-   * when a valid pinned value exists, or `undefined` to proceed with normal
-   * execution.
-   */
-  private async tryPinnedValue(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    inputs: GraphExecutionValues
-  ): Promise<GraphCachedValue | undefined> {
-    const policy = new GraphPinningPolicy();
-    if (!policy.shouldUsePinnedValue(planNode)) return undefined;
-
-    const service = this.createPinningService();
-    const depFingerprints = this.computeDependencyFingerprints(frame, plan, planNode.id);
-    return service.readPinnedValue(
-      plan.workflowId,
-      planNode,
-      inputs,
-      depFingerprints
-    );
-  }
-
-  /**
-   * Recursively computes fingerprints for all upstream dependencies of a node
-   * using the results already accumulated in the frame.
-   */
-  private computeDependencyFingerprints(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    nodeId: string
-  ): Record<string, string> {
-    const service = this.createPinningService();
-    const depResolver = new GraphPinningDependencyResolver();
-    const deps = depResolver.getDependencies(plan, nodeId);
-    const fingerprints: Record<string, string> = {};
-    for (const dep of deps) {
-      const node = plan.nodes.find((n) => n.id === dep);
-      if (node) {
-        const depResult = frame.nodeResults.get(dep);
-        const inputs = depResult?.inputs ?? {};
-        const nestedDeps = this.computeDependencyFingerprints(frame, plan, dep);
-        fingerprints[dep] = service.computeFingerprint(
-          plan.workflowId,
-          node,
-          inputs,
-          nestedDeps
-        );
-      }
-    }
-    return fingerprints;
-  }
-
-  /**
-   * Routes a node's outputs to downstream inputs and workflow outputs along
-   * data edges (connection edges are structural and never route values).
-   *
-   * An edge is traversed only when the source node actually emitted the
-   * edge's `sourcePort` (DECAF-50 §4.9 branch semantics). A node that
-   * emitted a subset of its declared outputs — e.g. a switch that selected
-   * one case — therefore activates only the downstream branch edges of the
-   * emitted ports; unselected branch edges are left unactivated, so their
-   * downstream nodes are skipped and never contribute to workflow outputs.
-   * Emitting an output port explicitly with `undefined` still counts as
-   * activated (the port was produced by the executor).
-   */
-  private routeOutgoingEdges(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    outputs: GraphExecutionValues
-  ): void {
-    const outgoing = (plan.outgoingByNode.get(planNode.id) ?? []).filter(
-      (edge) => edge.type === "data"
-    );
-    for (const edge of outgoing) {
-      if (!Object.prototype.hasOwnProperty.call(outputs, edge.sourcePort)) {
-        // The source node did not emit this output port: the edge's branch
-        // was not selected, so no value is routed.
-        continue;
-      }
-      const value = outputs[edge.sourcePort];
-      frame.activateDataEdge(edge.id);
-      if (edge.targetNodeId === GRAPH_WORKFLOW_BOUNDARY) {
-        frame.valueStore.setWorkflowOutput(edge.targetPort, value);
-      }
-      this.emitEdgeStateChanged(
-        frame,
-        plan,
-        planNode,
-        edge,
-        GraphVisualState.SUCCEEDED,
-        GraphExecutionStatus.SUCCEEDED
-      );
-      this.emitEvent(frame, {
-        type: GraphExecutionEventType.EDGE_VALUE_ROUTED,
-        runId: frame.runId,
-        workflowId: plan.workflowId,
-        edgeId: edge.id,
-        nodeId: planNode.id,
-        path: [],
-        payload: { edge, value },
-      }).catch(() => {
-        // observer failures must not crash
-      });
-    }
-  }
-
-  /**
-   * Emits an event, records it in the frame, and dispatches to observers.
-   */
-  private async emitEvent(
-    frame: GraphExecutionFrame,
-    partial: Partial<GraphExecutionEvent> & {
-      type: GraphExecutionEventType;
-      runId: GraphRunId;
-      workflowId: string;
-      path: string[];
-    }
-  ): Promise<void> {
-    const event = frame.eventFactory.create({
-      id: "",
-      sequence: 0,
-      timestamp: new Date(),
-      ...partial,
-    } as Omit<GraphExecutionEvent, "id" | "sequence" | "timestamp">);
-    frame.appendEvent(event);
-    await this.emitter.updateObservers(event);
-  }
-
-  /**
-   * Emits a `NODE_STATE_CHANGED` event (DECAF-48 §4.4) carrying the given
-   * visual state for the node. Rides the existing Observable pipeline; no
-   * second out-of-band channel.
-   */
-  private emitNodeStateChanged(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    nodePath: string[],
-    state: GraphVisualState,
-    status?: GraphExecutionStatus
-  ): void {
-    this.emitEvent(frame, {
-      type: GraphExecutionEventType.NODE_STATE_CHANGED,
-      runId: frame.runId,
-      workflowId: plan.workflowId,
-      nodeId: planNode.id,
-      path: nodePath,
-      status,
-      payload: {
-        nodeId: planNode.id,
-        state,
-        runId: frame.runId,
-        workflowId: plan.workflowId,
-        status,
-      },
-    }).catch(() => {
-      // observer failures must not crash execution
-    });
-  }
-
-  /**
-   * Emits an `EDGE_STATE_CHANGED` event (DECAF-48 §4.4) carrying the given
-   * visual state for a routed edge.
-   */
-  private emitEdgeStateChanged(
-    frame: GraphExecutionFrame,
-    plan: GraphExecutionPlan,
-    planNode: GraphExecutionPlanNode,
-    edge: GraphExecutionPlanEdge,
-    state: GraphVisualState,
-    status?: GraphExecutionStatus
-  ): void {
-    this.emitEvent(frame, {
-      type: GraphExecutionEventType.EDGE_STATE_CHANGED,
-      runId: frame.runId,
-      workflowId: plan.workflowId,
-      edgeId: edge.id,
-      nodeId: planNode.id,
-      path: [],
-      status,
-      payload: {
-        edgeId: edge.id,
-        state,
-        runId: frame.runId,
-        workflowId: plan.workflowId,
-        nodeId: planNode.id,
-        status,
-      },
-    }).catch(() => {
-      // observer failures must not crash execution
-    });
-  }
-
-  /**
    * Merges default options with the given options.
    */
   private mergeOptions(
@@ -1512,19 +741,6 @@ export class GraphExecutionEngine
       metadata: {},
       ...this.defaultOptions,
       ...options,
-    };
-  }
-
-  /**
-   * Resolves the effective loop-iteration ceilings for a run. A node-level
-   * `maxIterations` can never exceed these; loop executors read them from the
-   * node context.
-   */
-  private executionLimits(opts: GraphExecutionOptions): GraphExecutionLimits {
-    return {
-      maxLoopIterations: opts.maxLoopIterations ?? GRAPH_MAX_LOOP_ITERATIONS,
-      maxForeachIterations:
-        opts.maxForeachIterations ?? GRAPH_MAX_FOREACH_ITERATIONS,
     };
   }
 
@@ -1552,24 +768,5 @@ export class GraphExecutionEngine
       );
     }
     return cryptoApi.randomUUID();
-  }
-
-  /**
-   * Converts an error into a serialized payload.
-   */
-  private toErrorPayload(error: unknown): GraphExecutionErrorPayload {
-    if (error instanceof Error) {
-      return {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-        code:
-          (error as any).graphCode ??
-          (typeof (error as any).code === "number"
-            ? String((error as any).code)
-            : (error as any).code),
-      };
-    }
-    return { name: "UnknownError", message: String(error) };
   }
 }

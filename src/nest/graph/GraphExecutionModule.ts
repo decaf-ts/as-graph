@@ -53,6 +53,15 @@ import {
   GRAPH_WORKFLOW_OPTIONS,
   type GraphWorkflowControllerOptions,
 } from "./GraphWorkflowController";
+import {
+  GraphEngineController,
+} from "./GraphEngineController";
+import {
+  DEFAULT_GRAPH_ENGINE_RATE_LIMIT,
+  GRAPH_ENGINE_CAPABILITY_OPTIONS,
+  GraphEngineCapabilityService,
+  type GraphEngineCapabilityOptions,
+} from "./GraphEngineCapabilityService";
 
 /**
  * Generous app-wide default request-rate limit (SAA-1950 F7). The expensive
@@ -136,6 +145,13 @@ export interface GraphExecutionModuleOptions {
    * (SAA-93 F3).
    */
   runs?: GraphRunControllerOptions & GraphRunServiceOptions;
+  /**
+   * Options for the engine capability HTTP API (SAA-197, SAA-193 C20/C21):
+   * authentication mode, the advertised default engine id, and the engine-route
+   * rate limit. The capability manifest is derived statically at boot from the
+   * registered backends and never read from the environment or a remote engine.
+   */
+  engines?: GraphEngineCapabilityOptions;
   /**
    * Production hosts MUST wire a {@link GraphCredentialAuthorizer} backed by
    * their credential store (DECAF-50 §4.8 stage 8). Without it, stage-8
@@ -229,6 +245,11 @@ export class GraphExecutionModule {
       ...DEFAULT_GRAPH_CATALOGUE_RATE_LIMIT,
       ...(catalogueOptions.methodsRateLimit ?? {}),
     };
+    const engineOptions = options.engines ?? {};
+    const engineRateLimit = {
+      ...DEFAULT_GRAPH_ENGINE_RATE_LIMIT,
+      ...(engineOptions.rateLimit ?? {}),
+    };
 
     // Backend services consume their options from the accumulated graph
     // environment (`@decaf-ts/logging`), never from injectable config objects.
@@ -307,11 +328,12 @@ export class GraphExecutionModule {
     const providers: Provider[] = [
       {
         provide: GraphExecutionEngine,
-        useFactory: async () => {
+        useFactory: async (workflowService: GraphWorkflowService) => {
           const config = await sharedConfig();
           const engine = new GraphExecutionEngine();
           await engine.boot({
             ...config,
+            workflowStore: workflowService,
             authEnabled: resolveGraphAuthEnabled(options),
             ...(options.authMatch ? { authMatch: options.authMatch } : {}),
             ...(options.credentialAuthorizer
@@ -320,6 +342,7 @@ export class GraphExecutionModule {
           });
           return engine;
         },
+        inject: [GraphWorkflowService],
       },
       {
         provide: GraphNodeCatalogue,
@@ -336,6 +359,16 @@ export class GraphExecutionModule {
       {
         provide: GRAPH_RUN_OPTIONS,
         useValue: (options.runs ?? {}) as GraphRunControllerOptions,
+      },
+      {
+        provide: GRAPH_ENGINE_CAPABILITY_OPTIONS,
+        useValue: engineOptions,
+      },
+      {
+        provide: GraphEngineCapabilityService,
+        useFactory: (engine: GraphExecutionEngine) =>
+          new GraphEngineCapabilityService(engineOptions, engine),
+        inject: [GraphExecutionEngine],
       },
       {
         provide: RamGraphRunStore,
@@ -395,6 +428,11 @@ export class GraphExecutionModule {
           ttl: methodsRateLimit.windowMs,
           limit: methodsRateLimit.maxRequests,
         },
+        {
+          name: "engines",
+          ttl: engineRateLimit.windowMs,
+          limit: engineRateLimit.maxRequests,
+        },
       ]),
     ];
 
@@ -419,6 +457,7 @@ export class GraphExecutionModule {
         GraphNodeCatalogueController,
         GraphWorkflowController,
         GraphRunController,
+        GraphEngineController,
       ],
       providers: [
         ...providers,
@@ -431,6 +470,7 @@ export class GraphExecutionModule {
         RamGraphRunEventStore,
         GraphRunService,
         GraphWorkflowService,
+        GraphEngineCapabilityService,
       ],
     };
   }

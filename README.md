@@ -148,6 +148,8 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/shared` | UI-known contracts: `@node`/`@graph`/`@port` decorators, the canonical `GraphWorkflowDocument` and its builder/reader/serializer, manifest catalogue types, constants, and frontend-safe execution-state projections |
 | `@decaf-ts/as-graph/nest` | NestJS HTTP/SSE wiring: catalogue, workflow persistence and run-lifecycle controllers |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
+| `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table. Runs canonical documents on a host-injected `@mastra/core` runtime (pinned `1.74.0`) |
+| `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
 The `exports` map in `package.json` is:
 
@@ -173,6 +175,16 @@ The `exports` map in `package.json` is:
       "import": { "types": "./lib/types/ram/index.d.mts", "default": "./lib/esm/ram/index.js" },
       "require": { "types": "./lib/types/ram/index.d.cts", "default": "./lib/cjs/ram/index.cjs" },
       "default": "./lib/esm/ram/index.js"
+    },
+    "./mastra": {
+      "import": { "types": "./lib/types/mastra/index.d.mts", "default": "./lib/esm/mastra/index.js" },
+      "require": { "types": "./lib/types/mastra/index.d.cts", "default": "./lib/cjs/mastra/index.cjs" },
+      "default": "./lib/esm/mastra/index.js"
+    },
+    "./dagster": {
+      "import": { "types": "./lib/types/dagster/index.d.mts", "default": "./lib/esm/dagster/index.js" },
+      "require": { "types": "./lib/types/dagster/index.d.cts", "default": "./lib/cjs/dagster/index.cjs" },
+      "default": "./lib/esm/dagster/index.js"
     }
   }
 }
@@ -363,6 +375,113 @@ The engine emits structured events (workflow/node/edge lifecycle, visual state c
 channel) through Decaf's Observable pipeline. Register an observer with `engine.observe({ refresh })`.
 Pinnable nodes are cached and replayed with `engine.pinNode(...)` / `engine.unpinNode(...)`.
 
+#### Execution backends
+
+`GraphExecutionEngine` delegates actual execution to a pluggable
+`GraphExecutionBackend` — the engine's analogue of Decaf's persistence `Adapter`
+seam. The facade always owns validation, catalogue resolution, authorization,
+planning, event sequencing, and observer dispatch; a backend only runs the
+resolved plan and/or canonical document and reports every transition through the
+facade-owned event sink. It can never bypass the pre-execution gate.
+
+The default backend is a fresh `LocalGraphExecutionBackend` (flavour `local`, the
+built-in reference interpreter) per engine: it executes in-process, runs code-mode
+surfaces host-side through the configured `codeSandboxEvaluator`, and backs the
+engine-agnostic workflow listing/lookup with the `workflowStore` port from the
+engine config. Remote/translated backends are supplied through
+`GraphExecutionEngineConfig.backend` (initialize the backend with its own host
+config first — see below).
+
+Registration and lookup mirror Decaf's persistence-adapter registry through the
+static `GraphExecutionBackendRegistry`: `register(flavour, backend)` (the built-in
+backends self-register under their flavour on construction), `get(flavour?)`,
+`getOrFail(flavour)`, `setCurrent(flavour)` / `current` / `currentFlavour`,
+`list()`, and `clear()` (test isolation). The current flavour is never changed
+implicitly — hosts opt into a non-default backend explicitly, so concurrently
+booted engines never share per-run state.
+
+A backend declares its contract to the facade:
+
+| Declaration | Meaning |
+| --- | --- |
+| `local` | Whether the backend executes in-process. |
+| `codeMode` | `"hostSide"` (code-mode surfaces run through the facade-owned sandbox evaluator) or `"unsupported"`. The facade fails closed with `GRAPH_CODE_MODE_UNSUPPORTED_BACKEND` before delegating a code-mode workflow to any backend that is not local and not `"hostSide"`. |
+| `capabilities` | Optional `GraphBackendCapabilities` (`codeMode` plus `workflows: { list, get }`). When omitted, the facade derives them from the declared `codeMode` and the presence of the optional `listWorkflows`/`getWorkflow` methods (`resolveGraphBackendCapabilities`), so an unsupported operation is reported as `not_supported` instead of silently returning an empty result. |
+| optional methods | `listWorkflows` / `getWorkflow` (workflow catalogue seam), `cancel`, `resume`, `release`, `dispose`. |
+
+Engine-level reads of the active backend: `engine.backend`,
+`engine.backendCapabilities`, `engine.listWorkflows()` (active backend),
+and the flavour-scoped `engine.listEngineWorkflows(flavour)` /
+`engine.getEngineWorkflow(flavour, workflowId)` counterparts, which fail closed
+with `GRAPH_EXECUTION_BACKEND_NOT_REGISTERED` (unknown flavour) or
+`GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED` (no listing/lookup support).
+
+##### Mastra backend (`@decaf-ts/as-graph/mastra`)
+
+`MastraGraphExecutionBackend` translates the canonical document into a Mastra
+workflow, runs it on the injected `@mastra/core` runtime (pinned `1.74.0`),
+bridges Mastra's `fullStream` onto the facade event sink, and enforces the
+schema-safe resume guard on every resume payload. It reports `codeMode:
+"unsupported"` (code-mode surfaces currently fail closed) and surfaces
+`workflowList`/`workflowLookup` over its compiled-workflow cache. Its full
+per-feature capability table (`MASTRA_FEATURE_CAPABILITIES`) declares, per
+feature, `SUPPORTED` / `NOT_SUPPORTED` / `EXTENSION_POINT` / `PARTIAL` — e.g.
+`whileUntil`, `foreach`, `humanApproval`, and `durableExecution` are supported;
+`parallel` and `dynamicTopology` are not translated; `suspendResume` is an
+extension point through the optional backend `resume?()`.
+
+```typescript
+import { MastraGraphExecutionBackend } from "@decaf-ts/as-graph/mastra";
+
+const backend = new MastraGraphExecutionBackend(); // self-registers under the "mastra" flavour
+await backend.initialize({
+  mastra,              // the host's @mastra/core runtime instance
+  agents,              // optional agent map for agent/LLM nodes
+  stepHandlers,        // optional MastraNodeStepHandler[] for custom node kinds
+  suspendStateReader,  // optional, for suspend/resume runs
+  maxResumeBytes,      // optional resume payload byte cap
+});
+// pass `backend` via GraphExecutionEngineConfig.backend
+```
+
+The flavour constant is `MASTRA_BACKEND_FLAVOUR` (`"mastra"`); unsupported node
+kinds and unsafe/invalid resume payloads fail loudly with
+`GRAPH_MASTRA_UNSUPPORTED_KIND` / `GRAPH_MASTRA_RESUME_*` errors.
+
+##### Dagster backend (`@decaf-ts/as-graph/dagster`)
+
+`DagsterGraphExecutionBackend` translates the canonical document into Dagster
+job/schedule/sensor artifacts and dispatches execution through a host-injected
+`DagsterClient` port — Dagster is a Python orchestration engine with no official
+JavaScript runtime, so the client (and any op body for custom node kinds) is
+always host-supplied. The pin recorded in the package is `1.13.25`
+(`DAGSTER_PINNED_VERSION`, sourced from PyPI), which the generated artifacts
+target. The backend reports `codeMode: "unsupported"` (code-mode workflows are
+rejected before translation with `GRAPH_DAGSTER_CODE_MODE_UNSUPPORTED`), and
+workflow listing/lookup is supported exactly when the wired client port exposes
+`listJobs`/`getJob` (`dagsterBackendCapabilities(client)`).
+
+The exported `DAGSTER_CAPABILITY_TABLE` declares, per feature, whether Dagster
+supports it natively, not at all, or only through an extension point: sequential
+nodes, `if`/`switch` routing, `foreach` (DynamicOut fan-out), schedule triggers,
+and webhook/event/form/chat triggers (sensors) are supported; `while`/`until`
+loops, suspend/resume, human approval, and code-mode surfaces are declared
+`not_supported` so translation fails loudly rather than silently dropping them;
+manual triggers and agent/custom node kinds are extension points
+(`DagsterOpResolver` supplies the fixed op body; unmapped kinds fail loudly).
+
+```typescript
+import { DagsterGraphExecutionBackend } from "@decaf-ts/as-graph/dagster";
+
+const backend = new DagsterGraphExecutionBackend(); // self-registers under the "dagster" flavour
+await backend.initialize({
+  client,      // host-injected DagsterClient port (required)
+  opResolver,  // optional DagsterOpResolver for non-built-in kinds
+  tags,        // optional default run tags
+});
+// pass `backend` via GraphExecutionEngineConfig.backend
+```
+
 #### Persistence (`@decaf-ts/as-graph/ram`)
 
 Run lifecycle and cached/pinned-value persistence always flows through Decaf repositories over a
@@ -422,11 +541,47 @@ manifests, documents and engine run results into DOM-free render inputs.
 `GraphExecutionModule.forRoot(options)` wires the engine into a NestJS app: the node catalogue API
 (`GET /graph/node-types`, `GET /graph/node-types/:kind`, `POST /graph/node-types/:kind/resolve`), canonical
 workflow persistence (`PUT|GET /graph/workflows/:workflowId`, `GET /graph/workflows` ownership-filtered
-summaries, `POST /graph/workflows/validate`) and the asynchronous run lifecycle (`POST /graph/runs` → `202`,
+summaries, `POST /graph/workflows/validate`), the asynchronous run lifecycle (`POST /graph/runs` → `202`,
 `GET /graph/workflows/:workflowId/runs` per-workflow run listing, `GET /graph/runs/:runId/events` SSE,
-`DELETE /graph/runs/:runId`).
+`DELETE /graph/runs/:runId`), and the read-only engine capability API (`GET /graph/engines`,
+`GET /graph/engines/:engineId`, `GET /graph/engines/:engineId/workflows`,
+`GET /graph/engines/:engineId/workflows/:workflowId`).
 The engine provider is a Decaf `ClientBasedService`: the module constructs `new GraphExecutionEngine()`
 and initializes it with `await engine.boot(config)`.
+
+The engine capability API serves a statically-derived, boot-time capability manifest
+(`GraphEngineCapabilityService`): it is built once from the backends registered in the
+`GraphExecutionBackendRegistry`, only allowlisted flavours (`local`, `mastra`, `dagster`) are advertised,
+and no remote engine is ever probed. Every `detail` is a static, reviewed literal — no secrets and no
+dynamic engine output. The manifest shape:
+
+```typescript
+{
+  engines: [
+    {
+      engineId: "local",          // backend flavour (allowlisted id)
+      displayName: "Local (built-in)",
+      local: true,
+      pinnedEngineVersion: "built-in", // "1.13.25" for dagster, "1.74.0" for mastra
+      capabilities: [
+        { feature: "codeMode", verdict: "SUPPORTED", detail?: "…" },
+        { feature: "workflowList", verdict: "NOT_SUPPORTED" },
+        // …
+      ],
+    },
+    // …
+  ],
+  defaultEngineId: "local",
+}
+```
+
+The three-value verdict vocabulary (`SUPPORTED` / `NOT_SUPPORTED` / `EXTENSION_POINT`) is normalized
+from the wrapper capability tables, so a partially-supported feature is never advertised as a usable
+toggle. The workflow listing/lookup routes resolve through the engine-agnostic facade
+(`listEngineWorkflows` / `getEngineWorkflow`) and answer `404` for an unknown engine id and `501` when
+the selected engine declares no listing/lookup support. Engines are selected by allowlisted id only and
+routes never reflect arbitrary query input; authentication defaults to `"required"` (a request without
+an authenticated owner user is rejected with `401`) and can be relaxed to `"optional"` per host.
 
 `GraphExecutionModuleOptions`:
 
@@ -440,6 +595,7 @@ and initializes it with `await engine.boot(config)`.
 | `authGlobal` | When `true` (default when `authHandler` is set), the auth interceptor is registered globally; `false` installs the handler without a global interceptor (routes opt in with `@Auth()`) |
 | `authLogAccess` | When `true` (and `authHandler` is set), the handler emits OCSF-style access logs |
 | `catalogue` / `workflows` / `runs` | Per-API authentication enforcement plus backend-enforced rate limits (`resolve`/`methods`) and document/run resource limits |
+| `engines` | Options for the engine capability HTTP API: `auth` (`"required"` default / `"optional"`), `defaultEngineId` (the advertised default; ignored when it is not a registered, allowlisted engine id — the current backend flavour is used instead), and `rateLimit` (`windowMs`/`maxRequests`, default 120 requests per 60-second window on the `engines` throttler bucket) |
 
 Without an `authHandler`, no auth middleware or interceptor is installed and graph auth requirements
 fail closed. The engine's `GraphAuthValidator` runs before any node executes: it validates the

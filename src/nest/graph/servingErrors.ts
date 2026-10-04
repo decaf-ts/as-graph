@@ -20,7 +20,8 @@ export const GRAPH_SERVING_INTERNAL_ERROR_MESSAGE = "Internal server error";
 /** Logger context for the run lifecycle controller's server-side error log. */
 export type GraphServingErrorLoggerContext =
   | "GraphRunController"
-  | "GraphWorkflowController";
+  | "GraphWorkflowController"
+  | "GraphEngineController";
 
 /**
  * Request/run correlation fields attached to a server-side graph serving error
@@ -32,6 +33,8 @@ export interface GraphServingErrorCorrelation {
   runId?: string;
   /** Workflow id, when the failing operation was scoped to a workflow. */
   workflowId?: string;
+  /** Engine id, when the failing operation was scoped to an engine. */
+  engineId?: string;
 }
 
 /**
@@ -68,6 +71,9 @@ export function logUnmappedGraphServingError(
     if (correlation.runId !== undefined) meta.runId = correlation.runId;
     if (correlation.workflowId !== undefined) {
       meta.workflowId = correlation.workflowId;
+    }
+    if (correlation.engineId !== undefined) {
+      meta.engineId = correlation.engineId;
     }
     const message = Object.keys(meta).length
       ? `Graph request failed with an unmapped error ${JSON.stringify(meta)}`

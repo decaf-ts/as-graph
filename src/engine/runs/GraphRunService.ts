@@ -12,11 +12,19 @@
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import {
+  GraphExecutionEventType,
   isGraphJsonSafeValue,
   isGraphWorkflowDocumentShape,
+  type GraphJsonValue,
   type GraphWorkflowDocument,
 } from "../../shared/graph";
 import { GraphExecutionEngine } from "../execution/GraphExecutionEngine";
+import type {
+  GraphExecutionBackend,
+  GraphResumeAudit,
+  GraphResumeRequest,
+} from "../execution/GraphExecutionBackend";
+import { GraphExecutionError } from "../errors/GraphExecutionError";
 import { GraphStoreError } from "../errors/GraphStoreError";
 import { graphRunDocumentFingerprint } from "./GraphRunFingerprint";
 import {
@@ -276,6 +284,68 @@ export class GraphRunService {
     return run;
   }
 
+  /**
+   * Resumes a suspended run: resolves the run, asserts strict owner equality on
+   * the write path ({@link assertGraphResourceWriteOwnership}, SAA-105 R3), then
+   * delegates to the active backend's optional SAA-196 `resume?()` extension and
+   * audits the accepted resume through the event publisher (C18). A backend without
+   * the extension fails closed rather than silently no-op.
+   *
+   * C14: resume is exposed only through this service, behind the owner-equality
+   * write gate — never from an HTTP route. The standing SAA-200 hardening rule
+   * holds here too: a {@link GraphExecutionError} thrown by the backend is
+   * re-thrown without its `details` so no server-side state leaks to clients.
+   *
+   * @throws NotFoundError when no run exists for `runId`.
+   * @throws ForbiddenError when the caller is not the run's recorded owner.
+   * @throws GraphExecutionError when the active backend does not support resume
+   *   or the backend rejects the resume.
+   */
+  async resumeRun(
+    runId: string,
+    request: GraphResumeRequest,
+    ownerUser: string | null,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphResumeAudit> {
+    const run = await this.runStore.readRun(runId, ...args);
+    if (!run) {
+      throw new NotFoundError(`No graph run found for runId '${runId}'`);
+    }
+    this.assertWriteOwnership(run, ownerUser);
+
+    const backend: GraphExecutionBackend = this.engine.backend;
+    const resume = backend.resume;
+    if (typeof resume !== "function") {
+      throw new GraphExecutionError(
+        `Graph execution backend '${
+          backend.constructor?.name ?? "GraphExecutionBackend"
+        }' does not support resume`,
+        "GRAPH_RESUME_UNSUPPORTED_BACKEND",
+        { runId }
+      );
+    }
+
+    let audit: GraphResumeAudit;
+    try {
+      audit = await resume.call(backend, runId, request, ...args);
+    } catch (e: unknown) {
+      throw sanitizeResumeError(e);
+    }
+
+    const record: GraphResumeAudit = {
+      ...audit,
+      runId,
+      caller: ownerUser,
+    };
+    await this.publisher.publish({
+      runId,
+      workflowId: run.workflowId,
+      type: GraphExecutionEventType.WORKFLOW_RESUMED,
+      payload: record as unknown as GraphJsonValue,
+    });
+    return record;
+  }
+
   /** Lists a run's event envelopes after the given sequence (ownership-checked). */
   async listEvents(
     runId: string,
@@ -492,4 +562,17 @@ function safeJsonLength(value: unknown): number {
   } catch {
     return Number.MAX_SAFE_INTEGER;
   }
+}
+
+/**
+ * Strips server-side `details` from a resume failure (SAA-200 standing hardening
+ * rule): a {@link GraphExecutionError} is re-created from its message and graph
+ * code only, so no internal state leaks to clients. Any other error passes through
+ * unchanged.
+ */
+function sanitizeResumeError(error: unknown): unknown {
+  if (error instanceof GraphExecutionError) {
+    return new GraphExecutionError(error.message, error.graphCode);
+  }
+  return error;
 }

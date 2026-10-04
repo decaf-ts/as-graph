@@ -150,9 +150,10 @@ export interface GraphExecutionErrorPayload {
  * A single event emitted during graph execution.
  *
  * Frontend-safe: the frontend consumes these events over the SSE endpoint
- * (`GET /graph/events`) and maps them to UI state updates via
- * `GraphExecutionStateMapper`. The `timestamp` is serialised as an ISO string
- * over the wire; the frontend deserialises it back to a `Date` when mapping.
+ * (`GET /graph/events`) and maps them to UI state updates via the canonical
+ * `@decaf-ts/ui-decorators/graph` state mapper. The `timestamp` is serialised
+ * as an ISO string over the wire; the frontend deserialises it back to a `Date`
+ * when mapping.
  */
 export interface GraphExecutionEvent {
   id: string;
