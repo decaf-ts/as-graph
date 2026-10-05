@@ -13,6 +13,7 @@ export * from "./snapshot";
 export * from "./reader";
 export * from "./document";
 export * from "./catalog";
+export * from "./layout";
 export * from "./types";
 export * from "./GraphRunModel";
 export * from "./GraphWorkflowModel";
