@@ -47,6 +47,24 @@ const DAGSTER_TERMINAL_EVENTS = new Set<string>([
   "RUN_CANCELED",
 ]);
 
+/**
+ * Default hard cap on the number of events the bridge processes before failing
+ * the observation closed. Bounds a gateway that never emits a terminal event.
+ */
+const DEFAULT_MAX_EVENTS = 10000;
+
+/**
+ * Default hard cap on the transport pagination depth. Bounds a gateway whose
+ * `eventConnection` never reports `hasMore: false`.
+ */
+const DEFAULT_MAX_PAGES = 100;
+
+/**
+ * Default maximum time (ms) to await the terminal record before failing the
+ * observation closed. Callers observing a genuinely long-lived run raise this.
+ */
+const DEFAULT_TERMINAL_TIMEOUT_MS = 5 * 60 * 1000;
+
 /** Options for constructing a {@link DagsterGraphEventBridge}. */
 export interface DagsterGraphEventBridgeOptions {
   /** The Dagster run id to subscribe to. */
@@ -65,6 +83,17 @@ export interface DagsterGraphEventBridgeOptions {
   sink: GraphExecutionEventSink;
   /** The host-injected client port. */
   client: DagsterClient;
+  /** Cancels the observation and any in-flight transport work. */
+  signal?: AbortSignal;
+  /** Hard cap on processed events; defaults to {@link DEFAULT_MAX_EVENTS}. */
+  maxEvents?: number;
+  /** Hard cap on transport pagination pages; defaults to {@link DEFAULT_MAX_PAGES}. */
+  maxPages?: number;
+  /**
+   * Maximum time to await the terminal record; defaults to
+   * {@link DEFAULT_TERMINAL_TIMEOUT_MS}.
+   */
+  terminalTimeoutMs?: number;
 }
 
 /**
@@ -75,27 +104,42 @@ export class DagsterGraphEventBridge {
   private readonly workflowOutputs: Record<string, unknown> = {};
   private subscription?: DagsterRunSubscription;
   private terminal?: DagsterRunRecord;
+  private failure?: GraphExecutionError;
+  private eventCount = 0;
   private resolveTerminal?: (record: DagsterRunRecord) => void;
   private rejectTerminal?: (error: unknown) => void;
   private readonly processing: Promise<void>[] = [];
   private readonly terminalPromise: Promise<DagsterRunRecord>;
 
   /**
-   * @param options - The run identity, op-name map, sink, and client port.
+   * @param options - The run identity, op-name map, sink, client port, and bounds.
    */
   constructor(private readonly options: DagsterGraphEventBridgeOptions) {
     this.terminalPromise = new Promise<DagsterRunRecord>((resolve, reject) => {
       this.resolveTerminal = resolve;
       this.rejectTerminal = reject;
     });
+    // A scripted client can overflow the event cap during the synchronous replay
+    // inside `subscribeRun`, before `waitForTerminal` attaches its handler. Keep a
+    // no-op rejection handler so that early failure is never "unhandled".
+    this.terminalPromise.catch(() => {});
   }
 
   /** Subscribes to the run's event stream. */
   async start(): Promise<void> {
+    if (this.failure) throw this.failure;
+    if (this.options.signal?.aborted) {
+      throw this.failClosed(this.abortError());
+    }
     this.subscription = await this.options.client.subscribeRun(
       this.options.dagsterRunId,
       (event) => {
         this.processing.push(this.handleEvent(event));
+      },
+      {
+        ...(this.options.signal ? { signal: this.options.signal } : {}),
+        maxEvents: this.options.maxEvents ?? DEFAULT_MAX_EVENTS,
+        maxPages: this.options.maxPages ?? DEFAULT_MAX_PAGES,
       }
     );
   }
@@ -104,16 +148,54 @@ export class DagsterGraphEventBridge {
   async stop(): Promise<void> {
     await this.subscription?.unsubscribe();
     await Promise.all(this.processing);
+    if (this.failure) throw this.failure;
   }
 
   /**
-   * Waits for the run's terminal record.
+   * Waits for the run's terminal record, bounded by the observation's
+   * `terminalTimeoutMs` and `signal`. Exceeding the timeout, or an abort, fails
+   * the wait closed instead of hanging on a stalled or hostile gateway.
    *
    * @returns The terminal Dagster run record.
+   * @throws {GraphExecutionError} `GRAPH_DAGSTER_OBSERVE_TIMEOUT` when the run
+   *   does not terminate in time, or `GRAPH_DAGSTER_OBSERVE_ABORTED` on abort.
    */
   async waitForTerminal(): Promise<DagsterRunRecord> {
     if (this.terminal) return this.terminal;
-    return await this.terminalPromise;
+    if (this.failure) throw this.failure;
+    const signal = this.options.signal;
+    if (signal?.aborted) {
+      throw this.failClosed(this.abortError());
+    }
+    const timeoutMs =
+      this.options.terminalTimeoutMs ?? DEFAULT_TERMINAL_TIMEOUT_MS;
+    return await new Promise<DagsterRunRecord>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const onAbort = (): void => {
+        cleanup();
+        this.failClosed(this.abortError());
+      };
+      const cleanup = (): void => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          this.failClosed(this.timeoutError(timeoutMs));
+        }, timeoutMs);
+      }
+      this.terminalPromise.then(
+        (record) => {
+          cleanup();
+          resolve(record);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        }
+      );
+    });
   }
 
   /** The node results collected from step events. */
@@ -147,6 +229,13 @@ export class DagsterGraphEventBridge {
    * @param event - The raw event.
    */
   private async handleEvent(event: DagsterEventRecord): Promise<void> {
+    if (this.failure) return;
+    this.eventCount += 1;
+    const maxEvents = this.options.maxEvents ?? DEFAULT_MAX_EVENTS;
+    if (this.eventCount > maxEvents) {
+      this.failClosed(this.limitError(maxEvents));
+      return;
+    }
     const type = DAGSTER_EVENT_MAP[event.type];
     if (!type) {
       if (event.stepKey !== undefined || event.type.startsWith("STEP_")) {
@@ -283,6 +372,53 @@ export class DagsterGraphEventBridge {
       return raw as Record<string, unknown>;
     }
     return payload;
+  }
+
+  /**
+   * Fails the observation closed exactly once: records the failure, rejects the
+   * terminal wait, and cancels the underlying subscription so a stalled transport
+   * stops working.
+   *
+   * @param error - The graph error the observation failed with.
+   * @returns The same error, for convenient `throw`/`return` use.
+   */
+  private failClosed(error: GraphExecutionError): GraphExecutionError {
+    if (!this.failure) {
+      this.failure = error;
+      this.rejectTerminal?.(error);
+      const subscription = this.subscription;
+      if (subscription) {
+        void Promise.resolve(subscription.unsubscribe()).catch(() => {});
+      }
+    }
+    return this.failure;
+  }
+
+  /** The error raised when the caller aborts the observation. */
+  private abortError(): GraphExecutionError {
+    return new GraphExecutionError(
+      `Dagster run '${this.options.dagsterRunId}' observation was aborted by the caller`,
+      DAGSTER_ERROR.OBSERVE_ABORTED,
+      { runId: this.options.dagsterRunId }
+    );
+  }
+
+  /** The error raised when the run misses the terminal-wait timeout. */
+  private timeoutError(timeoutMs: number): GraphExecutionError {
+    return new GraphExecutionError(
+      `Dagster run '${this.options.dagsterRunId}' did not reach a terminal state within ${timeoutMs}ms`,
+      DAGSTER_ERROR.OBSERVE_TIMEOUT,
+      { runId: this.options.dagsterRunId, timeoutMs }
+    );
+  }
+
+  /** The error raised when the run exceeds the event cap. */
+  private limitError(maxEvents: number): GraphExecutionError {
+    return new GraphExecutionError(
+      `Dagster run '${this.options.dagsterRunId}' emitted more than ${maxEvents} events without reaching a terminal state`,
+      DAGSTER_ERROR.EVENT_LIMIT_EXCEEDED,
+      { runId: this.options.dagsterRunId, maxEvents }
+    );
   }
 
   /**

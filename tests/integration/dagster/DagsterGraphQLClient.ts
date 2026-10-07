@@ -29,7 +29,10 @@ import type {
   DagsterJobSummary,
   DagsterRunRecord,
   DagsterRunSubscription,
+  DagsterRunSubscriptionOptions,
 } from "../../../src/dagster";
+import { GraphExecutionError } from "../../../src/engine/errors";
+import { DAGSTER_ERROR } from "../../../src/dagster/constants";
 
 /**
  * The documented Dagster event types the read-only driver consumes. Raw Dagster
@@ -46,6 +49,12 @@ const DAGSTER_MAPPED_EVENT_TYPES = new Set<string>([
   "RUN_FAILURE",
   "RUN_CANCELED",
 ]);
+
+/** Default hard cap on the transport's pagination depth. */
+const DEFAULT_MAX_PAGES = 100;
+
+/** Default hard cap on the transport's replayed event count. */
+const DEFAULT_MAX_EVENTS = 10000;
 
 /** Options for constructing a {@link DagsterGraphQLClient}. */
 export interface DagsterGraphQLClientOptions {
@@ -357,17 +366,23 @@ export class DagsterGraphQLClient implements DagsterClient {
    * @typeParam T - The expected `data` shape.
    * @param query - The GraphQL document.
    * @param variables - Optional operation variables.
+   * @param signal - Optional caller signal composed with the request timeout.
    * @returns The response `data`.
    */
   private async request<T>(
     query: string,
-    variables?: Record<string, unknown>
+    variables?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<T> {
+    const timeoutSignal = AbortSignal.timeout(this.requestTimeoutMs);
+    const effectiveSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
     const response = await this.fetchImpl(this.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(this.requestTimeoutMs),
+      signal: effectiveSignal,
     });
     if (!response.ok) {
       throw new Error(
@@ -458,16 +473,22 @@ export class DagsterGraphQLClient implements DagsterClient {
    *
    * @param runId - The Dagster run id.
    * @param handler - The per-event callback.
+   * @param options - Optional signal/event/page bounds.
    * @returns A subscription handle.
+   * @throws {GraphExecutionError} `GRAPH_DAGSTER_OBSERVE_ABORTED` when the signal
+   *   is already aborted before or during the event replay,
+   *   `GRAPH_DAGSTER_PAGE_LIMIT_EXCEEDED` when the page cap is hit, or
+   *   `GRAPH_DAGSTER_EVENT_LIMIT_EXCEEDED` when the event cap is hit.
    */
   async subscribeRun(
     runId: string,
-    handler: (event: DagsterEventRecord) => void
+    handler: (event: DagsterEventRecord) => void,
+    options: DagsterRunSubscriptionOptions = {}
   ): Promise<DagsterRunSubscription> {
     let closed = false;
-    const raw = await this.fetchRunEvents(runId);
+    const raw = await this.fetchRunEvents(runId, options);
     for (const event of raw) {
-      if (closed) break;
+      if (closed || options.signal?.aborted) break;
       const record = this.toEventRecord(event);
       if (record) handler(record);
     }
@@ -541,19 +562,47 @@ export class DagsterGraphQLClient implements DagsterClient {
   }
 
   /**
-   * Paginates the run's recorded event stream.
+   * Paginates the run's recorded event stream, bounded by `maxPages` and
+   * `maxEvents` so a gateway whose `eventConnection` never reports
+   * `hasMore: false` cannot page or buffer without limit.
    *
    * @param runId - The Dagster run id.
+   * @param options - Optional signal/event/page bounds.
    * @returns The raw events, in order.
+   * @throws {GraphExecutionError} `GRAPH_DAGSTER_PAGE_LIMIT_EXCEEDED` when the
+   *   page cap is hit, or `GRAPH_DAGSTER_EVENT_LIMIT_EXCEEDED` when the event cap
+   *   is hit.
    */
-  private async fetchRunEvents(runId: string): Promise<RawRunEvent[]> {
+  private async fetchRunEvents(
+    runId: string,
+    options: DagsterRunSubscriptionOptions = {}
+  ): Promise<RawRunEvent[]> {
+    const maxPages = options.maxPages ?? DEFAULT_MAX_PAGES;
+    const maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
     const events: RawRunEvent[] = [];
     let after: string | undefined;
+    let pages = 0;
     for (;;) {
+      if (options.signal?.aborted) {
+        throw new GraphExecutionError(
+          `Dagster run '${runId}' event replay was aborted by the caller`,
+          DAGSTER_ERROR.OBSERVE_ABORTED,
+          { runId }
+        );
+      }
+      if (pages >= maxPages) {
+        throw new GraphExecutionError(
+          `Dagster run '${runId}' event replay exceeded the ${maxPages}-page cap`,
+          DAGSTER_ERROR.PAGE_LIMIT_EXCEEDED,
+          { runId, maxPages }
+        );
+      }
       const data = await this.request<{ runOrError: RawRun }>(
         RUN_EVENTS_QUERY,
-        after ? { runId, after } : { runId }
+        after ? { runId, after } : { runId },
+        options.signal
       );
+      pages += 1;
       const run = data.runOrError;
       if (run.__typename !== "Run") {
         throw new Error(
@@ -563,6 +612,13 @@ export class DagsterGraphQLClient implements DagsterClient {
       const connection = run.eventConnection;
       if (!connection) break;
       events.push(...connection.events);
+      if (events.length > maxEvents) {
+        throw new GraphExecutionError(
+          `Dagster run '${runId}' event replay exceeded the ${maxEvents}-event cap`,
+          DAGSTER_ERROR.EVENT_LIMIT_EXCEEDED,
+          { runId, maxEvents }
+        );
+      }
       if (!connection.hasMore) break;
       after = connection.cursor;
     }

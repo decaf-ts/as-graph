@@ -73,6 +73,23 @@ export interface DagsterRunSubscription {
 }
 
 /**
+ * Bounds applied to a run-event subscription. The read-only driver passes these
+ * through to the host-injected {@link DagsterClient} so a wedged or hostile
+ * gateway cannot make the transport page or buffer without limit: `signal` cancels
+ * in-flight transport work, `maxEvents` caps the number of events replayed, and
+ * `maxPages` caps the pagination depth. Every field is optional so a host port that
+ * predates them keeps working.
+ */
+export interface DagsterRunSubscriptionOptions {
+  /** Cancels the subscription and any in-flight transport work. */
+  signal?: AbortSignal;
+  /** Hard cap on the number of events the transport replays. */
+  maxEvents?: number;
+  /** Hard cap on the number of pagination pages the transport fetches. */
+  maxPages?: number;
+}
+
+/**
  * A Dagster job summary surfaced by workflow listing.
  */
 export interface DagsterJobSummary {
@@ -176,7 +193,8 @@ export interface DagsterClient {
   /** Subscribes to an EXISTING run's raw event stream. */
   subscribeRun(
     runId: string,
-    handler: (event: DagsterEventRecord) => void
+    handler: (event: DagsterEventRecord) => void,
+    options?: DagsterRunSubscriptionOptions
   ): Promise<DagsterRunSubscription>;
   /** Terminates an EXISTING run. */
   terminateRun(runId: string, reason?: string): Promise<void>;
@@ -216,4 +234,27 @@ export interface DagsterObserveRunRequest {
   inputs?: Record<string, unknown>;
   /** Execution options metadata carried onto the canonical result. */
   metadata?: Record<string, unknown>;
+  /**
+   * Caller cancellation signal. Aborting it fails the observation closed with
+   * `GRAPH_DAGSTER_OBSERVE_ABORTED` and cancels in-flight transport work
+   * instead of leaving the caller waiting on a wedged or stalled run.
+   */
+  signal?: AbortSignal;
+  /**
+   * Hard cap on the number of events the bridge will process. Exceeding it fails
+   * the observation closed with `GRAPH_DAGSTER_EVENT_LIMIT_EXCEEDED`, so a gateway
+   * that never terminates cannot accumulate events without bound.
+   */
+  maxEvents?: number;
+  /**
+   * Hard cap on the transport pagination depth. Forwarded to the client port so a
+   * gateway whose `eventConnection` never reports `hasMore: false` cannot page
+   * without bound.
+   */
+  maxPages?: number;
+  /**
+   * Maximum time to await the terminal record. Exceeding it fails the observation
+   * closed with `GRAPH_DAGSTER_OBSERVE_TIMEOUT`.
+   */
+  terminalTimeoutMs?: number;
 }

@@ -49,9 +49,10 @@ fi
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 
 if [ "${INSIDE_CONTAINER}" = "1" ]; then
-  echo "==> starting gateway in the runner network namespace"
+  echo "==> starting gateway in the runner network namespace (loopback bind)"
   docker run -d --name "${CONTAINER}" \
     --network "container:$(hostname)" \
+    -e DAGSTER_BIND_HOST=127.0.0.1 \
     "${IMAGE}" >/dev/null
   DAGSTER_HOST="127.0.0.1"
   DAGSTER_PORT="${CONTAINER_PORT}"

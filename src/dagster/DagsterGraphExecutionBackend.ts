@@ -284,9 +284,17 @@ export class DagsterGraphExecutionBackend
    * record. The driver never launches the run; the caller supplies the id of a run
    * that already exists in the deployment.
    *
-   * @param request - The observe request (existing run id, workflow id, sink).
+   * The request's bounds (`signal`, `maxEvents`, `maxPages`, `terminalTimeoutMs`)
+   * are forwarded to the event bridge so the observation always terminates: the
+   * event cap fails closed with `GRAPH_DAGSTER_EVENT_LIMIT_EXCEEDED`, the terminal
+   * wait with `GRAPH_DAGSTER_OBSERVE_TIMEOUT`, and an abort with
+   * `GRAPH_DAGSTER_OBSERVE_ABORTED`.
+   *
+   * @param request - The observe request (existing run id, workflow id, sink, and
+   *   optional observation bounds).
    * @returns The canonical execution result of the observed run.
-   * @throws {GraphExecutionError} when the run cannot be read or subscribed to.
+   * @throws {GraphExecutionError} when the run cannot be read or subscribed to,
+   *   or when an observation bound is hit (see above).
    */
   async observeRun(
     request: DagsterObserveRunRequest
@@ -302,6 +310,14 @@ export class DagsterGraphExecutionBackend
       nodeIdsByOpName: dagsterNodeIdsByOpName(job),
       sink: request.events,
       client,
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.maxEvents !== undefined
+        ? { maxEvents: request.maxEvents }
+        : {}),
+      ...(request.maxPages !== undefined ? { maxPages: request.maxPages } : {}),
+      ...(request.terminalTimeoutMs !== undefined
+        ? { terminalTimeoutMs: request.terminalTimeoutMs }
+        : {}),
     });
     this.bridges.set(graphRunId, bridge);
 

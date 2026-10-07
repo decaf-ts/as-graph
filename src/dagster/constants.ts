@@ -64,4 +64,12 @@ export const DAGSTER_ERROR = {
   EVENT_UNSUPPORTED: "GRAPH_DAGSTER_EVENT_UNSUPPORTED",
   /** The client failed to read, subscribe to, or terminate the run. */
   RUN_FAILED: "GRAPH_DAGSTER_RUN_FAILED",
+  /** The caller aborted the observation before the run reached a terminal state. */
+  OBSERVE_ABORTED: "GRAPH_DAGSTER_OBSERVE_ABORTED",
+  /** The run did not reach a terminal state within the observation timeout. */
+  OBSERVE_TIMEOUT: "GRAPH_DAGSTER_OBSERVE_TIMEOUT",
+  /** The run emitted more events than the observation's `maxEvents` cap. */
+  EVENT_LIMIT_EXCEEDED: "GRAPH_DAGSTER_EVENT_LIMIT_EXCEEDED",
+  /** The transport paginated more pages than the observation's `maxPages` cap. */
+  PAGE_LIMIT_EXCEEDED: "GRAPH_DAGSTER_PAGE_LIMIT_EXCEEDED",
 } as const;

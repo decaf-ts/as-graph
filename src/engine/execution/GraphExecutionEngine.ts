@@ -83,6 +83,45 @@ import {
 } from "../auth";
 
 /**
+ * Facade-owned backend-config keys the facade is the sole authority for. A value
+ * under one of these keys in a backend's retained `config` must never survive the
+ * engine's re-initialization merge unless the facade itself set it.
+ */
+const FACADE_OWNED_BACKEND_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "engine",
+  "valueAdapter",
+  "codeSandboxEvaluator",
+  "workflowStore",
+]);
+
+/**
+ * Strips facade-owned keys from a backend's retained configuration that the facade
+ * did not itself set (defense in depth). A backend's `config` getter may derive
+ * from lower-trust input; without this guard a same-key value would survive the
+ * merge whenever the facade omits that key and become a config-injection sink. Keys
+ * the facade itself set are kept: the facade is their authority and the caller
+ * merges its own values over them afterwards.
+ *
+ * @param hostBackendConfig - The config the backend retained from a previous
+ *   `initialize`; may be `undefined`.
+ * @param facadeSetKeys - The facade-owned keys the facade itself set on this pass.
+ * @returns A copy of the host config with unowned facade-owned keys removed.
+ */
+export function stripFacadeOwnedBackendConfig(
+  hostBackendConfig: Record<string, unknown> | undefined,
+  facadeSetKeys: ReadonlySet<string>
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(hostBackendConfig ?? {})) {
+    if (FACADE_OWNED_BACKEND_CONFIG_KEYS.has(key) && !facadeSetKeys.has(key)) {
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+/**
  * Configuration for the {@link GraphExecutionEngine}.
  */
 export interface GraphExecutionEngineConfig {
@@ -276,9 +315,25 @@ export class GraphExecutionEngine
     // on collision (`engine`, `valueAdapter`, `codeSandboxEvaluator`,
     // `workflowStore`): the facade is the authority for the collaborators it
     // owns, and a backend that already re-wired them itself is simply refreshed.
-    const hostBackendConfig = backend.config;
+    //
+    // Fail closed on facade-owned keys the facade did NOT itself set: strip them
+    // from the retained config before merging. A backend whose `config` getter
+    // derives from lower-trust input must not be able to inject a collaborator the
+    // facade owns just because this engine config omitted it (C2,
+    // defense-in-depth under Complete Mediation / Secure Defaults).
+    const facadeSetKeys = new Set<string>(["engine", "valueAdapter"]);
+    if (config.codeSandboxEvaluator) {
+      facadeSetKeys.add("codeSandboxEvaluator");
+    }
+    if (config.workflowStore) {
+      facadeSetKeys.add("workflowStore");
+    }
+    const hostBackendConfig = stripFacadeOwnedBackendConfig(
+      backend.config,
+      facadeSetKeys
+    );
     await backend.initialize({
-      ...(hostBackendConfig ?? {}),
+      ...hostBackendConfig,
       valueAdapter,
       ...(config.codeSandboxEvaluator
         ? { codeSandboxEvaluator: config.codeSandboxEvaluator }
