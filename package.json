@@ -1,6 +1,6 @@
 {
   "name": "@decaf-ts/as-graph",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Workflow document model, node catalogue and reference execution engine for Decaf graph workflows",
   "type": "module",
   "exports": {
@@ -91,6 +91,8 @@
     "test": "npm run test:all",
     "test:unit": "jest --testPathPatterns=\"/tests/unit\" --passWithNoTests --detectOpenHandles",
     "test:integration": "jest --testPathPatterns=\"/tests/(integration)\" --passWithNoTests --detectOpenHandles",
+    "test:integration:mastra": "jest --testPathPatterns=\"/tests/integration/mastra\" --passWithNoTests --detectOpenHandles",
+    "test:integration:dagster": "bash tests/integration/dagster/run.sh",
     "test:e2e": "jest --testPathPatterns=\"/tests/(e2e)\" --passWithNoTests --detectOpenHandles",
     "test:all": "jest --testPathPatterns=\"/tests\" --passWithNoTests --detectOpenHandles",
     "test:dist": "TEST_TARGET=lib npm run test:all && TEST_TARGET=dist npm run test:all",

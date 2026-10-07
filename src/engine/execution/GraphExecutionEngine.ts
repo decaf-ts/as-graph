@@ -211,6 +211,12 @@ export class GraphExecutionEngine
    * `Service.boot` may call this with only a decaf `Context`; an explicit
    * `initialize(config)` is required before the engine can execute.
    *
+   * The active backend is (re-)initialized with the facade-owned collaborators
+   * merged over any host config the backend already retains
+   * (`GraphExecutionBackend.config`). Facade-owned keys win on collision, so a
+   * host `backend.initialize({ mastra, stepHandlers, ... })` performed before
+   * `engine.boot` survives this pass instead of being dropped.
+   *
    * @param args - The engine config, optionally followed by a decaf `Context`.
    * @returns The resolved config and runtime client bundle.
    */
@@ -234,7 +240,7 @@ export class GraphExecutionEngine
         "GRAPH_VALUE_ADAPTER_MISSING"
       );
     }
-    const backend =
+    const backend: GraphExecutionBackend =
       config.backend ??
       GraphExecutionBackendRegistry.current ??
       new LocalGraphExecutionBackend();
@@ -262,7 +268,17 @@ export class GraphExecutionEngine
     };
     this._config = config;
     this._client = client;
+    // Preserve any host-supplied backend configuration. A host may configure the
+    // backend directly (e.g. `backend.initialize({ mastra, stepHandlers })`)
+    // before booting the engine; this initialize pass must not silently drop that
+    // wiring. Merge the backend's retained config under the facade-owned keys so a
+    // host key survives unless the facade owns the same key. Facade-owned keys win
+    // on collision (`engine`, `valueAdapter`, `codeSandboxEvaluator`,
+    // `workflowStore`): the facade is the authority for the collaborators it
+    // owns, and a backend that already re-wired them itself is simply refreshed.
+    const hostBackendConfig = backend.config;
     await backend.initialize({
+      ...(hostBackendConfig ?? {}),
       valueAdapter,
       ...(config.codeSandboxEvaluator
         ? { codeSandboxEvaluator: config.codeSandboxEvaluator }

@@ -23,7 +23,7 @@ import type { DagsterRunRecord } from "./DagsterTypes";
 export interface DagsterResultMapperInput {
   /** Dagster run id. */
   runId: string;
-  /** Canonical document that was translated. */
+  /** Canonical document of the inspected job. */
   document: GraphWorkflowDocument;
   /** The run's workflow input values. */
   inputs: GraphExecutionValues;

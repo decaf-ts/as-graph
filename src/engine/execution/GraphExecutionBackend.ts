@@ -195,6 +195,20 @@ export interface GraphExecutionBackend<
     config: CONFIG,
     ...args: MaybeContextualArg<Context>
   ): Promise<void>;
+  /**
+   * The backend-specific configuration most recently resolved by
+   * {@link initialize}, when the backend retains it. The facade reads this during
+   * `GraphExecutionEngine.initialize` and merges its own facade-owned keys over
+   * it, so a host that configured the backend directly before booting the engine
+   * (e.g. `backend.initialize({ mastra, stepHandlers, suspendStateReader })`) does
+   * not lose that wiring when the facade initializes the backend.
+   *
+   * Facade-owned keys (`engine`, `valueAdapter`, `codeSandboxEvaluator`,
+   * `workflowStore`) win on collision: the facade is the authority for the
+   * collaborators it owns, while every other host key survives. Backends without
+   * host-supplied configuration (the built-in local backend) may omit this.
+   */
+  readonly config?: CONFIG;
   /** Whether this backend executes locally (in-process). */
   readonly local: boolean;
   /**

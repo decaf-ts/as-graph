@@ -1,14 +1,14 @@
 /**
  * @module as-graph/dagster/DagsterTypes
- * @summary Artifact, capability, and client-port types for the Dagster backend (SAA-195).
- * @description The translator emits a `DagsterJobArtifact`: a deterministic,
- * inspectable description of the Dagster module for a workflow plus the generated
- * Python source. The backend talks to Dagster through the host-injected
- * {@link DagsterClient} port, so the wrapper never bundles a phantom JavaScript
- * Dagster runtime.
+ * @summary Read-only capability, inspection, run, and client-port types for the
+ * Dagster backend.
+ * @description The Dagster driver is read-only by owner mandate: it may only list,
+ * look up, inspect, and surface ALREADY-EXISTING Dagster workflows. It never
+ * authors workflows and never generates, embeds, or emits Python source. The driver
+ * talks to Dagster through the host-injected {@link DagsterClient} port, so the
+ * wrapper never bundles a phantom JavaScript Dagster runtime.
  */
-import type { GraphJsonValue } from "../shared/graph";
-import type { GraphWorkflowDocument } from "../shared/graph";
+import type { GraphExecutionEventSink } from "../engine/execution/GraphExecutionBackend";
 
 /**
  * A capability verdict row in the exported Dagster capability table.
@@ -19,7 +19,7 @@ export type DagsterCapabilityVerdict =
   | "extension_point";
 
 /**
- * A single row of the exported Dagster capability table (SAA-195 §4.4).
+ * A single row of the exported Dagster capability table.
  */
 export interface DagsterCapabilityRow {
   /** The engine feature being described. */
@@ -31,165 +31,12 @@ export interface DagsterCapabilityRow {
 }
 
 /**
- * The role a generated op plays in the Dagster graph.
- */
-export type DagsterOpRole = "generic" | "router" | "foreach" | "trigger";
-
-/**
- * A generated Dagster op.
- */
-export interface DagsterOpArtifact {
-  /** Canonical node id the op was generated from. */
-  nodeId: string;
-  /** Canonical node kind. */
-  kind: string;
-  /** Sanitized Python op name. */
-  opName: string;
-  /** The op's role in the graph. */
-  role: DagsterOpRole;
-  /** Sanitized input port names. */
-  inputs: string[];
-  /** Sanitized output port names. */
-  outputs: string[];
-  /** Output ports emitted optionally (router branches). */
-  optionalOutputs: string[];
-  /** Node configuration data embedded in run config (never in code). */
-  config: Record<string, GraphJsonValue>;
-  /** Generated Python source for the op. */
-  code: string;
-}
-
-/**
- * A generated Dagster schedule.
- */
-export interface DagsterScheduleArtifact {
-  /** Canonical node id the schedule was generated from. */
-  nodeId: string;
-  /** Sanitized schedule name. */
-  name: string;
-  /** Cron expression (data, carried in the schedule definition). */
-  cron: string;
-  /** IANA timezone, when declared. */
-  timezone?: string;
-  /** Generated Python source for the schedule. */
-  code: string;
-}
-
-/**
- * A generated Dagster sensor.
- */
-export interface DagsterSensorArtifact {
-  /** Canonical node id the sensor was generated from. */
-  nodeId: string;
-  /** Sanitized sensor name. */
-  name: string;
-  /** The trigger kind the sensor represents. */
-  triggerKind: string;
-  /** Generated Python source for the sensor. */
-  code: string;
-}
-
-/**
- * Dagster run configuration: node parameters as data keyed by sanitized op name.
- * Parameters travel here, never inlined into generated op bodies (SAA-193 C6).
- */
-export interface DagsterRunConfig {
-  ops: Record<string, { config: Record<string, GraphJsonValue> }>;
-}
-
-/**
- * A complete, deterministic Dagster translation of a workflow document.
- */
-export interface DagsterJobArtifact {
-  /** Canonical workflow id. */
-  workflowId: string;
-  /** Sanitized Dagster graph name. */
-  graphName: string;
-  /** Sanitized Dagster job name. */
-  jobName: string;
-  /** Pinned Dagster version the artifact targets. */
-  pinnedVersion: string;
-  /** Provenance of the pin. */
-  pinnedSource: string;
-  /** Stable document fingerprint the artifact was translated from. */
-  fingerprint: string;
-  /** Python modules the generated artifact imports (allowlist-enforced). */
-  imports: string[];
-  /** Canonical node id → sanitized op name. */
-  opNamesByNodeId: Record<string, string>;
-  /** Sanitized op name → canonical node id. */
-  nodeIdsByOpName: Record<string, string>;
-  /** Generated ops. */
-  ops: DagsterOpArtifact[];
-  /** Run configuration carrying node parameters as data. */
-  runConfig: DagsterRunConfig;
-  /** Namespaced run tags carrying tracing data only. */
-  tags: Record<string, string>;
-  /** Generated schedules. */
-  schedules: DagsterScheduleArtifact[];
-  /** Generated sensors. */
-  sensors: DagsterSensorArtifact[];
-  /** The exported capability table for this translation. */
-  capabilities: DagsterCapabilityRow[];
-  /** The full generated Python module source. */
-  python: string;
-}
-
-/**
- * A host-authored op override for a node kind. The host is trusted to provide a
- * fixed body; it must not interpolate user data (SAA-193 C4/C6).
- */
-export interface DagsterResolvedOp {
-  /** Fixed Python statements returning the op's output. */
-  body: string;
-  /** Overridden input port names, when any. */
-  inputs?: string[];
-  /** Overridden output port names, when any. */
-  outputs?: string[];
-}
-
-/**
- * Host extension point resolving a node kind to a Dagster op. When a kind is not a
- * built-in and no resolver handles it, translation fails loudly (SAA-193 §7.3).
- */
-export type DagsterOpResolver = (
-  kind: string,
-  document: GraphWorkflowDocument
-) => DagsterResolvedOp | undefined;
-
-/**
- * A request to launch a Dagster run.
- */
-export interface DagsterLaunchRequest {
-  /** Sanitized job name to launch. */
-  jobName: string;
-  /** Run configuration carrying node parameters as data. */
-  runConfig: DagsterRunConfig;
-  /** Namespaced run tags. */
-  tags: Record<string, string>;
-  /** Fingerprint of the translated document. */
-  documentFingerprint: string;
-  /** Canonical workflow id. */
-  workflowId: string;
-}
-
-/**
- * A handle to a launched Dagster run.
- */
-export interface DagsterRunHandle {
-  /** Dagster run id. */
-  runId: string;
-  /** Job the run launched. */
-  jobName: string;
-}
-
-/**
  * A raw Dagster event record surfaced by the client port.
  */
 export interface DagsterEventRecord {
   /** Raw Dagster event type (e.g. `STEP_START`, `STEP_SUCCESS`). */
   type: string;
-  /** Dagster step key; maps to a node id via the artifact's op map. */
+  /** Dagster step key; maps to a canonical node id via the inspected job map. */
   stepKey?: string;
   /** ISO-8601 event timestamp. */
   timestamp?: string;
@@ -222,11 +69,11 @@ export interface DagsterRunRecord {
  */
 export interface DagsterRunSubscription {
   /** Stops the subscription. */
-  unsubscribe(): void | Promise<void>;
+  unsubscribe: () => void | Promise<void>;
 }
 
 /**
- * A Dagster job summary surfaced by workflow listing (Deliverable 4 addendum).
+ * A Dagster job summary surfaced by workflow listing.
  */
 export interface DagsterJobSummary {
   /** Job name. */
@@ -238,7 +85,63 @@ export interface DagsterJobSummary {
 }
 
 /**
- * A Dagster job record surfaced by workflow lookup (Deliverable 4 addendum).
+ * One op/step of a deployed Dagster job, as exposed by the client port.
+ * `nodeId` and `kind` are optional because a deployment may not classify its ops;
+ * the driver falls back to the op `name` and {@link DAGSTER_DEFAULT_NODE_KIND}.
+ */
+export interface DagsterJobOp {
+  /** Dagster op/step name. */
+  name: string;
+  /** Canonical node id, when the deployment exposes one. */
+  nodeId?: string;
+  /** Canonical node kind, when the deployment exposes one. */
+  kind?: string;
+  /** Op input names, when the deployment exposes them. */
+  inputs?: string[];
+  /** Op output names, when the deployment exposes them. */
+  outputs?: string[];
+  /** Asset keys the op materializes, when the deployment exposes them. */
+  assetKeys?: string[];
+}
+
+/**
+ * A directed op dependency of a deployed Dagster job: `from` feeds `to`.
+ */
+export interface DagsterJobDependency {
+  /** Upstream op name. */
+  from: string;
+  /** Downstream op name. */
+  to: string;
+}
+
+/**
+ * A schedule declared by a deployed Dagster job, when the deployment exposes it.
+ */
+export interface DagsterJobSchedule {
+  /** Schedule name. */
+  name: string;
+  /** Cron expression, when exposed. */
+  cron?: string;
+  /** IANA timezone, when exposed. */
+  timezone?: string;
+}
+
+/**
+ * A sensor declared by a deployed Dagster job, when the deployment exposes it.
+ */
+export interface DagsterJobSensor {
+  /** Sensor name. */
+  name: string;
+  /** Sensor kind, when exposed. */
+  kind?: string;
+}
+
+/**
+ * A deployed Dagster job record surfaced by workflow lookup. Carries the actual
+ * deployment structure the driver maps into the canonical document shape: the job
+ * name, graph/op structure, asset keys, and schedules/sensors where the client
+ * port exposes them. Every field is read-only inspection data — no op body, no
+ * Python source.
  */
 export interface DagsterJobRecord {
   /** Job name. */
@@ -247,43 +150,70 @@ export interface DagsterJobRecord {
   description?: string;
   /** Optional last-update timestamp. */
   updatedAt?: Date;
+  /** Ops/steps of the job's graph, when the deployment exposes them. */
+  ops?: DagsterJobOp[];
+  /** Directed op dependencies, when the deployment exposes them. */
+  dependencies?: DagsterJobDependency[];
+  /** Asset keys the job reads/materializes, when the deployment exposes them. */
+  assetKeys?: string[];
+  /** Schedules attached to the job, when the deployment exposes them. */
+  schedules?: DagsterJobSchedule[];
+  /** Sensors attached to the job, when the deployment exposes them. */
+  sensors?: DagsterJobSensor[];
 }
 
 /**
- * Host-injected Dagster client port. Abstracts the GraphQL/REST transport so the
- * wrapper stays a pure translation + event-mapping layer and the host owns the
- * Dagster deployment. Listing/lookup are optional; when absent the backend
- * declares them `not_supported` rather than returning an empty result.
+ * Host-injected, read-only Dagster client port. Abstracts the GraphQL/REST
+ * transport so the wrapper stays a pure inspection + event-mapping layer and the
+ * host owns the Dagster deployment. Listing/lookup are required: the owner mandate
+ * makes reading already-existing workflows the driver's core responsibility.
  */
 export interface DagsterClient {
-  /** Launches a run for a translated job. */
-  launchRun(request: DagsterLaunchRequest): Promise<DagsterRunHandle>;
-  /** Subscribes to a run's raw event stream. */
+  /** Lists already-deployed Dagster jobs. */
+  listJobs(): Promise<DagsterJobSummary[]>;
+  /** Reads a single already-deployed Dagster job, including its graph structure. */
+  getJob(jobName: string): Promise<DagsterJobRecord>;
+  /** Subscribes to an EXISTING run's raw event stream. */
   subscribeRun(
     runId: string,
     handler: (event: DagsterEventRecord) => void
   ): Promise<DagsterRunSubscription>;
-  /** Terminates a run. */
+  /** Terminates an EXISTING run. */
   terminateRun(runId: string, reason?: string): Promise<void>;
-  /** Reads a run's terminal record. */
+  /** Reads an EXISTING run's terminal record. */
   getRun(runId: string): Promise<DagsterRunRecord>;
-  /** Lists deployed Dagster jobs, when the deployment exposes them. */
-  listJobs?(): Promise<DagsterJobSummary[]>;
-  /** Reads a single deployed Dagster job, when the deployment exposes it. */
-  getJob?(jobName: string): Promise<DagsterJobRecord>;
   /** Disposes the client and its transport. */
   dispose?(): void | Promise<void>;
 }
 
 /**
- * Configuration for {@link DagsterGraphExecutionBackend}.
+ * Configuration for {@link DagsterGraphExecutionBackend}. The driver no longer
+ * accepts an op resolver: it never authors ops.
  */
 export interface DagsterGraphExecutionBackendConfig
   extends Record<string, unknown> {
-  /** Host-injected Dagster client port. */
+  /** Host-injected, read-only Dagster client port. */
   client: DagsterClient;
-  /** Optional host op resolver extension point for non-built-in kinds. */
-  opResolver?: DagsterOpResolver;
   /** Optional host-supplied default run tags. */
   tags?: Record<string, string>;
+}
+
+/**
+ * A request to observe an EXISTING Dagster run. The run is never launched by the
+ * driver; the caller supplies the id of a run that already exists in the
+ * deployment.
+ */
+export interface DagsterObserveRunRequest {
+  /** Dagster run id of the existing run. */
+  dagsterRunId: string;
+  /** Canonical as-graph run id carried on emitted events; defaults to the Dagster run id. */
+  graphRunId?: string;
+  /** Canonical workflow id the run belongs to. */
+  workflowId: string;
+  /** Facade-owned event sink the driver reports transitions through. */
+  events: GraphExecutionEventSink;
+  /** Workflow input values carried onto the canonical result. */
+  inputs?: Record<string, unknown>;
+  /** Execution options metadata carried onto the canonical result. */
+  metadata?: Record<string, unknown>;
 }

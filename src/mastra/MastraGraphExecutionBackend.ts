@@ -136,12 +136,14 @@ export class MastraGraphExecutionBackend
   private suspendStateReader?: MastraSuspendStateReader;
   private maxResumeBytes = DEFAULT_MAX_RESUME_BYTES;
   private initialized = false;
+  private _config?: MastraBackendConfig;
 
   constructor() {
     GraphExecutionBackendRegistry.register(MASTRA_BACKEND_FLAVOUR, this);
   }
 
   async initialize(config: MastraBackendConfig): Promise<void> {
+    this._config = config;
     this.runtime = config.mastra;
     this.suspendStateReader = config.suspendStateReader;
     if (typeof config.maxResumeBytes === "number" && config.maxResumeBytes > 0) {
@@ -437,6 +439,16 @@ export class MastraGraphExecutionBackend
     this.runWorkflows.clear();
     this.runtime = undefined;
     this.initialized = false;
+  }
+
+  /**
+   * The configuration most recently resolved by {@link initialize}. Exposed so
+   * `GraphExecutionEngine.initialize` can merge its facade-owned collaborators
+   * over the host's keys (`mastra`, `stepHandlers`, `suspendStateReader`, ...)
+   * instead of dropping them when it re-initializes the backend at boot.
+   */
+  get config(): MastraBackendConfig | undefined {
+    return this._config;
   }
 
   /** Whether {@link initialize} has resolved. */

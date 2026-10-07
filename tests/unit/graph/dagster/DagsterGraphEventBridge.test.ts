@@ -1,17 +1,15 @@
 /**
  * @module as-graph/tests/unit/graph/dagster/DagsterGraphEventBridge.test
- * @summary Unit tests for the Dagster event bridge (SAA-195 §4.3).
+ * @summary Unit tests for the read-only Dagster event bridge.
  * @description Proves the documented Dagster → engine-agnostic event mapping
- * table, the loud-fail rule for unmapped step events, and the ignore rule for
+ * table driven by an inspected job's op-name → node-id map (never a translated
+ * artifact), the loud-fail rule for unmapped step events, and the ignore rule for
  * unmapped run/engine telemetry.
  */
 import type { GraphExecutionEvent } from "../../../../src/shared/graph";
 import { GraphExecutionEventType } from "../../../../src/shared/graph";
 import type { GraphExecutionEventSink } from "../../../../src/engine/execution/GraphExecutionBackend";
 import { DagsterGraphEventBridge } from "../../../../src/dagster/DagsterGraphEventBridge";
-import { DagsterWorkflowTranslator } from "../../../../src/dagster/DagsterWorkflowTranslator";
-import type { DagsterJobArtifact } from "../../../../src/dagster/DagsterTypes";
-import { documentEdge, documentNode } from "../engine-fixtures";
 import { FakeDagsterClient } from "./dagster-fixtures";
 
 /** Records every event forwarded through the sink. */
@@ -27,29 +25,13 @@ class RecordingSink implements GraphExecutionEventSink {
   }
 }
 
-/** Builds a two-node artifact with `adder` and `multiplier` op names. */
-function artifact(): DagsterJobArtifact {
-  const translator = new DagsterWorkflowTranslator();
-  return translator.translate({
-    id: "dagster-wf",
-    name: "dagster-wf",
-    inputs: [],
-    outputs: [],
-    nodes: [
-      documentNode("adder", "core.flow.log"),
-      documentNode("multiplier", "core.utility.map"),
-    ],
-    edges: [
-      documentEdge("e1", ["node", "adder", "result"], [
-        "node",
-        "multiplier",
-        "value",
-      ]),
-    ],
-  });
-}
+/** The op-name → canonical node-id map the read-only driver derives from a job. */
+const NODE_IDS_BY_OP_NAME: Record<string, string> = {
+  adder: "adder",
+  multiplier: "multiplier",
+};
 
-describe("DagsterGraphEventBridge", () => {
+describe("DagsterGraphEventBridge (read-only)", () => {
   it("maps the documented Dagster events onto graph events", async () => {
     const client = new FakeDagsterClient(
       [
@@ -71,7 +53,7 @@ describe("DagsterGraphEventBridge", () => {
       dagsterRunId: "run-1",
       graphRunId: "graph-run-1",
       workflowId: "dagster-wf",
-      artifact: artifact(),
+      nodeIdsByOpName: NODE_IDS_BY_OP_NAME,
       sink,
       client,
     });
@@ -98,6 +80,58 @@ describe("DagsterGraphEventBridge", () => {
     expect(results["multiplier"].error?.details).toBeUndefined();
   });
 
+  it("emits a run-level RUN_START as WORKFLOW_STARTED without a node id", async () => {
+    const client = new FakeDagsterClient(
+      [{ type: "RUN_START" }, { type: "STEP_SUCCESS", stepKey: "adder" }],
+      { runId: "run-1", status: "success", outputs: {} }
+    );
+    const sink = new RecordingSink();
+    const bridge = new DagsterGraphEventBridge({
+      dagsterRunId: "run-1",
+      graphRunId: "graph-run-1",
+      workflowId: "dagster-wf",
+      nodeIdsByOpName: NODE_IDS_BY_OP_NAME,
+      sink,
+      client,
+    });
+
+    await bridge.start();
+    await bridge.waitForTerminal();
+    await bridge.stop();
+
+    const started = sink.emitted.find(
+      (event) => event.type === GraphExecutionEventType.WORKFLOW_STARTED
+    );
+    expect(started).toBeDefined();
+    expect(started?.nodeId).toBeUndefined();
+    expect(sink.emitted[0]).toMatchObject({
+      type: GraphExecutionEventType.WORKFLOW_STARTED,
+      runId: "graph-run-1",
+      workflowId: "dagster-wf",
+    });
+  });
+
+  it("resolves a namespaced step key through the op-name tail", async () => {
+    const client = new FakeDagsterClient(
+      [{ type: "STEP_SUCCESS", stepKey: "dagsterwf_job.adder" }],
+      { runId: "run-1", status: "success", outputs: {} }
+    );
+    const bridge = new DagsterGraphEventBridge({
+      dagsterRunId: "run-1",
+      graphRunId: "graph-run-1",
+      workflowId: "dagster-wf",
+      nodeIdsByOpName: NODE_IDS_BY_OP_NAME,
+      sink: new RecordingSink(),
+      client,
+    });
+
+    await bridge.start();
+    await bridge.waitForTerminal();
+    await bridge.stop();
+
+    expect(Object.keys(bridge.collectedNodeResults())).toEqual(["adder"]);
+  });
+
   it("fails loudly on an unmapped step-level event", async () => {
     const client = new FakeDagsterClient(
       [{ type: "STEP_TELEMETRY", stepKey: "adder" }],
@@ -107,7 +141,7 @@ describe("DagsterGraphEventBridge", () => {
       dagsterRunId: "run-1",
       graphRunId: "graph-run-1",
       workflowId: "dagster-wf",
-      artifact: artifact(),
+      nodeIdsByOpName: NODE_IDS_BY_OP_NAME,
       sink: new RecordingSink(),
       client,
     });
@@ -132,7 +166,7 @@ describe("DagsterGraphEventBridge", () => {
       dagsterRunId: "run-1",
       graphRunId: "graph-run-1",
       workflowId: "dagster-wf",
-      artifact: artifact(),
+      nodeIdsByOpName: NODE_IDS_BY_OP_NAME,
       sink,
       client,
     });

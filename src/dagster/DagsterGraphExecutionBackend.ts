@@ -1,17 +1,27 @@
 /**
  * @module as-graph/dagster/DagsterGraphExecutionBackend
- * @summary Dagster graph execution backend (SAA-195, DECAF-50 §4.9).
- * @description A non-local {@link GraphExecutionBackend} that translates the
- * canonical workflow document into a Dagster job artifact and drives a
- * host-injected {@link DagsterClient} port. The backend:
+ * @summary Read-only Dagster graph backend (DECAF-50 §4.9).
+ * @description A non-local {@link GraphExecutionBackend} that only lists, looks
+ * up, and inspects ALREADY-EXISTING Dagster workflows through a host-injected
+ * {@link DagsterClient} port. By owner mandate the driver never authors a
+ * workflow and never generates, embeds, or emits Python source:
  *
- * - declares `local = false` and `codeMode = "unsupported"`, so the facade fails
- *   closed on any code-mode surface before launch (SAA-193 C1/C2);
- * - never reads, sets, or reconfigures a code sandbox evaluator (SAA-193 C3);
- * - reports every transition through the facade-owned
- *   {@link GraphExecutionEventSink}, which remains the single sequencing authority.
+ * - `execute` fails closed with `GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED`; no run is
+ *   launched from a translated document and no `launchRun` call exists;
+ * - `listWorkflows`/`getWorkflow` map the real deployment structure (job name,
+ *   graph/op structure, asset keys, schedules/sensors) into the canonical summary
+ *   and document shapes;
+ * - `observeRun` surfaces the events of an EXISTING run and maps its terminal
+ *   record onto a canonical result;
+ * - it declares `local = false` and `codeMode = "unsupported"`, so the facade fails
+ *   closed on any code-mode surface before delegating;
+ * - it never reads, sets, or reconfigures a code sandbox evaluator.
  */
 import type { GraphWorkflowDocument } from "../shared/graph";
+import type {
+  GraphEdgeInstance,
+  GraphNodeInstance,
+} from "../shared/graph";
 import { GraphExecutionError } from "../engine/errors";
 import type {
   GraphBackendCapabilities,
@@ -24,34 +34,168 @@ import type {
   GraphExecutionResult,
   GraphRunId,
 } from "../engine/types";
-import { DAGSTER_BACKEND_FLAVOUR, DAGSTER_ERROR } from "./constants";
+import {
+  DAGSTER_BACKEND_FLAVOUR,
+  DAGSTER_DEFAULT_NODE_KIND,
+  DAGSTER_ERROR,
+} from "./constants";
 import type {
   DagsterClient,
   DagsterGraphExecutionBackendConfig,
+  DagsterJobOp,
+  DagsterJobRecord,
+  DagsterObserveRunRequest,
+  DagsterRunRecord,
 } from "./DagsterTypes";
 import { dagsterBackendCapabilities } from "./capabilities";
-import { DagsterWorkflowTranslator } from "./DagsterWorkflowTranslator";
 import { DagsterGraphEventBridge } from "./DagsterGraphEventBridge";
 import { DagsterResultMapper } from "./DagsterResultMapper";
 
 /**
- * Non-local Dagster execution backend. Registers itself under
+ * Resolves the canonical node id of an inspected op. The deployment's own node id
+ * is used when exposed; otherwise the op name is the identity.
+ *
+ * @param op - The inspected Dagster op.
+ * @returns The canonical node id.
+ */
+function dagsterNodeIdOf(op: DagsterJobOp): string {
+  return op.nodeId ?? op.name;
+}
+
+/**
+ * Builds the inspected job's op-name → canonical node-id map. The event bridge
+ * uses it to resolve Dagster step keys onto canonical node ids for an existing run.
+ *
+ * @param job - The inspected Dagster job record.
+ * @returns The op-name → node-id map.
+ */
+export function dagsterNodeIdsByOpName(
+  job: DagsterJobRecord
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const op of job.ops ?? []) {
+    map[op.name] = dagsterNodeIdOf(op);
+  }
+  return map;
+}
+
+/**
+ * Maps one inspected Dagster op onto a canonical node instance. Port names and
+ * asset keys travel as node metadata; no op body or Python source is carried.
+ *
+ * @param op - The inspected Dagster op.
+ * @returns The canonical node instance.
+ */
+function dagsterNodeOf(op: DagsterJobOp): GraphNodeInstance {
+  const metadata: Record<string, unknown> = { dagsterOpName: op.name };
+  if (op.inputs) metadata["inputPorts"] = [...op.inputs];
+  if (op.outputs) metadata["outputPorts"] = [...op.outputs];
+  if (op.assetKeys) metadata["assetKeys"] = [...op.assetKeys];
+  return {
+    id: dagsterNodeIdOf(op),
+    kind: op.kind ?? DAGSTER_DEFAULT_NODE_KIND,
+    label: op.name,
+    parameters: {},
+    metadata: metadata as GraphNodeInstance["metadata"],
+  };
+}
+
+/**
+ * Maps the inspected job's op dependencies onto canonical edges. Each dependency
+ * connects the upstream op's first declared output to the downstream op's first
+ * declared input, falling back to stable default port names.
+ *
+ * @param job - The inspected Dagster job record.
+ * @returns The canonical edge instances.
+ */
+function dagsterEdgesOf(job: DagsterJobRecord): GraphEdgeInstance[] {
+  const byName = new Map<string, DagsterJobOp>();
+  for (const op of job.ops ?? []) byName.set(op.name, op);
+  const edges: GraphEdgeInstance[] = [];
+  (job.dependencies ?? []).forEach((dependency, index) => {
+    const from = byName.get(dependency.from);
+    const to = byName.get(dependency.to);
+    if (!from || !to) return;
+    edges.push({
+      id: `dagster_dep_${index}`,
+      type: "data",
+      source: {
+        scope: "node",
+        nodeId: dagsterNodeIdOf(from),
+        port: from.outputs?.[0] ?? "result",
+      },
+      target: {
+        scope: "node",
+        nodeId: dagsterNodeIdOf(to),
+        port: to.inputs?.[0] ?? "value",
+      },
+    });
+  });
+  return edges;
+}
+
+/**
+ * Maps an inspected Dagster job record onto the canonical workflow document
+ * shape. The deployment structure (job name, ops, dependencies, asset keys,
+ * schedules/sensors) is carried as document metadata for read-only inspection;
+ * nothing is authored.
+ *
+ * @param job - The inspected Dagster job record.
+ * @returns The canonical workflow document.
+ */
+export function dagsterJobDocument(
+  job: DagsterJobRecord
+): GraphWorkflowDocument {
+  const metadata: Record<string, unknown> = { dagsterJobName: job.name };
+  if (job.description !== undefined) {
+    metadata["description"] = job.description;
+  }
+  if (job.assetKeys !== undefined) {
+    metadata["assetKeys"] = [...job.assetKeys];
+  }
+  if (job.schedules !== undefined) {
+    metadata["schedules"] = job.schedules.map((schedule) => ({
+      name: schedule.name,
+      ...(schedule.cron !== undefined ? { cron: schedule.cron } : {}),
+      ...(schedule.timezone !== undefined
+        ? { timezone: schedule.timezone }
+        : {}),
+    }));
+  }
+  if (job.sensors !== undefined) {
+    metadata["sensors"] = job.sensors.map((sensor) => ({
+      name: sensor.name,
+      ...(sensor.kind !== undefined ? { kind: sensor.kind } : {}),
+    }));
+  }
+  return {
+    id: job.name,
+    name: job.name,
+    inputs: [],
+    outputs: [],
+    nodes: (job.ops ?? []).map(dagsterNodeOf),
+    edges: dagsterEdgesOf(job),
+    metadata: metadata as GraphWorkflowDocument["metadata"],
+  };
+}
+
+/**
+ * Non-local, read-only Dagster backend. Registers itself under
  * {@link DAGSTER_BACKEND_FLAVOUR} on construction.
  */
 export class DagsterGraphExecutionBackend
   implements GraphExecutionBackend<DagsterGraphExecutionBackendConfig>
 {
-  /** This backend executes remotely in Dagster, not in-process. */
+  /** This backend reads a remote Dagster deployment, not an in-process engine. */
   readonly local = false;
 
   /**
-   * Dagster cannot execute code-mode surfaces; the facade rejects them before
-   * launch (SAA-193 C1/C2).
+   * Dagster never authors code-mode surfaces; the facade rejects them before
+   * delegating.
    */
   readonly codeMode = "unsupported" as const;
 
   private client?: DagsterClient;
-  private translator!: DagsterWorkflowTranslator;
   private readonly mapper = new DagsterResultMapper();
   private readonly bridges = new Map<string, DagsterGraphEventBridge>();
   private defaultTags: Record<string, string> = {};
@@ -61,8 +205,8 @@ export class DagsterGraphExecutionBackend
   }
 
   /**
-   * Resolves the host-injected client port and op resolver. The backend never
-   * reads a code sandbox evaluator (SAA-193 C3).
+   * Resolves the host-injected, read-only client port. The backend never reads a
+   * code sandbox evaluator.
    *
    * @param config - The backend configuration.
    */
@@ -71,24 +215,20 @@ export class DagsterGraphExecutionBackend
   ): Promise<void> {
     this.client = config.client;
     this.defaultTags = config.tags ?? {};
-    this.translator = new DagsterWorkflowTranslator({
-      opResolver: config.opResolver,
-    });
   }
 
   /**
    * Effective capability metadata: code-mode is `unsupported`; workflow
-   * listing/lookup is supported exactly when the client port exposes it
-   * (Deliverable 4 addendum).
+   * listing/lookup is supported exactly when the client port exposes it.
    */
   get capabilities(): GraphBackendCapabilities {
     return dagsterBackendCapabilities(this.client);
   }
 
   /**
-   * Lists deployed Dagster jobs through the client port, when supported.
+   * Lists the deployment's Dagster jobs through the client port.
    *
-   * @returns Workflow summaries.
+   * @returns Real workflow summaries.
    * @throws {GraphExecutionError} when the client port exposes no job listing.
    */
   async listWorkflows(): Promise<GraphBackendWorkflowSummary[]> {
@@ -108,15 +248,15 @@ export class DagsterGraphExecutionBackend
   }
 
   /**
-   * Reads a single deployed Dagster job through the client port, when supported.
+   * Reads a single already-deployed Dagster job through the client port and maps
+   * its ACTUAL deployment structure (graph/op structure, asset keys,
+   * schedules/sensors) into the canonical document shape.
    *
-   * @param workflowId - The canonical workflow id.
-   * @returns A canonical document for the job.
+   * @param workflowId - The canonical workflow id (the Dagster job name).
+   * @returns A canonical document describing the existing job.
    * @throws {GraphExecutionError} when the client port exposes no job lookup.
    */
-  async getWorkflow(
-    workflowId: string
-  ): Promise<GraphWorkflowDocument> {
+  async getWorkflow(workflowId: string): Promise<GraphWorkflowDocument> {
     const client = this.requireClient();
     if (typeof client.getJob !== "function") {
       throw new GraphExecutionError(
@@ -125,58 +265,54 @@ export class DagsterGraphExecutionBackend
       );
     }
     const job = await client.getJob(workflowId);
-    return {
-      id: job.name,
-      name: job.name,
-      inputs: [],
-      outputs: [],
-      nodes: [],
-      edges: [],
-    };
+    return dagsterJobDocument(job);
   }
 
   /**
-   * Translates the canonical document and drives the Dagster run, reporting every
-   * transition through the request's facade-owned sink.
+   * Reads an EXISTING Dagster run's terminal record through the client port.
    *
-   * @param request - The execution request.
-   * @returns The canonical execution result.
-   * @throws {GraphExecutionError} on code-mode surfaces, unmapped kinds, invalid
-   *   condition paths, non-JSON-safe values, or a missing client port.
+   * @param runId - The Dagster run id.
+   * @returns The terminal run record.
    */
-  async execute(
-    request: GraphBackendExecutionRequest
+  async getRun(runId: string): Promise<DagsterRunRecord> {
+    return await this.requireClient().getRun(runId);
+  }
+
+  /**
+   * Observes an EXISTING Dagster run: subscribes to its event stream, maps every
+   * event onto the canonical sink, and returns the canonical result of the terminal
+   * record. The driver never launches the run; the caller supplies the id of a run
+   * that already exists in the deployment.
+   *
+   * @param request - The observe request (existing run id, workflow id, sink).
+   * @returns The canonical execution result of the observed run.
+   * @throws {GraphExecutionError} when the run cannot be read or subscribed to.
+   */
+  async observeRun(
+    request: DagsterObserveRunRequest
   ): Promise<GraphExecutionResult> {
     const client = this.requireClient();
-    const artifact = this.translator.translate(request.document);
-    const runId: GraphRunId = request.options.runId ?? request.document.id;
-
-    const handle = await client.launchRun({
-      jobName: artifact.jobName,
-      runConfig: artifact.runConfig,
-      tags: { ...this.defaultTags, ...artifact.tags },
-      documentFingerprint: artifact.fingerprint,
-      workflowId: artifact.workflowId,
-    });
-
+    const job = await client.getJob(request.workflowId);
+    const document = dagsterJobDocument(job);
+    const graphRunId: GraphRunId = request.graphRunId ?? request.dagsterRunId;
     const bridge = new DagsterGraphEventBridge({
-      dagsterRunId: handle.runId,
-      graphRunId: runId,
-      workflowId: artifact.workflowId,
-      artifact,
+      dagsterRunId: request.dagsterRunId,
+      graphRunId,
+      workflowId: request.workflowId,
+      nodeIdsByOpName: dagsterNodeIdsByOpName(job),
       sink: request.events,
       client,
     });
-    this.bridges.set(runId, bridge);
+    this.bridges.set(graphRunId, bridge);
 
     try {
       await bridge.start();
       const record = await bridge.waitForTerminal();
       return this.mapper.map({
-        runId,
-        document: request.document,
-        inputs: request.inputs,
-        options: request.options,
+        runId: graphRunId,
+        document,
+        inputs: request.inputs ?? {},
+        options: { runId: graphRunId, metadata: request.metadata },
         record,
         nodeResults: bridge.collectedNodeResults(),
         events: [],
@@ -186,20 +322,38 @@ export class DagsterGraphExecutionBackend
       throw new GraphExecutionError(
         error instanceof Error ? error.message : String(error),
         DAGSTER_ERROR.RUN_FAILED,
-        { runId }
+        { runId: graphRunId }
       );
     } finally {
       await bridge.stop();
-      this.bridges.delete(runId);
+      this.bridges.delete(graphRunId);
     }
   }
 
   /**
-   * Cancels a run through the client port.
+   * Rejects workflow authoring. The Dagster driver is read-only by owner mandate:
+   * it never accepts a translated document and never launches a run.
    *
-   * @param runId - The canonical run id.
+   * @param _request - The execution request (ignored).
+   * @throws {GraphExecutionError} always, with
+   *   `GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED`.
+   */
+  async execute(
+    _request: GraphBackendExecutionRequest
+  ): Promise<GraphExecutionResult> {
+    void _request;
+    throw new GraphExecutionError(
+      "DagsterGraphExecutionBackend is read-only: it lists, looks up, and inspects existing Dagster workflows, but never authors or launches one",
+      DAGSTER_ERROR.AUTHORING_NOT_SUPPORTED
+    );
+  }
+
+  /**
+   * Terminates an EXISTING run through the client port.
+   *
+   * @param runId - The Dagster run id.
    * @param reason - Optional cancellation reason.
-   * @returns `true` when a run was cancelled.
+   * @returns `true` when a run was terminated.
    */
   async cancel(runId: GraphRunId, reason?: string): Promise<boolean> {
     const client = this.client;

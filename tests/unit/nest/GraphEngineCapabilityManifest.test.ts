@@ -260,9 +260,9 @@ describe("GraphEngineCapabilityManifest (SAA-197 C20)", () => {
       const verdictOf = (feature: string) =>
         dagster?.capabilities.find((row) => row.feature === feature)?.verdict;
 
-      expect(verdictOf("sequential / generic node")).toBe("SUPPORTED");
+      expect(verdictOf("sequential / generic node")).toBe("NOT_SUPPORTED");
       expect(verdictOf("while / until loop")).toBe("NOT_SUPPORTED");
-      expect(verdictOf("manual trigger")).toBe("EXTENSION_POINT");
+      expect(verdictOf("manual trigger")).toBe("NOT_SUPPORTED");
       for (const row of DAGSTER_CAPABILITY_TABLE) {
         expect(verdictOf(row.feature)).toBe(
           toGraphEngineFeatureVerdict(row.verdict)

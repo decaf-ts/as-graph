@@ -12,7 +12,6 @@ import type { GraphExecutionEvent } from "../shared/graph";
 import {
   GraphExecutionEventType,
   GraphExecutionStatus,
-  GraphVisualState,
 } from "../shared/graph";
 import type { GraphExecutionErrorPayload } from "../shared/graph";
 import type { GraphNodeExecutionResult } from "../engine/types";
@@ -22,7 +21,6 @@ import { DAGSTER_ERROR } from "./constants";
 import type {
   DagsterClient,
   DagsterEventRecord,
-  DagsterJobArtifact,
   DagsterRunRecord,
   DagsterRunSubscription,
 } from "./DagsterTypes";
@@ -57,8 +55,12 @@ export interface DagsterGraphEventBridgeOptions {
   graphRunId: string;
   /** Canonical workflow id. */
   workflowId: string;
-  /** The translation artifact (provides the step-key → node-id map). */
-  artifact: DagsterJobArtifact;
+  /**
+   * The inspected job's op-name → canonical node-id map. Built from the
+   * deployment structure the read-only driver looked up; the bridge never
+   * translates a document.
+   */
+  nodeIdsByOpName: Record<string, string>;
   /** The facade-owned event sink. */
   sink: GraphExecutionEventSink;
   /** The host-injected client port. */
@@ -79,7 +81,7 @@ export class DagsterGraphEventBridge {
   private readonly terminalPromise: Promise<DagsterRunRecord>;
 
   /**
-   * @param options - The run identity, artifact, sink, and client port.
+   * @param options - The run identity, op-name map, sink, and client port.
    */
   constructor(private readonly options: DagsterGraphEventBridgeOptions) {
     this.terminalPromise = new Promise<DagsterRunRecord>((resolve, reject) => {
@@ -125,17 +127,18 @@ export class DagsterGraphEventBridge {
   }
 
   /**
-   * Resolves a Dagster step key to a canonical node id through the artifact map.
+   * Resolves a Dagster step key to a canonical node id through the inspected
+   * job's op-name map.
    *
    * @param stepKey - The Dagster step key.
    * @returns The canonical node id, or `undefined` for non-graph steps.
    */
   private resolveNodeId(stepKey: string | undefined): string | undefined {
     if (!stepKey) return undefined;
-    const direct = this.options.artifact.nodeIdsByOpName[stepKey];
+    const direct = this.options.nodeIdsByOpName[stepKey];
     if (direct) return direct;
     const tail = stepKey.split(".").pop();
-    return tail ? this.options.artifact.nodeIdsByOpName[tail] : undefined;
+    return tail ? this.options.nodeIdsByOpName[tail] : undefined;
   }
 
   /**
@@ -182,7 +185,19 @@ export class DagsterGraphEventBridge {
     }
 
     const nodeId = this.resolveNodeId(event.stepKey);
-    if (!nodeId) return;
+    if (!nodeId) {
+      // Run-level, non-terminal transitions (e.g. `RUN_START`) carry no step
+      // key and map onto the workflow without a node id. A step event whose key
+      // the inspected job does not know is still ignored.
+      if (event.stepKey !== undefined) return;
+      await this.options.sink.emit({
+        type,
+        runId: this.options.graphRunId,
+        workflowId: this.options.workflowId,
+        path: [],
+      });
+      return;
+    }
 
     const status = this.nodeStatus(event.type);
     const outputs = this.extractOutputs(event);
