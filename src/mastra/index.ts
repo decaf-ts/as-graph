@@ -12,5 +12,6 @@ export * from "./MastraSchemaConverter";
 export * from "./MastraConditionBridge";
 export * from "./MastraEventBridge";
 export * from "./MastraWorkflowCompiler";
+export * from "./MastraWorkflowManager";
 export * from "./MastraResumeGuard";
 export * from "./MastraGraphExecutionBackend";

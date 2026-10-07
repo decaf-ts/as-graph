@@ -27,9 +27,16 @@ describe("MastraGraphExecutionBackend", () => {
 
     expect(backend.local).toBe(false);
     expect(backend.codeMode).toBe("unsupported");
-    expect(backend.capabilities).toEqual({
-      codeMode: "unsupported",
-      workflows: { list: "supported", get: "supported" },
+    expect(backend.capabilities).toEqual(resolveMastraCapabilities());
+    expect(backend.capabilities.workflows).toEqual({
+      list: "supported",
+      get: "supported",
+      create: "supported",
+      update: "supported",
+      delete: "supported",
+      serialize: "supported",
+      persist: "not_supported",
+      version: "extension_point",
     });
     expect(GraphExecutionBackendRegistry.get(MASTRA_BACKEND_FLAVOUR)).toBe(backend);
   });
@@ -46,7 +53,16 @@ describe("MastraGraphExecutionBackend", () => {
     );
     expect(resolveMastraCapabilities()).toEqual({
       codeMode: "unsupported",
-      workflows: { list: "supported", get: "supported" },
+      workflows: {
+        list: "supported",
+        get: "supported",
+        create: "supported",
+        update: "supported",
+        delete: "supported",
+        serialize: "supported",
+        persist: "not_supported",
+        version: "extension_point",
+      },
     });
   });
 

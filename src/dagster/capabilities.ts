@@ -1,14 +1,16 @@
 /**
  * @module as-graph/dagster/capabilities
- * @summary Exported Dagster capability table (read-only driver).
+ * @summary Exported Dagster capability table.
  * @description The wrapper declares, per feature, whether Dagster supports it
- * natively, not at all, or only through an extension point. Under the owner's
- * read-only mandate every authoring/translation feature is `not_supported` with
- * honest detail: the driver lists, looks up, and inspects already-existing
- * Dagster workflows and never authors one. The table is exported both as
- * engine-agnostic {@link GraphBackendCapabilities} (code-mode + workflow
- * listing/lookup) and as the full per-feature table so hosts and servers can
- * surface honest limitations without probing the backend.
+ * natively, not at all, or only through an extension point. Every
+ * authoring/translation feature is `not_supported` with honest detail: the driver
+ * never authors a Dagster workflow or emits Python. The read side (listing and
+ * inspecting already-deployed jobs) is `supported`, and executing/replaying
+ * EXISTING workflows is `supported` behind the explicit `executionEnabled` config
+ * gate (fails closed with `GRAPH_DAGSTER_EXECUTION_NOT_ENABLED` when off). The
+ * table is exported both as engine-agnostic {@link GraphBackendCapabilities}
+ * (code-mode + workflow listing/lookup) and as the full per-feature table so hosts
+ * and servers can surface honest limitations without probing the backend.
  */
 import type { GraphBackendCapabilities } from "../engine/execution/GraphExecutionBackend";
 import type { DagsterCapabilityRow } from "./DagsterTypes";
@@ -16,9 +18,10 @@ import type { DagsterClient } from "./DagsterTypes";
 
 /**
  * The exported Dagster capability table. Every authoring/translation row is
- * `not_supported`: the driver is read-only and never generates, embeds, or emits
- * Python source. The single `supported` row is the read side — listing and
- * inspecting already-deployed jobs through the client port.
+ * `not_supported`: the driver never generates, embeds, or emits Python source. The
+ * `supported` rows are the read side (listing/inspecting already-deployed jobs)
+ * and the gated execution of EXISTING workflows (launch a run / replay an existing
+ * run), which is opt-in via the `executionEnabled` config gate.
  */
 export const DAGSTER_CAPABILITY_TABLE: DagsterCapabilityRow[] = [
   {
@@ -74,7 +77,8 @@ export const DAGSTER_CAPABILITY_TABLE: DagsterCapabilityRow[] = [
   {
     feature: "manual trigger",
     verdict: "not_supported",
-    detail: "Read-only driver: does not author or launch Dagster runs.",
+    detail:
+      "Driver: does not author Dagster triggers. Launching a run of an already-deployed job is the separate, gated `execute existing workflow` capability.",
   },
   {
     feature: "agent / custom node kinds",
@@ -87,6 +91,18 @@ export const DAGSTER_CAPABILITY_TABLE: DagsterCapabilityRow[] = [
     verdict: "supported",
     detail:
       "Lists and inspects already-deployed Dagster jobs through the read-only client port.",
+  },
+  {
+    feature: "execute existing workflow (launch run)",
+    verdict: "supported",
+    detail:
+      "Launches a run of an already-deployed Dagster job and observes it to a canonical result. The canonical job is bound from the requested workflow id (`getJob`); a document whose `metadata.dagsterJobName` names a different job is rejected. The optional raw `metadata.dagsterRunConfig` object is forwarded verbatim as Dagster `runConfigData`, and its shape is allowlisted to JSON-safe values only. Gated: requires `executionEnabled: true` on the backend config and fails closed with GRAPH_DAGSTER_EXECUTION_NOT_ENABLED when off.",
+  },
+  {
+    feature: "replay / re-execute existing run",
+    verdict: "supported",
+    detail:
+      "Re-executes an existing Dagster run and observes the new run to a canonical result. The supplied run id is bound to the requested workflow id (`getRun`); a cross-job run is rejected with GRAPH_DAGSTER_RUN_WORKFLOW_MISMATCH. Gated by the same `executionEnabled` config and fails closed with GRAPH_DAGSTER_EXECUTION_NOT_ENABLED when off.",
   },
 ];
 

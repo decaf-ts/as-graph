@@ -4,7 +4,11 @@
 # 1. Materializes a pre-existing run of `etl_pipeline` into the shared run
 #    storage, so the read-only driver can prove run visibility of an EXISTING run
 #    without the driver ever launching one.
-# 2. Starts a real `dagster-webserver` serving the GraphQL API the harness client
+# 2. Starts a real `dagster-daemon` so runs launched through the webserver's
+#    GraphQL surface are actually executed (the config-gated execute/replay path).
+#    The daemon is harness infrastructure; the driver never manages Dagster
+#    processes.
+# 3. Starts a real `dagster-webserver` serving the GraphQL API the harness client
 #    speaks to.
 set -euo pipefail
 
@@ -21,5 +25,9 @@ mkdir -p "${DAGSTER_HOME}"
 # Materialize a real run in the webserver's run storage. This is harness setup
 # (an already-existing run), not driver authoring.
 dagster job execute -f "${DAGSTER_APP}/definitions.py" -j etl_pipeline >/dev/null 2>&1 || true
+
+# Run the daemon so `launchRun`/`launchRunReexecution` requests enqueued by the
+# webserver are picked up and executed. It loads the same code location.
+dagster-daemon run -f "${DAGSTER_APP}/definitions.py" >/tmp/dagster-daemon.log 2>&1 &
 
 exec dagster-webserver -h "${DAGSTER_BIND_HOST}" -p 3000 -f "${DAGSTER_APP}/definitions.py"

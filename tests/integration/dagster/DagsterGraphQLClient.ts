@@ -4,10 +4,12 @@
  * (SAA-306).
  * @description A thin transport that implements the production `DagsterClient`
  * port against a real `dagster-webserver` GraphQL endpoint. It is the only piece
- * of the harness that talks to Dagster, and it deliberately exposes **no authoring
- * method**: there is no `launchRun`, no Python emission, no job/op registration.
- * The read-only driver under test is wired to this client exactly as a host would
- * wire its own transport.
+ * of the harness that talks to Dagster. It exposes **no authoring method**: it
+ * never emits Python and never registers a job/op. It does implement the port's
+ * gated execution surface (`launchRun` of an already-deployed job and
+ * `replayRun` of an existing run via Dagster's `launchRunReexecution`), exactly as
+ * a host would wire its own transport; the production driver only calls those when
+ * its explicit `executionEnabled` gate is on.
  *
  * The client maps the raw GraphQL event vocabulary onto the driver's documented
  * `DagsterEventRecord` contract. Dagster emits far more step-scoped telemetry
@@ -27,6 +29,9 @@ import type {
   DagsterJobSchedule,
   DagsterJobSensor,
   DagsterJobSummary,
+  DagsterLaunchedRun,
+  DagsterLaunchRunRequest,
+  DagsterReplayRunRequest,
   DagsterRunRecord,
   DagsterRunSubscription,
   DagsterRunSubscriptionOptions,
@@ -336,6 +341,88 @@ const TERMINATE_RUN_MUTATION = /* GraphQL */ `
 `;
 
 /**
+ * Launches a run of an already-deployed job. This is not authoring: the job must
+ * already exist in the deployment; the mutation only selects it and launches a
+ * run. The driver never emits Python.
+ */
+const LAUNCH_RUN_MUTATION = /* GraphQL */ `
+  mutation AsGraphLaunchRun($executionParams: ExecutionParams!) {
+    launchRun(executionParams: $executionParams) {
+      __typename
+      ... on LaunchRunSuccess {
+        run {
+          runId
+          status
+        }
+      }
+      ... on RunConfigValidationInvalid {
+        errors {
+          message
+        }
+      }
+      ... on PipelineNotFoundError {
+        message
+      }
+      ... on RunConflict {
+        message
+      }
+      ... on UnauthorizedError {
+        message
+      }
+      ... on PythonError {
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * Re-executes an existing run from its run id through Dagster's dedicated
+ * re-execution mutation (`launchRunReexecution`). Dagster requires exactly one of
+ * `executionParams` or `reexecutionParams`; selecting a parent run uses the
+ * latter. The parent run must already exist; the driver never authors a job or
+ * emits Python.
+ */
+const REEXECUTE_RUN_MUTATION = /* GraphQL */ `
+  mutation AsGraphReexecuteRun($reexecutionParams: ReexecutionParams!) {
+    launchRunReexecution(reexecutionParams: $reexecutionParams) {
+      __typename
+      ... on LaunchRunSuccess {
+        run {
+          runId
+          status
+        }
+      }
+      ... on RunConfigValidationInvalid {
+        errors {
+          message
+        }
+      }
+      ... on PipelineNotFoundError {
+        message
+      }
+      ... on RunConflict {
+        message
+      }
+      ... on UnauthorizedError {
+        message
+      }
+      ... on PythonError {
+        message
+      }
+    }
+  }
+`;
+
+/** The `run { runId status }` payload of a successful launch/re-execution. */
+interface RawLaunchedRun {
+  __typename: string;
+  run?: { runId: string; status?: string | null };
+  errors?: { message: string }[];
+  message?: string;
+}
+
+/**
  * Real, read-only Dagster GraphQL client implementing the production
  * `DagsterClient` port. It never authors a workflow or launches a run.
  */
@@ -519,6 +606,117 @@ export class DagsterGraphQLClient implements DagsterClient {
   }
 
   /**
+   * Launches a run of an ALREADY-DEPLOYED Dagster job through the real GraphQL
+   * `launchRun` mutation. The job must already exist in the deployment; no job or
+   * op is authored and no Python is emitted.
+   *
+   * @param request - The job name, optional raw run config, and optional tags.
+   * @returns The launched run's id and initial status.
+   */
+  async launchRun(request: DagsterLaunchRunRequest): Promise<DagsterLaunchedRun> {
+    const data = await this.request<{ launchRun: RawLaunchedRun }>(
+      LAUNCH_RUN_MUTATION,
+      {
+        executionParams: this.executionParams(
+          request.jobName,
+          request.runConfig,
+          request.tags
+        ),
+      }
+    );
+    return this.toLaunchedRun(data.launchRun, request.jobName);
+  }
+
+  /**
+   * Re-executes an EXISTING Dagster run from its run id through the real GraphQL
+   * `launchRunReexecution` mutation (Dagster's re-execution surface). The parent
+   * run must already exist; no job or op is authored and no Python is emitted.
+   *
+   * @param request - The parent run id, its job name, and optional tags.
+   * @returns The re-executed run's id and initial status.
+   */
+  async replayRun(
+    request: DagsterReplayRunRequest
+  ): Promise<DagsterLaunchedRun> {
+    const reexecutionParams: Record<string, unknown> = {
+      parentRunId: request.dagsterRunId,
+      strategy: "ALL_STEPS",
+    };
+    if (request.tags && Object.keys(request.tags).length > 0) {
+      reexecutionParams["extraTags"] = Object.entries(request.tags).map(
+        ([key, value]) => ({ key, value })
+      );
+    }
+    const data = await this.request<{ launchRunReexecution: RawLaunchedRun }>(
+      REEXECUTE_RUN_MUTATION,
+      { reexecutionParams }
+    );
+    return this.toLaunchedRun(
+      data.launchRunReexecution,
+      request.jobName ?? request.dagsterRunId
+    );
+  }
+
+  /**
+   * Builds the GraphQL `ExecutionParams` for a launch/re-execution: the job
+   * selector, optional raw run config, and optional run tags.
+   *
+   * @param jobName - The already-deployed job name.
+   * @param runConfig - Optional raw Dagster run config (forwarded verbatim).
+   * @param tags - Optional run tags.
+   * @returns The `ExecutionParams` input object.
+   */
+  private executionParams(
+    jobName: string,
+    runConfig?: Record<string, unknown>,
+    tags?: Record<string, string>
+  ): Record<string, unknown> {
+    const executionMetadata: Record<string, unknown> = {};
+    if (tags && Object.keys(tags).length > 0) {
+      executionMetadata["tags"] = Object.entries(tags).map(([key, value]) => ({
+        key,
+        value,
+      }));
+    }
+    return {
+      selector: {
+        pipelineName: jobName,
+        repositoryName: this.repositoryName,
+        repositoryLocationName: this.repositoryLocationName,
+      },
+      ...(runConfig ? { runConfigData: runConfig } : {}),
+      ...(Object.keys(executionMetadata).length > 0
+        ? { executionMetadata }
+        : {}),
+    };
+  }
+
+  /**
+   * Unwraps a launch/re-execution result union into a run handle, failing loudly
+   * on a launch error.
+   *
+   * @param result - The raw launch result union.
+   * @param jobName - The job name, for error context.
+   * @returns The launched run's id and initial status.
+   */
+  private toLaunchedRun(
+    result: RawLaunchedRun,
+    jobName: string
+  ): DagsterLaunchedRun {
+    if (result.__typename !== "LaunchRunSuccess" || !result.run) {
+      const detail =
+        result.errors?.map((error) => error.message).join("; ") ??
+        result.message ??
+        result.__typename;
+      throw new Error(`Dagster launch of job '${jobName}' failed: ${detail}`);
+    }
+    return {
+      runId: result.run.runId,
+      status: this.toRunStatus(result.run.status),
+    };
+  }
+
+  /**
    * Reads an EXISTING Dagster run's terminal record.
    *
    * @param runId - The Dagster run id.
@@ -532,18 +730,22 @@ export class DagsterGraphQLClient implements DagsterClient {
   }
 
   /**
-   * Harness-only helper: lists the ids of runs for a job (or every run when no
-   * job name is given). Not part of the `DagsterClient` port; it exists so the
-   * suite can discover a pre-existing run without launching one.
+   * Harness-only helper: lists the runs for a job (or every run when no job name
+   * is given) with their raw Dagster status. Not part of the `DagsterClient` port;
+   * it exists so the suite can discover a pre-existing terminal run (e.g. the
+   * `etl_pipeline` run materialized at startup) without launching one, and can
+   * count runs before/after an operation to prove no run was created.
    *
    * @param jobName - Optional Dagster job name filter.
-   * @returns The run ids.
+   * @returns The runs, with raw Dagster run status.
    */
-  async listRunIds(jobName?: string): Promise<string[]> {
+  async listRuns(
+    jobName?: string
+  ): Promise<{ runId: string; jobName: string; status: string }[]> {
     const data = await this.request<{
       runsOrError: {
         __typename: string;
-        results?: { runId: string; jobName: string }[];
+        results?: { runId: string; jobName: string; status: string }[];
         message?: string;
       };
     }>(RUNS_QUERY, jobName ? { pipelineName: jobName } : {});
@@ -553,7 +755,24 @@ export class DagsterGraphQLClient implements DagsterClient {
         `Dagster run listing failed: ${runs.message ?? runs.__typename}`
       );
     }
-    return (runs.results ?? []).map((run) => run.runId);
+    return (runs.results ?? []).map((run) => ({
+      runId: run.runId,
+      jobName: run.jobName,
+      status: run.status,
+    }));
+  }
+
+  /**
+   * Harness-only helper: lists the ids of runs for a job (or every run when no
+   * job name is given). Not part of the `DagsterClient` port; it exists so the
+   * suite can discover a pre-existing run without launching one.
+   *
+   * @param jobName - Optional Dagster job name filter.
+   * @returns The run ids.
+   */
+  async listRunIds(jobName?: string): Promise<string[]> {
+    const runs = await this.listRuns(jobName);
+    return runs.map((run) => run.runId);
   }
 
   /** Disposes the client; the fetch transport holds no resources. */
@@ -664,6 +883,7 @@ export class DagsterGraphQLClient implements DagsterClient {
       runId: run.runId ?? "",
       status: this.toRunStatus(run.status),
       outputs: {},
+      ...(run.jobName ? { jobName: run.jobName } : {}),
     };
     if (run.startTime) {
       record.startedAt = new Date(run.startTime * 1000).toISOString();
@@ -690,6 +910,10 @@ export class DagsterGraphQLClient implements DagsterClient {
         return "failure";
       case "CANCELED":
         return "canceled";
+      case "QUEUED":
+        return "QUEUED";
+      case "STARTING":
+        return "STARTING";
       default:
         return "started";
     }

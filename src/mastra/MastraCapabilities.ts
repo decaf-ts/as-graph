@@ -8,7 +8,10 @@
  * listing/lookup) so hosts and servers can surface honest limitations without
  * probing the backend.
  */
-import type { GraphBackendCapabilities } from "../engine/execution/GraphExecutionBackend";
+import type {
+  GraphBackendCapabilities,
+  GraphBackendCapabilityStatus,
+} from "../engine/execution/GraphExecutionBackend";
 
 /**
  * Whether Mastra supports a feature natively, not at all, only partially, or
@@ -104,19 +107,131 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
     verdict: "SUPPORTED",
     detail: "over the compiled-workflow cache",
   },
+  {
+    feature: "workflowCreate",
+    verdict: "SUPPORTED",
+    detail:
+      "compile a canonical document and register it on the wired Mastra runtime (real addWorkflow)",
+  },
+  {
+    feature: "workflowUpdate",
+    verdict: "SUPPORTED",
+    detail:
+      "recompile and replace the live registration (real removeWorkflow then addWorkflow)",
+  },
+  {
+    feature: "workflowDelete",
+    verdict: "SUPPORTED",
+    detail: "remove the live registration (real removeWorkflow)",
+  },
+  {
+    feature: "workflowRegistryList",
+    verdict: "SUPPORTED",
+    detail: "list the registered workflows (real listWorkflows)",
+  },
+  {
+    feature: "workflowRegistryLookup",
+    verdict: "SUPPORTED",
+    detail: "read a registered workflow (real getWorkflow)",
+  },
+  {
+    feature: "workflowSerialize",
+    verdict: "SUPPORTED",
+    detail: "the real Workflow.serializedStepGraph of a registered workflow",
+  },
+  {
+    feature: "workflowPersist",
+    verdict: "NOT-SUPPORTED",
+    detail:
+      "real addDynamicWorkflow persists only agent/tool-referenced steps; the canonical translation emits host code steps",
+  },
+  {
+    feature: "workflowVersion",
+    verdict: "EXTENSION-POINT",
+    detail:
+      "Mastra has no native workflow version; the wrapper tracks the canonical document fingerprint",
+  },
 ];
 
 /**
- * Engine-agnostic capability projection of the Mastra backend: no in-process
- * code execution, and workflow list/lookup are supported over the
- * compiled-workflow cache.
- *
- * @returns The {@link GraphBackendCapabilities} served by the Mastra backend.
+ * The three-valued management status a Mastra workflow-management capability row
+ * resolves to. Extends the engine-agnostic two-valued
+ * {@link GraphBackendCapabilityStatus} with the honest `extension_point` state.
  */
-export function resolveMastraCapabilities(): GraphBackendCapabilities {
+export type MastraWorkflowCapabilityStatus =
+  | GraphBackendCapabilityStatus
+  | "extension_point";
+
+/**
+ * The Mastra workflow-management capability projection (SAA-346): the real
+ * `@mastra/core` management operations the driver exposes, each resolved honestly
+ * from the exported feature table.
+ */
+export interface MastraWorkflowManagementCapabilities {
+  /** Create (register a translated canonical document) support. */
+  create: MastraWorkflowCapabilityStatus;
+  /** Update/edit (recompile and replace the registration) support. */
+  update: MastraWorkflowCapabilityStatus;
+  /** Delete (remove the registration) support. */
+  delete: MastraWorkflowCapabilityStatus;
+  /** Serialization (real `serializedStepGraph`) support. */
+  serialize: MastraWorkflowCapabilityStatus;
+  /** Persistence (real `addDynamicWorkflow`) support. */
+  persist: MastraWorkflowCapabilityStatus;
+  /** Native workflow versioning support. */
+  version: MastraWorkflowCapabilityStatus;
+}
+
+/**
+ * The full Mastra backend capability projection: the engine-agnostic
+ * {@link GraphBackendCapabilities} plus the Mastra-specific workflow-management
+ * statuses.
+ */
+export interface MastraBackendCapabilities extends GraphBackendCapabilities {
+  /** Workflow list/lookup plus the management statuses. */
+  workflows: GraphBackendCapabilities["workflows"] &
+    MastraWorkflowManagementCapabilities;
+}
+
+/**
+ * Resolves a feature row's three-valued management status from the exported
+ * table, mapping the wrapper's `SUPPORTED`/`NOT-SUPPORTED`/`EXTENSION-POINT`
+ * verdicts onto the projection's lowercase vocabulary.
+ *
+ * @param feature - The feature row name to resolve.
+ * @returns The three-valued management status.
+ */
+export function mastraCapabilityStatusOf(
+  feature: string
+): MastraWorkflowCapabilityStatus {
+  const verdict = mastraCapabilityOf(feature)?.verdict;
+  if (verdict === "SUPPORTED") return "supported";
+  if (verdict === "EXTENSION-POINT") return "extension_point";
+  // Fail closed (C6): a missing/renamed row or a PARTIAL verdict must never
+  // silently resolve to `supported`.
+  return "not_supported";
+}
+
+/**
+ * Engine-agnostic capability projection of the Mastra backend: no in-process
+ * code execution, workflow list/lookup supported over the compiled-workflow cache,
+ * and the SAA-346 workflow-management statuses resolved from the exported table.
+ *
+ * @returns The {@link MastraBackendCapabilities} served by the Mastra backend.
+ */
+export function resolveMastraCapabilities(): MastraBackendCapabilities {
   return {
     codeMode: "unsupported",
-    workflows: { list: "supported", get: "supported" },
+    workflows: {
+      list: "supported",
+      get: "supported",
+      create: mastraCapabilityStatusOf("workflowCreate"),
+      update: mastraCapabilityStatusOf("workflowUpdate"),
+      delete: mastraCapabilityStatusOf("workflowDelete"),
+      serialize: mastraCapabilityStatusOf("workflowSerialize"),
+      persist: mastraCapabilityStatusOf("workflowPersist"),
+      version: mastraCapabilityStatusOf("workflowVersion"),
+    },
   };
 }
 

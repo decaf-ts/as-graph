@@ -105,12 +105,45 @@ describe("Dagster read-only surface", () => {
     expect(Array.isArray(surface["DAGSTER_CAPABILITY_TABLE"])).toBe(true);
   });
 
-  it("declares no authoring/translation capability row as supported", () => {
-    for (const row of DAGSTER_CAPABILITY_TABLE) {
-      if (row.feature === "list / inspect existing workflows") {
-        expect(row.verdict).toBe("supported");
-        continue;
-      }
+  it("declares only the read side and the two gated execution rows as supported", () => {
+    const supported = DAGSTER_CAPABILITY_TABLE.filter(
+      (row) => row.verdict === "supported"
+    );
+    expect(supported.map((row) => row.feature).sort()).toEqual(
+      [
+        "execute existing workflow (launch run)",
+        "list / inspect existing workflows",
+        "replay / re-execute existing run",
+      ].sort()
+    );
+
+    const executeRow = DAGSTER_CAPABILITY_TABLE.find(
+      (row) => row.feature === "execute existing workflow (launch run)"
+    );
+    expect(executeRow?.verdict).toBe("supported");
+    expect(executeRow?.detail).toContain("executionEnabled");
+    expect(executeRow?.detail).toContain(
+      DAGSTER_ERROR.EXECUTION_NOT_ENABLED
+    );
+
+    const replayRow = DAGSTER_CAPABILITY_TABLE.find(
+      (row) => row.feature === "replay / re-execute existing run"
+    );
+    expect(replayRow?.verdict).toBe("supported");
+    expect(replayRow?.detail).toContain("executionEnabled");
+    expect(replayRow?.detail).toContain(
+      DAGSTER_ERROR.EXECUTION_NOT_ENABLED
+    );
+
+    // Every authoring/translation row stays not_supported.
+    const authoringRows = DAGSTER_CAPABILITY_TABLE.filter(
+      (row) =>
+        row.feature !== "list / inspect existing workflows" &&
+        row.feature !== "execute existing workflow (launch run)" &&
+        row.feature !== "replay / re-execute existing run"
+    );
+    expect(authoringRows.length).toBeGreaterThan(0);
+    for (const row of authoringRows) {
       expect(row.verdict).toBe("not_supported");
     }
   });

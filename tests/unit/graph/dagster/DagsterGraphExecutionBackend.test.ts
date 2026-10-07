@@ -15,7 +15,11 @@ import type { GraphExecutionEventSink } from "../../../../src/engine/execution/G
 import type { GraphBackendExecutionRequest } from "../../../../src/engine/execution/GraphExecutionBackend";
 import type { GraphExecutionPlan } from "../../../../src/engine/planning/GraphExecutionPlan";
 import { DagsterGraphExecutionBackend } from "../../../../src/dagster/DagsterGraphExecutionBackend";
-import { DAGSTER_BACKEND_FLAVOUR } from "../../../../src/dagster/constants";
+import {
+  DAGSTER_BACKEND_FLAVOUR,
+  DAGSTER_ERROR,
+  DAGSTER_TAG_NAMESPACE,
+} from "../../../../src/dagster/constants";
 import { GraphWorkflowDocumentBuilder } from "../../../../src/shared/graph";
 import { documentNode } from "../engine-fixtures";
 import {
@@ -48,8 +52,12 @@ function request(
       inputs: [],
       outputs: [],
       nodes: [
-        documentNode("adder", "core.flow.log"),
-        documentNode("multiplier", "core.utility.map"),
+        documentNode("adder", "core.flow.log", {}, {
+          metadata: { dagsterOpName: "adder" },
+        }),
+        documentNode("multiplier", "core.utility.map", {}, {
+          metadata: { dagsterOpName: "multiplier" },
+        }),
       ],
       edges: [],
     },
@@ -86,27 +94,28 @@ describe("DagsterGraphExecutionBackend (read-only)", () => {
     expect(backend.capabilities.codeMode).toBe("unsupported");
   });
 
-  it("throws NOT_SUPPORTED on authoring and exposes no launch path", async () => {
+  it("fails closed with EXECUTION_NOT_ENABLED on execute with the gate off", async () => {
     const client = new FakeDagsterClient();
     const backend = new DagsterGraphExecutionBackend();
     await backend.initialize({ client });
 
-    await expect(backend.execute(request(new RecordingSink()))).rejects.toMatchObject(
-      {
-        graphCode: "GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED",
-      }
-    );
+    await expect(
+      backend.execute(request(new RecordingSink()))
+    ).rejects.toMatchObject({
+      graphCode: DAGSTER_ERROR.EXECUTION_NOT_ENABLED,
+    });
+    // The default read-only port exposes no launch path at all.
     expect(
       (client as unknown as { launchRun?: unknown }).launchRun
     ).toBeUndefined();
   });
 
-  it("throws NOT_SUPPORTED on authoring even without a client", async () => {
+  it("checks the gate before the client and fails closed even without a client", async () => {
     const backend = new DagsterGraphExecutionBackend();
     await expect(
       backend.execute(request(new RecordingSink()))
     ).rejects.toMatchObject({
-      graphCode: "GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED",
+      graphCode: DAGSTER_ERROR.EXECUTION_NOT_ENABLED,
     });
   });
 
@@ -235,5 +244,195 @@ describe("DagsterGraphExecutionBackend (read-only)", () => {
     await expect(backend.getWorkflow("dagsterwf_job")).rejects.toMatchObject({
       graphCode: "GRAPH_DAGSTER_CLIENT_NOT_CONFIGURED",
     });
+  });
+});
+
+/** The step events the fake replays when a launched/replayed run is observed. */
+const SCRIPTED_STEP_EVENTS = [
+  { type: "STEP_START", stepKey: "adder" },
+  { type: "STEP_SUCCESS", stepKey: "adder" },
+  { type: "STEP_START", stepKey: "multiplier" },
+  { type: "STEP_SUCCESS", stepKey: "multiplier" },
+];
+
+/** The terminal record the fake returns for a launched/replayed run. */
+const SCRIPTED_TERMINAL = {
+  runId: "run-terminal",
+  status: "success" as const,
+  outputs: { result: 2 },
+};
+
+/** Patterns that only ever appear in generated/embedded Python source. */
+const PYTHON_SOURCE_PATTERNS: RegExp[] = [
+  /\bdef\s+[A-Za-z_]\w*\s*\(/,
+  /@dagster\./,
+  /\bimport\s+dagster\b/,
+];
+
+describe("DagsterGraphExecutionBackend (config-gated execute/replay)", () => {
+  afterEach(() => {
+    GraphExecutionBackendRegistry.clear();
+  });
+
+  it("fails closed with EXECUTION_NOT_SUPPORTED when the gate is on but the port has no launchRun", async () => {
+    const client = new FakeDagsterClient();
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client, executionEnabled: true });
+
+    await expect(
+      backend.execute(request(new RecordingSink()))
+    ).rejects.toMatchObject({
+      graphCode: DAGSTER_ERROR.EXECUTION_NOT_SUPPORTED,
+    });
+  });
+
+  it("executes an already-deployed workflow through a scripted launchRun", async () => {
+    const client = new FakeDagsterClient(
+      SCRIPTED_STEP_EVENTS,
+      SCRIPTED_TERMINAL,
+      [],
+      {},
+      { launchRunId: "launched-run-1", startedPolls: 1 }
+    );
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client, executionEnabled: true });
+    const sink = new RecordingSink();
+
+    const result = await backend.execute(request(sink));
+
+    expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
+    expect(result.outputs).toEqual({ result: 2 });
+    expect(Object.keys(result.nodeResults).sort()).toEqual([
+      "adder",
+      "multiplier",
+    ]);
+    expect(
+      sink.emitted.some(
+        (event) => event.type === GraphExecutionEventType.WORKFLOW_COMPLETED
+      )
+    ).toBe(true);
+
+    expect(client.launched).toHaveLength(1);
+    expect(client.launched[0]).toMatchObject({
+      jobName: "dagsterwf",
+      tags: {
+        [`${DAGSTER_TAG_NAMESPACE}graphRunId`]: "graph-run-1",
+        [`${DAGSTER_TAG_NAMESPACE}workflowId`]: "dagsterwf",
+      },
+    });
+    expect(client.subscribed).toEqual(["launched-run-1"]);
+
+    // The driver never generates or emits Python source on the execution path.
+    const emitted = JSON.stringify(sink.emitted);
+    for (const pattern of PYTHON_SOURCE_PATTERNS) {
+      expect(emitted).not.toMatch(pattern);
+    }
+  });
+
+  it("maps a launch transport failure onto RUN_LAUNCH_FAILED", async () => {
+    const client = new FakeDagsterClient(
+      [],
+      SCRIPTED_TERMINAL,
+      [],
+      {},
+      { launchError: new Error("gateway refused the launch") }
+    );
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client, executionEnabled: true });
+
+    await expect(
+      backend.execute(request(new RecordingSink()))
+    ).rejects.toMatchObject({
+      graphCode: DAGSTER_ERROR.RUN_LAUNCH_FAILED,
+    });
+  });
+
+  it("fails closed with EXECUTION_NOT_ENABLED on replayRun with the gate off", async () => {
+    const client = new FakeDagsterClient(
+      SCRIPTED_STEP_EVENTS,
+      SCRIPTED_TERMINAL,
+      [],
+      {},
+      { replayRunId: "replayed-run-1" }
+    );
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client });
+
+    await expect(
+      backend.replayRun({
+        dagsterRunId: "run-1",
+        workflowId: DAGSTER_FIXTURE_JOB.name,
+        events: new RecordingSink(),
+      })
+    ).rejects.toMatchObject({
+      graphCode: DAGSTER_ERROR.EXECUTION_NOT_ENABLED,
+    });
+    expect(client.replayed).toHaveLength(0);
+  });
+
+  it("fails closed with REPLAY_NOT_SUPPORTED when the gate is on but the port has no replayRun", async () => {
+    const client = new FakeDagsterClient(
+      SCRIPTED_STEP_EVENTS,
+      SCRIPTED_TERMINAL,
+      [],
+      {},
+      { launchRunId: "launched-run-1" }
+    );
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client, executionEnabled: true });
+
+    await expect(
+      backend.replayRun({
+        dagsterRunId: "run-1",
+        workflowId: DAGSTER_FIXTURE_JOB.name,
+        events: new RecordingSink(),
+      })
+    ).rejects.toMatchObject({
+      graphCode: DAGSTER_ERROR.REPLAY_NOT_SUPPORTED,
+    });
+    expect(client.replayed).toHaveLength(0);
+  });
+
+  it("replays an existing run and observes the NEW run", async () => {
+    const client = new FakeDagsterClient(
+      SCRIPTED_STEP_EVENTS,
+      SCRIPTED_TERMINAL,
+      [],
+      {},
+      {
+        replayRunId: "replayed-run-1",
+        startedPolls: 1,
+        runJobNames: { "run-1": DAGSTER_FIXTURE_JOB.name },
+      }
+    );
+    const backend = new DagsterGraphExecutionBackend();
+    await backend.initialize({ client, executionEnabled: true });
+    const sink = new RecordingSink();
+
+    const result = await backend.replayRun({
+      dagsterRunId: "run-1",
+      workflowId: DAGSTER_FIXTURE_JOB.name,
+      events: sink,
+    });
+
+    expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
+    expect(result.workflowId).toBe(DAGSTER_FIXTURE_JOB.name);
+    expect(Object.keys(result.nodeResults).sort()).toEqual([
+      "adder",
+      "multiplier",
+    ]);
+    expect(
+      sink.emitted.some(
+        (event) => event.type === GraphExecutionEventType.WORKFLOW_COMPLETED
+      )
+    ).toBe(true);
+
+    expect(client.replayed).toHaveLength(1);
+    expect(client.replayed[0]).toMatchObject({
+      dagsterRunId: "run-1",
+      jobName: DAGSTER_FIXTURE_JOB.name,
+    });
+    // The observed run is the NEW run, not the parent run.
+    expect(client.subscribed).toEqual(["replayed-run-1"]);
   });
 });

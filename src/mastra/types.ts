@@ -19,6 +19,7 @@ import type {
   GraphRunId,
 } from "../engine/types";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
+import type { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
 
 /** The flavour id the Mastra backend registers under in the backend registry. */
 export const MASTRA_BACKEND_FLAVOUR = "mastra";
@@ -42,6 +43,24 @@ export const GRAPH_MASTRA_TRANSLATION_JSON_UNSAFE =
 /** No Mastra agent is available for an agent-backed node. */
 export const GRAPH_MASTRA_AGENT_UNAVAILABLE =
   "GRAPH_MASTRA_AGENT_UNAVAILABLE";
+/** The wired Mastra runtime exposes no workflow-management surface. */
+export const GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE =
+  "GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE";
+/** A managed workflow id has no workflow registered on the runtime. */
+export const GRAPH_MASTRA_WORKFLOW_NOT_FOUND =
+  "GRAPH_MASTRA_WORKFLOW_NOT_FOUND";
+/** Persisting a translated workflow to Mastra storage is not supported. */
+export const GRAPH_MASTRA_PERSIST_NOT_SUPPORTED =
+  "GRAPH_MASTRA_PERSIST_NOT_SUPPORTED";
+/** A registered workflow exposes no serializable step graph. */
+export const GRAPH_MASTRA_SERIALIZE_NOT_SUPPORTED =
+  "GRAPH_MASTRA_SERIALIZE_NOT_SUPPORTED";
+/**
+ * A management mutation targeted a workflow the caller may not write, or a host
+ * registration the wrapper did not create (C3 complete-mediation guard).
+ */
+export const GRAPH_MASTRA_WORKFLOW_FORBIDDEN =
+  "GRAPH_MASTRA_WORKFLOW_FORBIDDEN";
 
 /**
  * Execution context handed to a Mastra step handler for one node execution.
@@ -174,6 +193,57 @@ export interface MastraResumeAudit {
   resumeDataBytes?: number;
   /** ISO timestamp of the audit entry. */
   at?: string;
+}
+
+/** How Mastra registered a workflow: declared in code or persisted dynamically. */
+export type MastraWorkflowOrigin = "code" | "dynamic";
+
+/**
+ * Structural port over the real `@mastra/core` `Mastra` workflow-management
+ * surface (1.74.0). Every method mirrors a real instance method; the wrapper
+ * never synthesizes one and fails closed when the wired runtime omits it.
+ */
+export interface MastraWorkflowManagementRuntime {
+  /** Registers a committed workflow on the instance (real `addWorkflow`). */
+  addWorkflow?(workflow: unknown, key?: string): void;
+  /** Removes a registered workflow by key or id (real `removeWorkflow`). */
+  removeWorkflow?(keyOrId: string): boolean;
+  /** Reads a registered workflow by id (real `getWorkflow`). */
+  getWorkflow?(id: string, options?: { serialized?: boolean }): unknown;
+  /** Lists the registered workflows (real `listWorkflows`). */
+  listWorkflows?(options?: { serialized?: boolean }): Record<string, unknown>;
+  /** Reads how a workflow was registered (real `getWorkflowOrigin`). */
+  getWorkflowOrigin?(keyOrId: string): MastraWorkflowOrigin | undefined;
+}
+
+/** A managed workflow as surfaced by the management surface. */
+export interface MastraWorkflowDescriptor {
+  /** Canonical workflow id. */
+  id: string;
+  /** Display name, when the registered workflow exposes one. */
+  name?: string;
+  /** How the workflow was registered, when the runtime reports it. */
+  origin?: MastraWorkflowOrigin;
+  /** Canonical document revision (fingerprint), when the wrapper tracked one. */
+  revision?: string;
+}
+
+/** The JSON-safe serialized form of a registered workflow. */
+export interface MastraSerializedWorkflow {
+  /** Canonical workflow id. */
+  id: string;
+  /** Canonical document revision (fingerprint), when known. */
+  revision?: string;
+  /** The real Mastra `serializedStepGraph`. */
+  steps: unknown;
+}
+
+/** Options a {@link MastraWorkflowManager} is created with. */
+export interface MastraWorkflowManagerOptions {
+  /** The wired real `@mastra/core` runtime (or `undefined` when unwired). */
+  runtime?: unknown;
+  /** The compiler used to translate canonical documents. */
+  compiler?: MastraWorkflowCompiler;
 }
 
 /** The Mastra backend specialised over its configuration type. */

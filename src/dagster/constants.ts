@@ -1,12 +1,14 @@
 /**
  * @module as-graph/dagster/constants
- * @summary Constants for the read-only Dagster graph driver.
+ * @summary Constants for the Dagster graph driver.
  * @description Pinned Dagster engine version/source and the machine-readable
- * error codes the read-only driver raises. Dagster is a Python orchestration engine
- * with no official JavaScript runtime, so this driver never authors workflows and
- * never generates, embeds, or emits Python source: it lists, looks up, and inspects
- * already-deployed Dagster jobs through the host-injected client port. The pin
- * records which engine contract the inspected deployment targets.
+ * error codes the driver raises. Dagster is a Python orchestration engine with no
+ * official JavaScript runtime, so this driver never authors workflows and never
+ * generates, embeds, or emits Python source: it lists, looks up, and inspects
+ * already-deployed Dagster jobs through the host-injected client port, and — only
+ * behind an explicit `executionEnabled` config gate — launches and re-executes
+ * EXISTING workflows through that same port. The pin records which engine contract
+ * the inspected deployment targets.
  */
 
 /**
@@ -54,6 +56,23 @@ export const DAGSTER_DEFAULT_NODE_KIND = "dagster.op";
 export const DAGSTER_ERROR = {
   /** A workflow-authoring operation was requested from the read-only driver. */
   AUTHORING_NOT_SUPPORTED: "GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED",
+  /** Execution/replay was requested but the explicit config gate is off. */
+  EXECUTION_NOT_ENABLED: "GRAPH_DAGSTER_EXECUTION_NOT_ENABLED",
+  /** Execution was requested but the client port exposes no `launchRun`. */
+  EXECUTION_NOT_SUPPORTED: "GRAPH_DAGSTER_EXECUTION_NOT_SUPPORTED",
+  /** Replay was requested but the client port exposes no `replayRun`. */
+  REPLAY_NOT_SUPPORTED: "GRAPH_DAGSTER_REPLAY_NOT_SUPPORTED",
+  /** The client failed to launch or re-execute the run. */
+  RUN_LAUNCH_FAILED: "GRAPH_DAGSTER_RUN_LAUNCH_FAILED",
+  /**
+   * A run or document's declared job does not belong to the requested workflow
+   * (BOLA guard): replay of a foreign run and a metadata-steered launch are
+   * rejected before any launch, and the check fails closed when the owning job
+   * cannot be determined.
+   */
+  RUN_WORKFLOW_MISMATCH: "GRAPH_DAGSTER_RUN_WORKFLOW_MISMATCH",
+  /** The caller-supplied raw run config is not a JSON-safe allowlisted object. */
+  RUN_CONFIG_INVALID: "GRAPH_DAGSTER_RUN_CONFIG_INVALID",
   /** A workflow carries a code-mode surface; the driver cannot author or run it. */
   CODE_MODE_UNSUPPORTED: "GRAPH_DAGSTER_CODE_MODE_UNSUPPORTED",
   /** A backend operation was requested without a wired Dagster client port. */

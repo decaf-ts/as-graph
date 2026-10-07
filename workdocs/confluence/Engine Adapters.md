@@ -50,11 +50,14 @@ npx jest --testPathPatterns="/tests/integration/mastra" --detectOpenHandles
 | `MastraCatalogueListing.test.ts` | `MastraGraphExecutionBackend` list/lookup | catalogue + C23 ownership filtering after real runs |
 | `MastraCapabilities.test.ts` | `MastraCapabilities` | `MASTRA_FEATURE_CAPABILITIES` verdicts and backend projection |
 | `MastraEngineHostConfig.test.ts` | `GraphExecutionEngine.initialize`, `MastraGraphExecutionBackend` config retention | host `backend.initialize({ mastra, stepHandlers, suspendStateReader })` before boot survives the facade merge; negative control fails closed `GRAPH_MASTRA_UNSUPPORTED_KIND` (SAA-312/SAA-315) |
+| `MastraWorkflowManagement.test.ts` | `MastraWorkflowManager`, `MastraGraphExecutionBackend.management`, `MASTRA_FEATURE_CAPABILITIES` | real `addWorkflow`/`removeWorkflow`/`getWorkflow`/`listWorkflows`/`getWorkflowOrigin`, real `Workflow.serializedStepGraph`, create → list/get → edit → run → delete round-trip; fail-closed `GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE`/`GRAPH_MASTRA_WORKFLOW_NOT_FOUND`/`GRAPH_MASTRA_PERSIST_NOT_SUPPORTED` (SAA-346) |
 
 #### Real vs host-injected
 
 - **Real:** `@mastra/core` step/workflow construction, `createRun`, `stream` /
-  `fullStream`, suspend and resume, and `InMemoryStore` snapshots.
+  `fullStream`, suspend and resume, `InMemoryStore` snapshots, and the real
+  `Mastra` workflow registry (`addWorkflow`/`removeWorkflow`/`getWorkflow`/
+  `listWorkflows`/`getWorkflowOrigin`) driving the SAA-346 management surface.
 - **Host-injected (by design):** the frame-bound event sink (the engine normally
   creates it), the `MastraSuspendStateReader` port (Mastra owns the run snapshot),
   and `config.mastra` (a host accessor because the `Mastra` class exposes no public
@@ -69,6 +72,56 @@ before `engine.boot(...)` survives the boot pass. The facade-owned keys `engine`
 `valueAdapter`, `codeSandboxEvaluator`, and `workflowStore` win on collision; every
 other host key is preserved. Re-initializing the backend after boot is therefore no
 longer needed (SAA-312 engine-seam fix). Covered by `MastraEngineHostConfig.test.ts`.
+
+#### Workflow management surface (SAA-346)
+
+`MastraWorkflowManager` (exposed as `MastraGraphExecutionBackend.management`) adds a
+**full-control management surface over real Mastra workflows**, using only methods the
+pinned `@mastra/core@1.74.0` genuinely exposes:
+
+- **create** — compiles the canonical document through `MastraWorkflowCompiler` and
+  registers the committed workflow on the wired `Mastra` instance (`addWorkflow`).
+- **update/edit** — recompiles the updated canonical document and replaces the live
+  registration (`removeWorkflow` then `addWorkflow`; the pinned library documents
+  `removeWorkflow` as the update/delete path).
+- **delete** — removes the live registration (`removeWorkflow`).
+- **list / get** — reads the real Mastra registry (`listWorkflows` / `getWorkflow`),
+  distinct from the engine-agnostic compiled-cache `listWorkflows`/`getWorkflow`.
+- **serialize** — returns the real `Workflow.serializedStepGraph`.
+- **revision** — the canonical document fingerprint; Mastra has no native workflow
+  version, so the wrapper tracks the revision and the row is `EXTENSION-POINT`.
+- **persist** — declared `NOT-SUPPORTED` and fails closed
+  `GRAPH_MASTRA_PERSIST_NOT_SUPPORTED`: the real `addDynamicWorkflow` persists only
+  agent/tool-referenced steps, while the canonical translation emits host code steps.
+
+Every operation validates the runtime surface it needs first and fails closed with
+`GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE` when the wired runtime omits the real
+method; an unknown id fails closed `GRAPH_MASTRA_WORKFLOW_NOT_FOUND`. The
+capability table (`MASTRA_FEATURE_CAPABILITIES`) and
+`resolveMastraCapabilities()` gain honest rows (`workflowCreate`,
+`workflowUpdate`, `workflowDelete`, `workflowRegistryList`,
+`workflowRegistryLookup`, `workflowSerialize` = `SUPPORTED`; `workflowPersist` =
+`NOT-SUPPORTED`; `workflowVersion` = `EXTENSION-POINT`), and the server manifest
+(`src/nest/graph/GraphEngineCapabilityManifest.ts`) derives them from the table at
+module load, so no `src/nest/graph/**` change is needed. for-angular consumes
+the manifest as data only.
+
+#### Management security hardening (SAA-353)
+
+The SAA-347 review hardened the management surface (C3/C6/C7):
+
+- **C3 — complete mediation of management mutations.** `create`/`update`/`delete`
+  now accept the forwarded Decaf context and enforce `canAccessGraphResource` on the
+  wrapper-recorded owner, and refuse to overwrite or delete any registration the
+  wrapper did not create (including a host `origin: "code"` workflow), failing closed
+  `GRAPH_MASTRA_WORKFLOW_FORBIDDEN`.
+- **C6 — capability projection fails closed.** `mastraCapabilityStatusOf` now maps
+  only an explicit `SUPPORTED` verdict to `supported`; a missing/renamed row or a
+  `PARTIAL` verdict resolves to `not_supported` rather than silently `supported`.
+- **C7 — the management surface is cached per backend.** `backend.management` now
+  returns a stable `MastraWorkflowManager` (reset on `initialize`/`dispose`) so a
+  revision recorded at `create` survives the next `management` access instead of being
+  dropped by a fresh manager.
 
 ### Dagster driver integration suite
 
@@ -88,10 +141,11 @@ npm run test:integration:dagster
 
 `run.sh` builds `tests/integration/dagster/Dockerfile` (base `python:3.13-slim`,
 `pip install dagster==1.13.25 dagster-webserver==1.13.25`), starts
-`tests/integration/dagster/app/definitions.py` behind `dagster-webserver`, executes
-`etl_pipeline` once at container startup so a pre-existing run is visible, waits for
-`POST /graphql { version }`, runs Jest with `DAGSTER_GRAPHQL_URL`, and removes the
-container on exit.
+`tests/integration/dagster/app/definitions.py` behind `dagster-webserver` **and a
+`dagster-daemon`** (so runs launched through the webserver's GraphQL surface are
+actually executed), executes `etl_pipeline` once at container startup so a
+pre-existing run is visible, waits for `POST /graphql { version }`, runs Jest with
+`DAGSTER_GRAPHQL_URL`, and removes the container on exit.
 
 Equivalent direct invocation against an already-running gateway:
 
@@ -118,8 +172,47 @@ DAGSTER_GRAPHQL_URL=http://127.0.0.1:3300/graphql \
 
 | Suite | Driver surface | Real engine evidence |
 | --- | --- | --- |
-| `DagsterReadOnlySurface.test.ts` | `DagsterGraphExecutionBackend`, `DAGSTER_CAPABILITY_TABLE`, `./dagster` barrel | real job listing, real op/dependency/asset/schedule/sensor inspection, authoring rejected `GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED` |
+| `DagsterReadOnlySurface.test.ts` | `DagsterGraphExecutionBackend`, `DAGSTER_CAPABILITY_TABLE`, `./dagster` barrel | real job listing, real op/dependency/asset/schedule/sensor inspection, authoring still rejected `GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED` |
 | `DagsterRunVisibility.test.ts` | `DagsterGraphExecutionBackend` run/observe | real pre-existing run terminal record, real `eventConnection` replayed onto the canonical sink, `SUCCEEDED` result with per-op node results |
+| `DagsterExecutionGate.test.ts` | `DagsterGraphExecutionBackend` execute/replay, `DAGSTER_CAPABILITY_TABLE` | gate OFF fails closed `GRAPH_DAGSTER_EXECUTION_NOT_ENABLED` with no network call; gate ON launches an already-deployed job through real `launchRun`, waits for terminal via `getRun`, and observes the completed run; `replayRun` re-executes an existing run through real `launchRunReexecution` and observes the new run |
+
+#### Config-gated execution (SAA-345)
+
+`DagsterGraphExecutionBackend` keeps its read-only surface and adds an
+**explicitly config-gated** execution surface. `initialize` reads
+`DagsterGraphExecutionBackendConfig.executionEnabled` (default `false`); when off,
+`execute` and `replayRun` throw `GRAPH_DAGSTER_EXECUTION_NOT_ENABLED` **before any
+client or network call**. When on, the driver requires the host port to expose
+`launchRun`/`replayRun`; it launches an **already-deployed** job (`launchRun`) or
+re-executes an **existing** run (`launchRunReexecution` via the port's `replayRun`),
+then awaits the run's terminal state through the read-only `getRun` surface and
+observes it through the existing `DagsterGraphEventBridge` to a canonical
+`GraphExecutionResult`. It never emits Python and never authors a job, op, or
+`launchRun`-of-a-translated-document; `GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED` still
+guards that path. The capability table marks both new rows `SUPPORTED` with the
+`executionEnabled` gate named.
+
+#### Execution security hardening (SAA-353)
+
+The SAA-347 security review found four defects on the gated surface; each is fixed
+and covered by `tests/unit/graph/dagster/DagsterExecuteReplayExploit.test.ts` (SAA-352):
+
+- **C1 — run↔workflow binding (replay BOLA).** `replayRun` now reads the source
+  run through `getRun` and requires its owning job (`jobName`/`pipelineName`) to equal
+  the requested workflow id, failing closed `GRAPH_DAGSTER_RUN_WORKFLOW_MISMATCH` when
+  it differs or cannot be determined. A replay can never re-execute a foreign job's run.
+- **C2 — launch job selection is never metadata-driven.** The canonical job is bound
+  from the requested workflow id (`document.id || document.name`) and resolved with
+  `getJob`; a document whose `metadata.dagsterJobName` names a different job is
+  rejected `GRAPH_DAGSTER_RUN_WORKFLOW_MISMATCH` before any launch.
+- **C5 — terminal-status fail-closed.** Only `success`/`failure`/`canceled` are
+  terminal; the real pending statuses `QUEUED`/`STARTING` are polled to terminal, a
+  caller abort (`GRAPH_DAGSTER_OBSERVE_ABORTED`), or the timeout
+  (`GRAPH_DAGSTER_OBSERVE_TIMEOUT`) instead of being read as a terminal result.
+- **C4 — run-config disclosure and shape.** The optional `metadata.dagsterRunConfig`
+  object is forwarded as Dagster `runConfigData`, but only after an allowlist validates
+  it as a JSON-safe value tree (`GRAPH_DAGSTER_RUN_CONFIG_INVALID` otherwise); the
+  capability rows now name this forwarding so callers see it in the manifest.
 
 #### Real vs host-injected
 

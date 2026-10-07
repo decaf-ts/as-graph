@@ -1,12 +1,14 @@
 /**
  * @module as-graph/dagster/DagsterTypes
- * @summary Read-only capability, inspection, run, and client-port types for the
+ * @summary Capability, inspection, run, execution, and client-port types for the
  * Dagster backend.
- * @description The Dagster driver is read-only by owner mandate: it may only list,
- * look up, inspect, and surface ALREADY-EXISTING Dagster workflows. It never
- * authors workflows and never generates, embeds, or emits Python source. The driver
- * talks to Dagster through the host-injected {@link DagsterClient} port, so the
- * wrapper never bundles a phantom JavaScript Dagster runtime.
+ * @description The Dagster driver never authors workflows and never generates,
+ * embeds, or emits Python source. It may list, look up, inspect, and surface
+ * ALREADY-EXISTING Dagster workflows through the host-injected
+ * {@link DagsterClient} port, and — only behind the explicit
+ * {@link DagsterGraphExecutionBackendConfig.executionEnabled} gate — launch a run
+ * of an already-deployed job and re-execute an existing run. The wrapper never
+ * bundles a phantom JavaScript Dagster runtime.
  */
 import type { GraphExecutionEventSink } from "../engine/execution/GraphExecutionBackend";
 
@@ -47,13 +49,29 @@ export interface DagsterEventRecord {
 }
 
 /**
- * A terminal Dagster run record.
+ * The raw Dagster run-status vocabulary the driver may receive. Only `success`,
+ * `failure`, and `canceled` are terminal; `started` and the real Dagster pending
+ * statuses (`QUEUED`/`STARTING`) are non-terminal and must be polled to a terminal
+ * state, a caller abort, or a timeout (C5 fail-closed).
+ */
+export type DagsterRunStatus =
+  | "started"
+  | "success"
+  | "failure"
+  | "canceled"
+  | "QUEUED"
+  | "STARTING";
+
+/**
+ * A Dagster run record. Carries the run's status and, when the port exposes it,
+ * the name of the deployed job that owns the run (`jobName`/`pipelineName`), so the
+ * driver can bind a run to the workflow it belongs to before replaying it (C1).
  */
 export interface DagsterRunRecord {
   /** Dagster run id. */
   runId: string;
-  /** Terminal run status. */
-  status: "started" | "success" | "failure" | "canceled";
+  /** Run status. Only `success`/`failure`/`canceled` are terminal. */
+  status: DagsterRunStatus;
   /** Workflow output values, when the client exposes them. */
   outputs?: Record<string, unknown>;
   /** Run failure, when the run failed. */
@@ -62,6 +80,90 @@ export interface DagsterRunRecord {
   startedAt?: string;
   /** Run finish timestamp. */
   finishedAt?: string;
+  /** Name of the deployed job that owns the run, when the port exposes it. */
+  jobName?: string;
+  /** Legacy alias of {@link DagsterRunRecord.jobName}, when the port exposes it. */
+  pipelineName?: string;
+}
+
+/**
+ * The handle a client port returns when it launches or re-executes a run. Carries
+ * the new Dagster run id and its (initial or terminal) status; the driver then
+ * observes the run through the existing event bridge.
+ */
+export interface DagsterLaunchedRun {
+  /** Dagster run id of the launched/re-executed run. */
+  runId: string;
+  /**
+   * Run status reported by the launch; `started` for a fresh launch, but a real
+   * transport may report a pending `QUEUED`/`STARTING` status the driver then
+   * polls to terminal.
+   */
+  status: DagsterRunStatus;
+}
+
+/**
+ * A request to launch a run of an ALREADY-DEPLOYED Dagster job. The driver only
+ * ever sends this behind the explicit execution gate; it never authors a job, op,
+ * or Python source — it asks the host transport to launch a job the deployment
+ * already defines.
+ */
+export interface DagsterLaunchRunRequest {
+  /** Name of the already-deployed job to launch. */
+  jobName: string;
+  /**
+   * Optional raw Dagster run configuration (the job's `runConfigData`). The host
+   * transport forwards it verbatim; the driver never synthesizes it.
+   */
+  runConfig?: Record<string, unknown>;
+  /** Optional run tags (merged by the host with any transport-owned tags). */
+  tags?: Record<string, string>;
+}
+
+/**
+ * A request to re-execute (replay) an EXISTING Dagster run, sent to the host
+ * {@link DagsterClient} port. The host transport owns the mechanism: where the
+ * GraphQL surface exposes a re-execution mutation it re-executes from the run id,
+ * otherwise it re-launches the run's job with the run's original configuration.
+ * The driver never authors a job or Python source.
+ */
+export interface DagsterReplayRunRequest {
+  /** Dagster run id of the existing run to replay. */
+  dagsterRunId: string;
+  /** Optional name of the run's job, when the transport needs it to re-launch. */
+  jobName?: string;
+  /** Optional run tags (merged by the host with any transport-owned tags). */
+  tags?: Record<string, string>;
+}
+
+/**
+ * A request to replay an EXISTING Dagster run through
+ * {@link DagsterGraphExecutionBackend.replayRun}. Carries the run identity, the
+ * workflow it belongs to, the facade-owned event sink, and the same observation
+ * bounds as {@link DagsterObserveRunRequest}. The driver delegates the actual
+ * re-execution to the host transport's `replayRun` and then observes the new run.
+ */
+export interface DagsterReplayExistingRunRequest {
+  /** Dagster run id of the existing run to replay. */
+  dagsterRunId: string;
+  /** Canonical workflow id (Dagster job name) the run belongs to. */
+  workflowId: string;
+  /** Facade-owned event sink the driver reports transitions through. */
+  events: GraphExecutionEventSink;
+  /** Canonical as-graph run id carried on emitted events; defaults to the new run id. */
+  graphRunId?: string;
+  /** Workflow input values carried onto the canonical result. */
+  inputs?: Record<string, unknown>;
+  /** Execution options metadata carried onto the canonical result. */
+  metadata?: Record<string, unknown>;
+  /** Caller cancellation signal, forwarded to the observation bridge. */
+  signal?: AbortSignal;
+  /** Hard cap on the number of events the bridge processes. */
+  maxEvents?: number;
+  /** Hard cap on the transport pagination depth. */
+  maxPages?: number;
+  /** Maximum time to await the terminal record. */
+  terminalTimeoutMs?: number;
 }
 
 /**
@@ -200,20 +302,44 @@ export interface DagsterClient {
   terminateRun(runId: string, reason?: string): Promise<void>;
   /** Reads an EXISTING run's terminal record. */
   getRun(runId: string): Promise<DagsterRunRecord>;
+  /**
+   * Launches a run of an ALREADY-DEPLOYED job. Optional: a read-only host port
+   * omits it, and the driver then fails closed with
+   * `GRAPH_DAGSTER_EXECUTION_NOT_SUPPORTED`. Called only when the explicit
+   * execution gate is enabled.
+   */
+  launchRun?(request: DagsterLaunchRunRequest): Promise<DagsterLaunchedRun>;
+  /**
+   * Re-executes (replays) an EXISTING run. Optional: a host without a
+   * re-execution surface omits it, and the driver then fails closed with
+   * `GRAPH_DAGSTER_REPLAY_NOT_SUPPORTED`. Called only when the explicit execution
+   * gate is enabled.
+   */
+  replayRun?(request: DagsterReplayRunRequest): Promise<DagsterLaunchedRun>;
   /** Disposes the client and its transport. */
   dispose?(): void | Promise<void>;
 }
 
 /**
- * Configuration for {@link DagsterGraphExecutionBackend}. The driver no longer
- * accepts an op resolver: it never authors ops.
+ * Configuration for {@link DagsterGraphExecutionBackend}. The driver accepts no
+ * op resolver: it never authors ops. Execution/replay of EXISTING workflows is
+ * opt-in and defaults off.
  */
 export interface DagsterGraphExecutionBackendConfig
   extends Record<string, unknown> {
-  /** Host-injected, read-only Dagster client port. */
+  /** Host-injected Dagster client port (read surface always; launch/replay when enabled). */
   client: DagsterClient;
   /** Optional host-supplied default run tags. */
   tags?: Record<string, string>;
+  /**
+   * Explicit opt-in for executing (launching a run of an already-deployed job)
+   * and replaying (re-executing an existing run) through the client port. Defaults
+   * to `false`: when off, `execute`/`replayRun` fail closed with
+   * `GRAPH_DAGSTER_EXECUTION_NOT_ENABLED` before any network call, and the driver
+   * remains purely read-only. The facade preserves this key across
+   * `GraphExecutionEngine.initialize` (it is not facade-owned).
+   */
+  executionEnabled?: boolean;
 }
 
 /**

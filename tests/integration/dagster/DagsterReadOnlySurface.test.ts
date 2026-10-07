@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/integration/dagster/DagsterReadOnlySurface.test
- * @summary SAA-306 evidence: the read-only Dagster driver lists and inspects a
- * real deployment and rejects authoring end-to-end.
+ * @summary SAA-306 evidence: the Dagster driver lists and inspects a real
+ * deployment and fails closed on execute with the execution gate off.
  * @description Real-vs-injected note. **Real**: a live `dagster-webserver`
  * 1.13.25 serving the example project, the real Dagster GraphQL API, the
  * production `DagsterGraphExecutionBackend` and its capability table. **Harness
@@ -151,22 +151,24 @@ dagsterIntegrationDescribe("Dagster read-only surface (SAA-306)", () => {
     client.dispose();
   });
 
-  it("rejects authoring end-to-end with GRAPH_DAGSTER_AUTHORING_NOT_SUPPORTED", async () => {
+  it("rejects execute end-to-end with GRAPH_DAGSTER_EXECUTION_NOT_ENABLED when the gate is off", async () => {
     const client = dagsterClient();
     const backend = new DagsterGraphExecutionBackend();
     await backend.initialize({ client });
 
     await expect(backend.execute(authoringRequest())).rejects.toMatchObject({
-      graphCode: DAGSTER_ERROR.AUTHORING_NOT_SUPPORTED,
+      graphCode: DAGSTER_ERROR.EXECUTION_NOT_ENABLED,
     });
     await backend.dispose();
   });
 
-  it("exposes no authoring method on the real client or the barrel", () => {
+  it("exposes the gated execution transport on the real client but no authoring method on the barrel", () => {
     const client = dagsterClient();
-    expect(
-      (client as unknown as { launchRun?: unknown }).launchRun
-    ).toBeUndefined();
+    // `launchRun`/`replayRun` are host transport for EXISTING jobs/runs, not
+    // authoring: the real client must expose them so the gated driver can call
+    // them, while the driver itself never authors Python.
+    expect(typeof client.launchRun).toBe("function");
+    expect(typeof client.replayRun).toBe("function");
     expect(typeof client.listJobs).toBe("function");
     expect(typeof client.getJob).toBe("function");
 
@@ -179,14 +181,39 @@ dagsterIntegrationDescribe("Dagster read-only surface (SAA-306)", () => {
     client.dispose();
   });
 
-  it("declares every authoring capability row not_supported", () => {
-    const readOnly = DAGSTER_CAPABILITY_TABLE.find(
-      (row) => row.feature === "list / inspect existing workflows"
+  it("declares only the read side and the two gated execution rows supported", () => {
+    const supported = DAGSTER_CAPABILITY_TABLE.filter(
+      (row) => row.verdict === "supported"
     );
-    expect(readOnly?.verdict).toBe("supported");
+    expect(supported.map((row) => row.feature).sort()).toEqual(
+      [
+        "execute existing workflow (launch run)",
+        "list / inspect existing workflows",
+        "replay / re-execute existing run",
+      ].sort()
+    );
+
+    const executeRow = DAGSTER_CAPABILITY_TABLE.find(
+      (row) => row.feature === "execute existing workflow (launch run)"
+    );
+    expect(executeRow?.detail).toContain("executionEnabled");
+    expect(executeRow?.detail).toContain(
+      DAGSTER_ERROR.EXECUTION_NOT_ENABLED
+    );
+
+    const replayRow = DAGSTER_CAPABILITY_TABLE.find(
+      (row) => row.feature === "replay / re-execute existing run"
+    );
+    expect(replayRow?.detail).toContain("executionEnabled");
+    expect(replayRow?.detail).toContain(
+      DAGSTER_ERROR.EXECUTION_NOT_ENABLED
+    );
 
     const authoringRows = DAGSTER_CAPABILITY_TABLE.filter(
-      (row) => row.feature !== "list / inspect existing workflows"
+      (row) =>
+        row.feature !== "list / inspect existing workflows" &&
+        row.feature !== "execute existing workflow (launch run)" &&
+        row.feature !== "replay / re-execute existing run"
     );
     expect(authoringRows.length).toBeGreaterThan(0);
     for (const row of authoringRows) {

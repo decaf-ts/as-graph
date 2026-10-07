@@ -13,7 +13,6 @@ import { NotFoundError } from "@decaf-ts/db-decorators";
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import { GraphExecutionEventType, GraphExecutionStatus } from "../shared/graph/constants";
 import type {
-  GraphBackendCapabilities,
   GraphBackendExecutionRequest,
   GraphBackendWorkflowSummary,
   GraphExecutionBackend,
@@ -27,10 +26,14 @@ import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import { graphRunDocumentFingerprint } from "../engine/runs/GraphRunFingerprint";
 import { buildGraphExecutionResult } from "../engine/execution/GraphExecutionResult";
 import { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
+import { MastraWorkflowManager } from "./MastraWorkflowManager";
 import { MastraEventBridge } from "./MastraEventBridge";
 import { assertMastraResumeAllowed } from "./MastraResumeGuard";
 import { assertMastraResumeSchemaSafe } from "./MastraSchemaConverter";
-import { mastraCapabilityOf } from "./MastraCapabilities";
+import {
+  resolveMastraCapabilities,
+  type MastraBackendCapabilities,
+} from "./MastraCapabilities";
 import {
   GRAPH_MASTRA_AGENT_UNAVAILABLE,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
@@ -133,6 +136,7 @@ export class MastraGraphExecutionBackend
   private readonly documents = new Map<string, MastraCatalogueEntry>();
   private readonly runWorkflows = new Map<GraphRunId, string>();
   private runtime?: unknown;
+  private managementManager?: MastraWorkflowManager;
   private suspendStateReader?: MastraSuspendStateReader;
   private maxResumeBytes = DEFAULT_MAX_RESUME_BYTES;
   private initialized = false;
@@ -145,6 +149,9 @@ export class MastraGraphExecutionBackend
   async initialize(config: MastraBackendConfig): Promise<void> {
     this._config = config;
     this.runtime = config.mastra;
+    // Re-initializing rewires the runtime/compiler, so a previously cached
+    // management surface must not survive the rebind (C7).
+    this.managementManager = undefined;
     this.suspendStateReader = config.suspendStateReader;
     if (typeof config.maxResumeBytes === "number" && config.maxResumeBytes > 0) {
       this.maxResumeBytes = config.maxResumeBytes;
@@ -158,14 +165,28 @@ export class MastraGraphExecutionBackend
     this.initialized = true;
   }
 
-  get capabilities(): GraphBackendCapabilities {
-    return {
-      codeMode: this.codeMode,
-      workflows: {
-        list: this.workflowCapabilityStatus("workflowList"),
-        get: this.workflowCapabilityStatus("workflowLookup"),
-      },
-    };
+  get capabilities(): MastraBackendCapabilities {
+    return resolveMastraCapabilities();
+  }
+
+  /**
+   * The workflow-management surface over the wired real `@mastra/core` runtime
+   * (SAA-346). The manager translates canonical documents through the same
+   * compiler the backend executes with, so a created/updated workflow is the one
+   * `execute` runs. Every operation fails closed when the wired runtime exposes
+   * no real Mastra method.
+   */
+  get management(): MastraWorkflowManager {
+    // Cache the manager per backend (C7): revisions recorded at `create` must
+    // survive the next `management` access, otherwise `get`/`serialize` silently
+    // drop the wrapper-tracked revision.
+    if (!this.managementManager) {
+      this.managementManager = new MastraWorkflowManager({
+        runtime: this.runtime,
+        compiler: this.compiler,
+      });
+    }
+    return this.managementManager;
   }
 
   /**
@@ -385,14 +406,6 @@ export class MastraGraphExecutionBackend
     return audit;
   }
 
-  private workflowCapabilityStatus(
-    feature: string
-  ): GraphBackendCapabilities["workflows"]["list"] {
-    return mastraCapabilityOf(feature)?.verdict === "NOT-SUPPORTED"
-      ? "not_supported"
-      : "supported";
-  }
-
   /**
    * Resolves the owner recorded for a run (C23). The facade-resolved principal
    * bound onto `options.auth` is authoritative; when absent (a direct backend call)
@@ -438,6 +451,7 @@ export class MastraGraphExecutionBackend
     this.documents.clear();
     this.runWorkflows.clear();
     this.runtime = undefined;
+    this.managementManager = undefined;
     this.initialized = false;
   }
 
