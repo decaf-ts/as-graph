@@ -18,5 +18,6 @@ export * from "./types";
 export * from "./GraphRunModel";
 export * from "./GraphWorkflowModel";
 export * from "./GraphResolution";
+export * from "./GraphExecutionStateMapper";
 export * from "./category-styles";
 export * from "./overrides";

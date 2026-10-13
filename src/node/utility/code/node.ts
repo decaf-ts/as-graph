@@ -62,13 +62,19 @@ export const GRAPH_CODE_DEFAULT_TIMEOUT_MS = 1000;
  */
 export function clampGraphCodeTimeoutMs(
   value: unknown,
-  maxTimeoutMs: number
+  maxTimeoutMs: unknown
 ): number {
+  const numericCeiling =
+    typeof maxTimeoutMs === "number" ? maxTimeoutMs : Number(maxTimeoutMs);
+  const ceiling =
+    Number.isFinite(numericCeiling) && numericCeiling > 0
+      ? numericCeiling
+      : GRAPH_CODE_MAX_TIMEOUT_MS;
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return GRAPH_CODE_DEFAULT_TIMEOUT_MS;
   }
-  return Math.min(Math.floor(numeric), maxTimeoutMs);
+  return Math.min(Math.floor(numeric), ceiling);
 }
 
 /**
@@ -191,9 +197,14 @@ export class CodeNode extends GraphNode<CodeNodeInput, CodeNodeOutput> {
       );
     }
 
+    const environmentCeiling =
+      GraphEnvironment.graph.execution?.maxCodeTimeoutMs;
     const maxTimeoutMs =
-      GraphEnvironment.graph.execution?.maxCodeTimeoutMs ??
-      GRAPH_CODE_MAX_TIMEOUT_MS;
+      typeof environmentCeiling === "number" &&
+      Number.isFinite(environmentCeiling) &&
+      environmentCeiling > 0
+        ? environmentCeiling
+        : GRAPH_CODE_MAX_TIMEOUT_MS;
     const timeoutMs = clampGraphCodeTimeoutMs(this.timeoutMs, maxTimeoutMs);
     const md = context.metadata as Record<string, unknown> | undefined;
     const sandboxContext: CodeSandboxContext = {

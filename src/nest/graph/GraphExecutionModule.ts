@@ -47,6 +47,7 @@ import {
 import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
 import { GraphEnvironment } from "../../engine/services/GraphEnvironment";
 import type { GraphWorkflowServiceOptions } from "../../engine/services/GraphEnvironment";
+import { GRAPH_CODE_MAX_TIMEOUT_MS } from "../../engine/constants";
 import type { GraphRunServiceOptions } from "../../engine/runs/GraphRunService";
 import {
   GraphWorkflowController,
@@ -254,7 +255,8 @@ export class GraphExecutionModule {
     // Backend services consume their options from the accumulated graph
     // environment (`@decaf-ts/logging`), never from injectable config objects.
     // Host-supplied `workflows` options are accumulated into the environment
-    // before the service provider is built.
+    // before the service provider is built. The `execution` sibling leaf is
+    // accumulated in the same call so it survives the raw-object accumulate.
     if (options.workflows) {
       const serviceOptions: GraphWorkflowServiceOptions = {};
       if (options.workflows.limits) {
@@ -267,6 +269,7 @@ export class GraphExecutionModule {
       GraphEnvironment.accumulate({
         graph: {
           workflows: serviceOptions as Required<GraphWorkflowServiceOptions>,
+          execution: { maxCodeTimeoutMs: GRAPH_CODE_MAX_TIMEOUT_MS },
         },
       });
     }
