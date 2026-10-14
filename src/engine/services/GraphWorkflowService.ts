@@ -17,6 +17,7 @@ import {
   OrderDirection,
   service,
   type Context,
+  type ContextualArgs,
   type MaybeContextualArg,
 } from "@decaf-ts/core";
 import {
@@ -113,6 +114,13 @@ function graphUpdatedAtMillis(value: Date | null | undefined): number {
  * (`allowAnonymousAccess`) is set for reads (SAA-595 F3). Overwriting an
  * existing row is a write and is authorized by strict owner equality, so the
  * read tolerance never grants an overwrite (SAA-105 R3).
+ *
+ * @remarks The overwrite gate is a read-then-write check, so it depends on the
+ * persistence adapter's contract (SAA-105 R3-b): `read` must throw
+ * `NotFoundError` for an absent row, and `create` must be create-only — it must
+ * reject a duplicate primary key rather than upsert. An adapter whose `create`
+ * upserts (or whose `read` hides an existing row) would let a named caller
+ * silently overwrite an owner-less row and bypass the owner-equality gate.
  */
 @service(GraphWorkflowModel)
 export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
@@ -155,6 +163,10 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
    * (SAA-105 R3): a named caller cannot overwrite an owner-less workflow and
    * the `allowAnonymousAccess` read tolerance never grants an overwrite.
    *
+   * @remarks Relies on the class-level adapter contract that `read` throws
+   * `NotFoundError` for an absent row and `create` rejects a duplicate primary
+   * key instead of upserting (SAA-105 R3-b).
+   *
    * @param {string} workflowId - Workflow id from the request path.
    * @param {GraphWorkflowDocument} document - Canonical document to persist (its `id` must equal `workflowId`).
    * @param args - An optional decaf `Context` carrying the owning principal.
@@ -189,15 +201,7 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
 
     const owner = graphWorkflowOwnerOf(ctx);
 
-    let existing: GraphWorkflowModel | null;
-    try {
-      existing = (await this.read(
-        workflowId,
-        ...ctxArgs
-      )) as GraphWorkflowModel;
-    } catch {
-      existing = null;
-    }
+    const existing = await this.readExistingForWrite(workflowId, ctxArgs);
     // Fresh create is unconditional (the caller stamps their own owner); an
     // overwrite of an existing row is a write and requires strict owner
     // equality (SAA-105 R3).
@@ -376,6 +380,10 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
    * authorized by strict owner equality (SAA-105 R3) — see
    * {@link saveDocument}.
    *
+   * @remarks Relies on the class-level adapter contract that `read` throws
+   * `NotFoundError` for an absent row and `create` rejects a duplicate primary
+   * key instead of upserting (SAA-105 R3-b).
+   *
    * @param {string} workflowId - Workflow id from the request path.
    * @param {Record<string, unknown>} snapshot - JSON-safe canonical snapshot wrapper.
    * @param args - An optional decaf `Context` carrying the owning principal.
@@ -405,15 +413,7 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
 
     const owner = graphWorkflowOwnerOf(ctx);
 
-    let existing: GraphWorkflowModel | null;
-    try {
-      existing = (await this.read(
-        workflowId,
-        ...ctxArgs
-      )) as GraphWorkflowModel;
-    } catch {
-      existing = null;
-    }
+    const existing = await this.readExistingForWrite(workflowId, ctxArgs);
     // Fresh create is unconditional (the caller stamps their own owner); an
     // overwrite of an existing row is a write and requires strict owner
     // equality (SAA-105 R3).
@@ -463,6 +463,24 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
       return model;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Existence probe for the owner-equality overwrite gate (SAA-105 R3-a): only a
+   * genuine absence (`NotFoundError`) resolves to `null`; every other read
+   * failure propagates so a transient store fault is never mistaken for absence
+   * and downgraded into an unconditional create.
+   */
+  private async readExistingForWrite(
+    workflowId: string,
+    ctxArgs: ContextualArgs<Context>
+  ): Promise<GraphWorkflowModel | null> {
+    try {
+      return (await this.read(workflowId, ...ctxArgs)) as GraphWorkflowModel;
+    } catch (error) {
+      if (error instanceof NotFoundError) return null;
+      throw error;
     }
   }
 

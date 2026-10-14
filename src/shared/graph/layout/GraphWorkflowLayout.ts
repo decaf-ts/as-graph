@@ -3,10 +3,7 @@ import { GRAPH_DEFAULT_NODE_SIZE } from "../constants";
 import type { GraphNodeEndpoint } from "../document/GraphEndpoint";
 import type { GraphNodeInstance } from "../document/GraphNodeInstance";
 import type { GraphWorkflowDocument } from "../document/GraphWorkflowDocument";
-import {
-  buildLayoutOptions,
-  type GraphLayoutOptions,
-} from "./layout-options";
+import { buildLayoutOptions, type GraphLayoutOptions } from "./layout-options";
 
 /**
  * A 2D point in canvas coordinates. Matches `GraphNodeUiState.position` and the
@@ -31,6 +28,7 @@ export interface GraphWorkflowLayoutResult {
 
 type ElkGraph = ElkNode & { edges?: ElkExtendedEdge[] };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const DIMENSIONS = ["width", "height"] as const;
 
 function dimensionOf(

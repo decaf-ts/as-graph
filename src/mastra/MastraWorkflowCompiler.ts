@@ -124,7 +124,9 @@ function nodeEndpointId(
  * @throws {GraphExecutionError} {@link GRAPH_MASTRA_UNSUPPORTED_KIND} when the
  *   document contains a data-edge cycle.
  */
-function topologicalOrder(document: GraphWorkflowDocument): GraphNodeInstance[] {
+function topologicalOrder(
+  document: GraphWorkflowDocument
+): GraphNodeInstance[] {
   const nodes = document.nodes ?? [];
   const indegree = new Map<string, number>();
   const outgoing = new Map<string, string[]>();
@@ -296,20 +298,47 @@ export class MastraWorkflowCompiler {
     degradedSchemas: string[]
   ): MastraWorkflowBuilderLike {
     if (node.kind === GRAPH_MASTRA_IF_KIND) {
-      return this.applyIf(cursor, node, document, steps, resumeSchemas, degradedSchemas);
+      return this.applyIf(
+        cursor,
+        node,
+        document,
+        steps,
+        resumeSchemas,
+        degradedSchemas
+      );
     }
     if (node.kind === GRAPH_MASTRA_SWITCH_KIND) {
-      return this.applySwitch(cursor, node, document, steps, resumeSchemas, degradedSchemas);
+      return this.applySwitch(
+        cursor,
+        node,
+        document,
+        steps,
+        resumeSchemas,
+        degradedSchemas
+      );
     }
     if (
       node.kind === GRAPH_MASTRA_FOREACH_KIND ||
       node.kind === GRAPH_MASTRA_WHILE_KIND ||
       node.kind === GRAPH_MASTRA_UNTIL_KIND
     ) {
-      return this.applyLoop(cursor, node, document, steps, resumeSchemas, degradedSchemas);
+      return this.applyLoop(
+        cursor,
+        node,
+        document,
+        steps,
+        resumeSchemas,
+        degradedSchemas
+      );
     }
     if (node.kind === GRAPH_MASTRA_HUMAN_APPROVAL_KIND) {
-      return this.applyHumanApproval(cursor, node, steps, resumeSchemas, degradedSchemas);
+      return this.applyHumanApproval(
+        cursor,
+        node,
+        steps,
+        resumeSchemas,
+        degradedSchemas
+      );
     }
     const step = this.buildLeafStep(node, steps, degradedSchemas);
     return cursor.then(step);
@@ -338,8 +367,22 @@ export class MastraWorkflowCompiler {
   ): MastraWorkflowBuilderLike {
     const condition = this.conditionOf(node);
     assertMastraConditionSupported(condition, node.id);
-    const thenStep = this.targetStep(node.id, "then", document, steps, resumeSchemas, degradedSchemas);
-    const elseStep = this.targetStep(node.id, "else", document, steps, resumeSchemas, degradedSchemas);
+    const thenStep = this.targetStep(
+      node.id,
+      "then",
+      document,
+      steps,
+      resumeSchemas,
+      degradedSchemas
+    );
+    const elseStep = this.targetStep(
+      node.id,
+      "else",
+      document,
+      steps,
+      resumeSchemas,
+      degradedSchemas
+    );
     const branches: Array<[unknown, unknown]> = [
       [mastraConditionPredicate(condition!, "if"), thenStep],
     ];
@@ -427,9 +470,13 @@ export class MastraWorkflowCompiler {
   private applyLoop(
     cursor: MastraWorkflowBuilderLike,
     node: GraphNodeInstance,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     document: GraphWorkflowDocument,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     steps: Map<string, unknown>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     resumeSchemas: Map<string, z.ZodTypeAny>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     degradedSchemas: string[]
   ): MastraWorkflowBuilderLike {
     const loop = node.loop;
@@ -478,6 +525,7 @@ export class MastraWorkflowCompiler {
     node: GraphNodeInstance,
     steps: Map<string, unknown>,
     resumeSchemas: Map<string, z.ZodTypeAny>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     degradedSchemas: string[]
   ): MastraWorkflowBuilderLike {
     const parameters = node.parameters ?? {};
@@ -543,9 +591,7 @@ export class MastraWorkflowCompiler {
     }
     const step = handler.createStep(node, { stepId: node.id });
     steps.set(node.id, step);
-    const schema = toMastraZodSchema(
-      node.metadata?.["outputSchema"] as never
-    );
+    const schema = toMastraZodSchema(node.metadata?.["outputSchema"] as never);
     if (schema.degraded) degradedSchemas.push(node.id);
     return step;
   }

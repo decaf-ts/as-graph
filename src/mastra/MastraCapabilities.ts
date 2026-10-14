@@ -182,11 +182,6 @@ export interface MastraWorkflowManagementCapabilities {
   version: MastraWorkflowCapabilityStatus;
 }
 
-/**
- * The full Mastra backend capability projection: the engine-agnostic
- * {@link GraphBackendCapabilities} plus the Mastra-specific workflow-management
- * statuses.
- */
 export interface MastraBackendCapabilities extends GraphBackendCapabilities {
   /** Workflow list/lookup plus the management statuses. */
   workflows: GraphBackendCapabilities["workflows"] &
