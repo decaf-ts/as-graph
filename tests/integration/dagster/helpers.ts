@@ -4,19 +4,55 @@
  * (SAA-306).
  * @description The suite runs against a real `dagster-webserver` booted by
  * `tests/integration/dagster/run.sh`. The URL is injected through
- * `DAGSTER_GRAPHQL_URL`; when it is absent the suite is skipped with an
- * explicit reason (never replaced by a mock). This module owns the client
- * factory and the recording event sink.
+ * `DAGSTER_GRAPHQL_URL`, or read from the persisted gateway state file that
+ * `run.sh up` / `npm run prepare-it-tests` writes. When neither is present the
+ * suite is skipped with an explicit reason (never replaced by a mock). This module
+ * owns the client factory and the recording event sink.
  */
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { GraphExecutionEvent } from "../../../src/shared/graph";
 import type { GraphExecutionEventSink } from "../../../src/engine/execution/GraphExecutionBackend";
 import { DagsterGraphQLClient } from "./DagsterGraphQLClient";
 
+/** The persisted gateway state file written by `run.sh up` / `prepare-it-tests`. */
+export const DAGSTER_GATEWAY_STATE_FILE = resolve(
+  __dirname,
+  ".gateway.json"
+);
+
 /**
- * The live Dagster GraphQL endpoint injected by `run.sh`. Undefined when the
- * suite is invoked outside the harness.
+ * Resolves the live Dagster GraphQL endpoint. Prefers the `DAGSTER_GRAPHQL_URL`
+ * env injection; falls back to the URL persisted by the prepare step so a plain
+ * `npm run test:all` runs the suite for real after `prepare-it-tests`.
+ *
+ * @returns The endpoint URL, or `undefined` when the environment was not prepared.
  */
-export const DAGSTER_GRAPHQL_URL = process.env.DAGSTER_GRAPHQL_URL;
+export function resolveDagsterGraphqlUrl(): string | undefined {
+  if (process.env.DAGSTER_GRAPHQL_URL) {
+    return process.env.DAGSTER_GRAPHQL_URL;
+  }
+  if (existsSync(DAGSTER_GATEWAY_STATE_FILE)) {
+    try {
+      const state = JSON.parse(
+        readFileSync(DAGSTER_GATEWAY_STATE_FILE, "utf8")
+      ) as { url?: unknown };
+      if (typeof state.url === "string" && state.url.length > 0) {
+        return state.url;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The live Dagster GraphQL endpoint. Injected by `run.sh` or read from the
+ * persisted gateway state. Undefined when the suite is invoked outside a prepared
+ * environment, in which case the suite honestly skips.
+ */
+export const DAGSTER_GRAPHQL_URL = resolveDagsterGraphqlUrl();
 
 /**
  * The example jobs the harness deployment always serves. Assertions resolve these
@@ -46,7 +82,7 @@ export function dagsterIntegrationDescribe(
     return;
   }
   describe.skip(
-    `${name} [skipped: DAGSTER_GRAPHQL_URL is not set; run \`npm run test:integration:dagster\` to boot the real Dagster gateway]`,
+    `${name} [skipped: no Dagster gateway prepared; run \`npm run prepare-it-tests\` (or \`npm run test:integration:dagster\`) to boot the real Dagster gateway]`,
     fn
   );
 }
@@ -60,7 +96,7 @@ export function dagsterIntegrationDescribe(
 export function dagsterClient(): DagsterGraphQLClient {
   if (!DAGSTER_GRAPHQL_URL) {
     throw new Error(
-      "DAGSTER_GRAPHQL_URL is not set; run `npm run test:integration:dagster`"
+      "DAGSTER_GRAPHQL_URL is not set; run `npm run prepare-it-tests` (or `npm run test:integration:dagster`)"
     );
   }
   return new DagsterGraphQLClient({ url: DAGSTER_GRAPHQL_URL });

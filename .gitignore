@@ -25,4 +25,6 @@
 /.dockertoken
 /.confluence-token
 /node_modules
+# Persisted Dagster integration gateway state written by `prepare-it-tests`
+/tests/integration/dagster/.gateway.json
 !.gitkeep
