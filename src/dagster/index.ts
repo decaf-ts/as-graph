@@ -9,6 +9,7 @@
 export * from "./constants";
 export * from "./DagsterTypes";
 export * from "./capabilities";
+export * from "./DagsterGraphQLClient";
 export * from "./DagsterGraphEventBridge";
 export * from "./DagsterResultMapper";
 export * from "./DagsterGraphExecutionBackend";

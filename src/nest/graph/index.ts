@@ -13,3 +13,4 @@ export * from "./GraphEngineCapabilityManifest";
 export * from "./GraphEngineCapabilityService";
 export * from "./GraphEngineController";
 export * from "./GraphExecutionModule";
+export * from "./GraphBackendHost";

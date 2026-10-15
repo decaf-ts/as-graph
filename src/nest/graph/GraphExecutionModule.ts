@@ -20,6 +20,7 @@ import type { AuthHandler } from "@decaf-ts/for-http/server";
 import { Adapter } from "@decaf-ts/core";
 import { RamAdapter, RamFlavour } from "@decaf-ts/core/ram";
 import type { GraphRunLimits } from "../../shared/graph";
+import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
 import {
   GraphExecutionEngine,
   GraphNodeCatalogue,
@@ -153,6 +154,17 @@ export interface GraphExecutionModuleOptions {
    * registered backends and never read from the environment or a remote engine.
    */
   engines?: GraphEngineCapabilityOptions;
+  /**
+   * Pluggable execution backend the host selects as the engine's active backend
+   * (SAA-706). When omitted the engine falls back to the registry's current
+   * backend and then to the built-in {@link LocalGraphExecutionBackend}, so the
+   * standard local host needs no wiring. A host that boots a translated/remote
+   * engine (Mastra, Dagster) constructs its backend, registers it, and passes it
+   * here; the capability manifest then advertises that engine's flavour. The
+   * backend must already be registered under its flavour (constructing the
+   * wrapper does this) so the manifest and the per-engine catalogue agree.
+   */
+  backend?: GraphExecutionBackend<any>;
   /**
    * Production hosts MUST wire a {@link GraphCredentialAuthorizer} backed by
    * their credential store (DECAF-50 §4.8 stage 8). Without it, stage-8
@@ -336,6 +348,7 @@ export class GraphExecutionModule {
           const engine = new GraphExecutionEngine();
           await engine.boot({
             ...config,
+            ...(options.backend ? { backend: options.backend } : {}),
             workflowStore: workflowService,
             authEnabled: resolveGraphAuthEnabled(options),
             ...(options.authMatch ? { authMatch: options.authMatch } : {}),

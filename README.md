@@ -620,11 +620,127 @@ import { KeycloakAuthHandler } from "@decaf-ts/integrations/nest";
 export class AppModule {}
 ```
 
+#### Running each backend + UI combination
+
+The standalone host (`bin.as-graph-server`, `lib/cjs/nest/graph/main.cjs`) boots exactly one engine
+variant, selected by `GRAPH_BACKEND_ENGINE`, and serves the C20 capability manifest
+(`GET /graph/engines`) plus the per-engine workflow catalogue
+(`GET /graph/engines/{engineId}/workflows`). The for-angular graph page talks to it over
+`http://localhost:3000` (`GRAPH_BACKEND_URL`) and needs no code change when the variant changes — it
+lists whatever the backend advertises and gates its actions on the served capabilities.
+
+**Build first.** The scripts run the compiled entrypoint, so `npm run build` (or `build:prod`) must
+have produced `lib/cjs/nest/graph/main.cjs`.
+
+| Combination | Boot the backend | Run the UI | Backend port | Extra prerequisites |
+| --- | --- | --- | --- | --- |
+| standard (local engine) | `npm run start:backend` / `start:backend:local` | `npm run start` (for-angular, `:8110`) | `3000` | none — built-in reference interpreter |
+| mastra | `npm run start:backend:mastra` | `npm run start` (for-angular, `:8110`) | `3000` | `@mastra/core` peer installed (`^1.77.0`) |
+| dagster | `npm run start:backend:dagster` | `npm run start` (for-angular, `:8110`) | `3000` | a Dagster gateway + `DAGSTER_GRAPHQL_URL` (see below) |
+
+From `for-angular`, `npm run start:dev` (local), `start:dev:mastra`, and `start:dev:dagster` boot
+the backend and the UI together with `concurrently`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GRAPH_BACKEND_ENGINE` | `local` | `local` \| `mastra` \| `dagster`; an unknown value fails closed with `GRAPH_BACKEND_ENGINE_UNKNOWN` |
+| `GRAPH_BACKEND_PORT` | `3000` | Backend HTTP port (the standalone binary also accepts the port as its first argument) |
+| `DAGSTER_GRAPHQL_URL` | unset | Read-only Dagster client target. Without it the dagster backend still boots and serves the manifest, but the catalogue reports `NOT_SUPPORTED` (`501`) |
+| `DAGSTER_EXECUTION_ENABLED` | `false` | Opt-in gate for launching/replaying existing Dagster runs |
+| `GRAPH_BACKEND_URL` | `http://localhost:3000` | for-angular injection token for the backend base URL (a provider override, not an env var) |
+
+The host binds to `127.0.0.1` and only admits `http://localhost`/`http://127.0.0.1` CORS origins
+(development posture, SAA-595 F5).
+
+##### Standard (local engine)
+
+No backing service. Build the backend, boot it, and run the UI in a second terminal:
+
+```bash
+# as-graph
+npm run build && npm run start:backend        # http://127.0.0.1:3000 (engine: local)
+# for-angular
+npm run start                                 # http://localhost:8110
+```
+
+Verify the backend advertises the local engine:
+
+```bash
+curl -s http://127.0.0.1:3000/graph/engines   # .defaultEngineId == "local"
+```
+
+Open the graph route (`http://localhost:8110/graph`); the workflow table lists the workflows
+persisted in the backend's local engine store.
+
+##### Mastra
+
+In-process; the only prerequisite is the `@mastra/core` peer dependency (pinned `^1.77.0`),
+resolved by `npm install` in `as-graph`. The host lazily builds a real `@mastra/core` runtime.
+
+```bash
+npm run start:backend:mastra                  # engine: mastra, still on :3000
+```
+
+The Mastra catalogue lists workflows already compiled/executed in the process (its
+`workflowList`/`workflowLookup` capability), so `GET /graph/engines/mastra/workflows` returns `[]`
+until a workflow is run. The manifest advertises the mastra engine and its per-feature verdicts.
+
+##### Dagster
+
+Dagster is Python-side and has no JavaScript runtime, so the backend lists/executes through a
+host-injected `DagsterClient` built from `DAGSTER_GRAPHQL_URL`. Provision the pinned gateway fixture
+(Docker; Dagster `1.13.25`) with the integration harness:
+
+```bash
+# as-graph: boot + seed the pinned gateway and persist its GraphQL URL
+npm run prepare-it-tests                      # publishes the gateway at http://127.0.0.1:3300/graphql
+DAGSTER_GRAPHQL_URL=http://127.0.0.1:3300/graphql npm run start:backend:dagster
+npm run teardown-it-tests                     # when done
+```
+
+Without `DAGSTER_GRAPHQL_URL` the dagster host still boots and serves the manifest; its catalogue
+answers `501` (`NOT_SUPPORTED`). To run against an already-running Dagster, set
+`DAGSTER_GRAPHQL_URL` yourself and skip `prepare-it-tests`.
+
+> **Environment note (CI sandbox):** inside a container (`/.dockerenv`), the fixture joins the
+> runner's network namespace and binds `127.0.0.1:3000`, which collides with the graph backend's
+> default port. On a normal host the fixture is published at `127.0.0.1:3300`, so there is no
+> collision. Because the for-angular UI is wired to `http://localhost:3000`, run the Dagster gateway
+> on a host (or another namespace) and keep the graph backend on `3000` when exercising the UI +
+> dagster combination.
+
+##### Verifying the UI lists a backend's scenarios
+
+1. `GET /graph/engines` returns the manifest with `defaultEngineId` equal to the booted variant.
+2. `GET /graph/engines/{engineId}/workflows` returns that engine's catalogue (`200`), or `501` when
+   the engine declares no listing support (dagster without a client).
+3. In the UI the workflow table shows the catalogue rows and gates create/run/save per the manifest
+   verdicts; switching variants requires no UI code change.
+
+##### Running each variant's test suite
+
+| Variant | Command |
+| --- | --- |
+| standard (local) | `npm run test:integration:standard` |
+| mastra | `npm run test:integration:mastra` |
+| dagster | `npm run prepare-it-tests` then `npm run test:integration:dagster` (or `npm run teardown-it-tests` after) |
+| backend host boot (all variants + standalone binary) | `npm run test:integration:backend` |
+
+The dagster suite needs the gateway fixture (`prepare-it-tests`) and Docker; it skips honestly when
+no gateway is prepared. The standalone-binary boot test needs the `lib/cjs` build and skips when it
+is absent.
+
 #### Scripts
 
 | Script | Purpose |
 | --- | --- |
 | `npm run build` / `build:prod` | Compile ESM + CJS + types |
+| `npm run start:backend` / `start:backend:local` | Boot the standalone host with the built-in local engine (`:3000`) |
+| `npm run start:backend:mastra` | Boot the standalone host with the Mastra engine (`GRAPH_BACKEND_ENGINE=mastra`) |
+| `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |
+| `npm run test:integration:standard` / `:mastra` / `:dagster` | Run one engine variant's integration suite |
+| `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
+| `npm run prepare-it-tests` / `teardown-it-tests` | Provision / stop the pinned Dagster gateway fixture |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
 | `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) |
 | `npm run test:dist` | Re-run the full suite against the compiled `lib` and `dist` outputs |

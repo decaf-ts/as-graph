@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { GraphExecutionEvent } from "../../../src/shared/graph";
 import type { GraphExecutionEventSink } from "../../../src/engine/execution/GraphExecutionBackend";
-import { DagsterGraphQLClient } from "./DagsterGraphQLClient";
+import { DagsterGraphQLClient } from "../../../src/dagster";
 
 /** The persisted gateway state file written by `run.sh up` / `prepare-it-tests`. */
 export const DAGSTER_GATEWAY_STATE_FILE = resolve(

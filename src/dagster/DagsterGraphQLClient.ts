@@ -1,10 +1,12 @@
 /**
- * @module as-graph/tests/integration/dagster/DagsterGraphQLClient
- * @summary Real, read-only Dagster GraphQL client for the integration suite
- * (SAA-306).
+ * @module as-graph/dagster/DagsterGraphQLClient
+ * @summary Real, read-only Dagster GraphQL client implementing the driver's
+ * `DagsterClient` port (SAA-306, SAA-706).
  * @description A thin transport that implements the production `DagsterClient`
  * port against a real `dagster-webserver` GraphQL endpoint. It is the only piece
- * of the harness that talks to Dagster. It exposes **no authoring method**: it
+ * of the host that talks to Dagster, so a bootable Dagster host (see
+ * `@decaf-ts/as-graph/nest`) can list and inspect an already-deployed deployment.
+ * It exposes **no authoring method**: it
  * never emits Python and never registers a job/op. It does implement the port's
  * gated execution surface (`launchRun` of an already-deployed job and
  * `replayRun` of an existing run via Dagster's `launchRunReexecution`), exactly as
@@ -35,9 +37,9 @@ import type {
   DagsterRunRecord,
   DagsterRunSubscription,
   DagsterRunSubscriptionOptions,
-} from "../../../src/dagster";
-import { GraphExecutionError } from "../../../src/engine/errors";
-import { DAGSTER_ERROR } from "../../../src/dagster/constants";
+} from "./DagsterTypes";
+import { GraphExecutionError } from "../engine/errors";
+import { DAGSTER_ERROR } from "./constants";
 
 /**
  * The documented Dagster event types the read-only driver consumes. Raw Dagster
@@ -61,12 +63,20 @@ const DEFAULT_MAX_PAGES = 100;
 /** Default hard cap on the transport's replayed event count. */
 const DEFAULT_MAX_EVENTS = 10000;
 
+/**
+ * The fetch implementation a {@link DagsterGraphQLClient} transport is constructed
+ * with: the global `fetch` signature. It is named so the type is expressible in
+ * JSDoc — a bare `typeof fetch` member type is not parseable — and so a host can
+ * inject a stub in tests without changing the transport.
+ */
+export type FetchImpl = typeof fetch;
+
 /** Options for constructing a {@link DagsterGraphQLClient}. */
 export interface DagsterGraphQLClientOptions {
   /** Absolute GraphQL endpoint URL, e.g. `http://127.0.0.1:3300/graphql`. */
   url: string;
   /** Fetch implementation; defaults to the global `fetch`. */
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchImpl;
   /** Per-request timeout in milliseconds. Defaults to `15000`. */
   requestTimeoutMs?: number;
   /** Repository (code location) selector name. Defaults to `__repository__`. */
@@ -428,7 +438,7 @@ interface RawLaunchedRun {
  */
 export class DagsterGraphQLClient implements DagsterClient {
   private readonly url: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: FetchImpl;
   private readonly requestTimeoutMs: number;
   private readonly repositoryName: string;
   private readonly repositoryLocationName: string;
@@ -901,7 +911,7 @@ export class DagsterGraphQLClient implements DagsterClient {
    * @returns The driver run status.
    */
   private toRunStatus(
-    status?: string
+    status?: string | null
   ): DagsterRunRecord["status"] {
     switch (status) {
       case "SUCCESS":

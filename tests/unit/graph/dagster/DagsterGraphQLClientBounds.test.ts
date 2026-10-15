@@ -14,7 +14,7 @@
  * `maxEvents` events are allowed. Only `fetchImpl` is faked; the client itself is
  * real.
  */
-import { DagsterGraphQLClient } from "../../../integration/dagster/DagsterGraphQLClient";
+import { DagsterGraphQLClient } from "../../../../src/dagster";
 import { DAGSTER_ERROR } from "../../../../src/dagster/constants";
 import type { DagsterEventRecord } from "../../../../src/dagster/DagsterTypes";
 
