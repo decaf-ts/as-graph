@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/loops-while-until
+ * @module as-graph/workflows/loops-while-until
  * @summary Demo workflow: while loop feeding an until loop.
  * @description Covers `core.loop.while` and `core.loop.until`. Combos:
  * exposed ports (data edges), user-controlled properties (`inputPort`/

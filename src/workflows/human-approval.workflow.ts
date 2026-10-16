@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/human-approval
+ * @module as-graph/workflows/human-approval
  * @summary Demo workflow: human approval gate with approve/reject branches.
  * @description Covers `core.flow.humanApproval`, `core.flow.log` and the
  * `result` boundary. Combos: exposed ports (data edges) and user-controlled

@@ -8,13 +8,22 @@
  * catches its failing `try` body, human approval emits a single branch, while/until
  * honor distinct body ports, and `GraphBreakSignal` stops its enclosing foreach.
  */
-import { describe, it, expect } from "@jest/globals";
-import { runFixtureDocument } from "../../fixtures/workflows/engine";
+import { describe, it, expect, afterEach } from "@jest/globals";
+import { runFixtureDocument } from "../../fixtures/workflow-engine";
 import {
   executableWorkflowFixtures,
   graphWorkflowFixtures,
   type GraphWorkflowFixture,
-} from "../../fixtures/workflows";
+} from "../../../src/workflows";
+import { DagsterGraphExecutionBackend } from "../../../src/dagster/DagsterGraphExecutionBackend";
+import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
+import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
+import { bootEngine, demoCatalogue } from "../../unit/graph/engine-fixtures";
+
+/** The expected fixture id set, derived from the registry (never hard-coded). */
+const FIXTURE_IDS = graphWorkflowFixtures
+  .map((fixture) => fixture.document.id)
+  .sort();
 
 function expectedSubset(
   actual: Record<string, unknown>,
@@ -127,5 +136,31 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
     expect(result.outputs.result).toBe("warn");
     expect(result.nodeResults.expressionLog.status).toBe("succeeded");
     expect(result.nodeResults.templateLog.status).toBe("succeeded");
+  });
+});
+
+describe("fixture→catalog parity — dagster backend (SAA-721)", () => {
+  afterEach(() => {
+    GraphExecutionBackendRegistry.clear();
+  });
+
+  it("seeds the whole fixture set into the read-only dagster catalogue and serves each document", async () => {
+    const backend = new DagsterGraphExecutionBackend();
+    const catalogue = await demoCatalogue();
+    const engine = await bootEngine({
+      registry: new GraphNodeExecutorRegistry(catalogue),
+      catalogue,
+      backend,
+      seedWorkflows: graphWorkflowFixtures.map((fixture) => fixture.document),
+    });
+
+    const listed = await engine.listEngineWorkflows("dagster");
+    expect(listed.map((summary) => summary.id).sort()).toEqual(FIXTURE_IDS);
+
+    for (const fixture of graphWorkflowFixtures) {
+      await expect(
+        engine.getEngineWorkflow("dagster", fixture.document.id)
+      ).resolves.toEqual(fixture.document);
+    }
   });
 });

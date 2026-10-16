@@ -17,6 +17,8 @@ export * from "./layout";
 export * from "./types";
 export * from "./GraphRunModel";
 export * from "./GraphWorkflowModel";
+export * from "./GraphNodeModel";
+export * from "./GraphNodeConverters";
 export * from "./GraphResolution";
 export * from "./GraphExecutionStateMapper";
 export * from "./category-styles";

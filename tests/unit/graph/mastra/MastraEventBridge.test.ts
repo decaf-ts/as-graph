@@ -14,7 +14,7 @@ import {
 import type { GraphExecutionEvent } from "../../../../src/shared/graph";
 import { MastraEventBridge } from "../../../../src/mastra/MastraEventBridge";
 import type { GraphWorkflowDocument } from "../../../../src/shared/graph";
-import { document, edge, node } from "../../../fixtures/workflows/builders";
+import { document, edge, node } from "../../../../src/workflows/builders";
 import { recordingSink } from "./helpers";
 
 const source = document({

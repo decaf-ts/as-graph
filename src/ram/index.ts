@@ -25,6 +25,7 @@ export * from "../engine/runs/GraphRunConverters";
 export * from "./GraphRunEventModel";
 export * from "./GraphRunStore";
 export * from "./GraphRunEventStore";
+export * from "./GraphNodeRepository";
 
 /**
  * Creates and initializes a {@link RamAdapter} for use with the ram-backed

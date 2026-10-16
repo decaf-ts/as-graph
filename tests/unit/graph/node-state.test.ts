@@ -20,7 +20,7 @@ import {
   buildStatefulWithBuilder,
   compileStatefulFixture,
   StatefulFixtureNode,
-} from "../../fixtures/workflows/order-triage.workflow";
+} from "../../fixtures/order-triage.workflow";
 
 function statefulNodeOf(
   nodes: GraphNodeInstance[]

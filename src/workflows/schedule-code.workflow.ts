@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/schedule-code
+ * @module as-graph/workflows/schedule-code
  * @summary Demo workflow: schedule trigger → code (transform) → result boundary.
  * @description Covers `core.trigger.schedule` and `core.utility.code`. Combos:
  * user-controlled properties (`parameters.cron`, `parameters.timeoutMs`),

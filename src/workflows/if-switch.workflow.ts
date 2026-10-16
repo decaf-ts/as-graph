@@ -1,12 +1,12 @@
 /**
- * @module as-graph/tests/fixtures/workflows/if-switch
+ * @module as-graph/workflows/if-switch
  * @summary Demo workflow: if branch → code → switch routing → result boundaries.
  * @description Covers `core.flow.if`, `core.flow.switch`, `core.utility.code`
  * and the `result` boundary. Combos: user-controlled properties (`else`,
  * `cases`, `hasDefault`), exposed ports (literal code + expression `data`
  * binding + data edges) and defaults.
  */
-import type { SwitchNodeMetadata } from "../../../src/node/flow/switch/node";
+import type { GraphJsonValue, SwitchNodeMetadata } from "../shared/graph";
 import { document, edge, node, port } from "./builders";
 import type { GraphWorkflowFixture } from "./types";
 
@@ -54,7 +54,11 @@ export const ifSwitchDocument = document({
       { cases: CASES, hasDefault: true },
       {
         metadata: {
-          switch: { cases: CASES, defaultPort: "default", hasDefault: true },
+          switch: {
+            cases: CASES as unknown as GraphJsonValue,
+            defaultPort: "default",
+            hasDefault: true,
+          },
         },
       }
     ),

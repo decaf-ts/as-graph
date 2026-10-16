@@ -16,7 +16,7 @@ import {
   toElkGraph,
   type GraphLayoutOptions,
 } from "../../../../src/shared/graph";
-import { document, edge, node } from "../../../fixtures/workflows/builders";
+import { document, edge, node } from "../../../../src/workflows/builders";
 
 const NODE = 96;
 

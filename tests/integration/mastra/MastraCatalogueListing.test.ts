@@ -18,6 +18,7 @@ import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/Gra
 import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
 import { GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../src/mastra/types";
 import { bootEngine, demoCatalogue } from "../../unit/graph/engine-fixtures";
+import { graphWorkflowFixtures } from "../../../src/workflows";
 import {
   frameSinkHarness,
   integrationTwoLeafDocument,
@@ -133,6 +134,31 @@ describe("Mastra translated-workflow catalogue (SAA-307 item 3)", () => {
 
     await backend.dispose();
     await expect(backend.listWorkflows()).resolves.toEqual([]);
+  });
+
+  it("seeds the whole fixture set into the translated catalogue for every caller", async () => {
+    const backend = new MastraGraphExecutionBackend();
+    await backend.initialize({
+      mastra: {},
+      stepHandlers: [realStepHandler(NODE_KIND)],
+    });
+    const fixtureIds = graphWorkflowFixtures
+      .map((fixture) => fixture.document.id)
+      .sort();
+    const seeded = await backend.seedWorkflows(
+      graphWorkflowFixtures.map((fixture) => fixture.document)
+    );
+    expect(seeded.map((summary) => summary.id).sort()).toEqual(fixtureIds);
+
+    for (const args of [[], [userContext("bob")], [userContext("alice")]]) {
+      const list = await backend.listWorkflows(...(args as never[]));
+      expect(list.map((summary) => summary.id).sort()).toEqual(fixtureIds);
+    }
+    for (const fixture of graphWorkflowFixtures) {
+      await expect(
+        backend.getWorkflow(fixture.document.id, userContext("bob"))
+      ).resolves.toEqual(fixture.document);
+    }
   });
 
   it("exposes the catalogue through the engine seam with the same C23 filter", async () => {

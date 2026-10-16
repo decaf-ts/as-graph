@@ -140,7 +140,10 @@
   "files": [
     "lib",
     "dist",
-    "assets"
+    "assets",
+    "!lib/cjs/workflows",
+    "!lib/esm/workflows",
+    "!lib/types/workflows"
   ],
   "keywords": [
     "graph",

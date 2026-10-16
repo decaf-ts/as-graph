@@ -13,7 +13,7 @@ import { GraphWorkflowDocumentBuilder, graphDecoratedWorkflowCompiler } from "..
 import type { GraphNodeInstance } from "../../../src/shared/graph";
 import {
   StatefulFixtureNode,
-} from "../../fixtures/workflows/order-triage.workflow";
+} from "../../fixtures/order-triage.workflow";
 import { TransformNode, ReviewPipelineWorkflow } from "./fixtures";
 
 function expectValidationError(build: () => unknown, match?: RegExp): void {

@@ -34,6 +34,7 @@ import { GraphExecutionModule } from "./GraphExecutionModule";
 import {
   createGraphBackendHost,
   graphEngineVariantFromEnv,
+  loadGraphDemoWorkflows,
 } from "./GraphBackendHost";
 import { DagsterGraphQLClient } from "../../dagster/DagsterGraphQLClient";
 import type { MastraBackendConfig } from "../../mastra/types";
@@ -67,8 +68,15 @@ async function bootstrap(): Promise<void> {
   const variant = graphEngineVariantFromEnv();
   const dagsterClient = variant === "dagster" ? buildDagsterClient() : undefined;
 
+  // Seed the demo workflow fixture registry (`src/workflows`) into whichever
+  // engine this driver boots, so the per-engine catalogue and the serving list
+  // expose the full fixture set out of the box. The registry is excluded from
+  // release packaging, so the loader yields an empty set there.
+  const demoWorkflows = await loadGraphDemoWorkflows();
+
   const host = await createGraphBackendHost({
     variant,
+    ...(demoWorkflows.length > 0 ? { seedWorkflows: demoWorkflows } : {}),
     ...(variant === "mastra" ? { mastra: await buildMastraConfig() } : {}),
     ...(variant === "dagster"
       ? {

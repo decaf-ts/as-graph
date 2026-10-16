@@ -15,7 +15,7 @@ import type {
   GraphWorkflowDocument,
 } from "../../../src/shared/graph";
 import { TransformNode } from "./fixtures";
-import { orderTriageBodyDocument } from "../../fixtures/workflows/order-triage.workflow";
+import { orderTriageBodyDocument } from "../../fixtures/order-triage.workflow";
 
 const CODE_IF: CodeCondition = {
   type: "code",

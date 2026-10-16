@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/event-map
+ * @module as-graph/workflows/event-map
  * @summary Demo workflow: event trigger → map (transform) → result boundary.
  * @description Covers `core.trigger.event` and `core.utility.map`. Combos:
  * exposed ports (data edges) and defaults.

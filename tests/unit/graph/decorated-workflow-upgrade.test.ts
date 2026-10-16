@@ -16,7 +16,7 @@ import {
   PortDirection,
   graphDecoratedWorkflowCompiler,
 } from "../../../src/shared/graph";
-import { StatefulFixtureNode } from "../../fixtures/workflows/order-triage.workflow";
+import { StatefulFixtureNode } from "../../fixtures/order-triage.workflow";
 import { TransformNode } from "./fixtures";
 
 @graph("item2-ids", {

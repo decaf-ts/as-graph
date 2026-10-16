@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/error-boundary
+ * @module as-graph/workflows/error-boundary
  * @summary Demo workflow: error boundary guarding a failing code node.
  * @description Covers `core.flow.errorBoundary`, `core.utility.code` and the
  * `result` boundary. Combos: exposed ports (literal code + data edges) and

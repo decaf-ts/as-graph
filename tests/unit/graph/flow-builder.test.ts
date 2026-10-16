@@ -33,7 +33,7 @@ import {
   orderTriageDocument,
   orderTriageBodyDocument,
   structuralProjection,
-} from "../../fixtures/workflows/order-triage.workflow";
+} from "../../fixtures/order-triage.workflow";
 
 @node("item4.ambiguous", { kind: "item4.ambiguous" })
 @model()

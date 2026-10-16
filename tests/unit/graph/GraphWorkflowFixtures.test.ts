@@ -15,7 +15,7 @@ import {
   ALL_CONFIG_COMBOS,
   buildFixtureMatrix,
   graphWorkflowFixtures,
-} from "../../fixtures/workflows";
+} from "../../../src/workflows";
 
 describe("demo workflow fixture registry (SAA-2049)", () => {
   it("covers every one of the 22 built-in node kinds", () => {

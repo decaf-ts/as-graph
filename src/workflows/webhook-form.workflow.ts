@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/webhook-form
+ * @module as-graph/workflows/webhook-form
  * @summary Demo workflow: webhook + form triggers → delay/log side effects → result.
  * @description Covers `core.trigger.webhook`, `core.trigger.form`,
  * `core.flow.delay` and `core.flow.log`. Combos: exposed ports (literal

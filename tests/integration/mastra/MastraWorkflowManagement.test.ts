@@ -25,7 +25,7 @@ import {
 } from "../../../src/mastra/types";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { graphRunDocumentFingerprint } from "../../../src/engine/runs/GraphRunFingerprint";
-import { document, edge, node } from "../../fixtures/workflows/builders";
+import { document, edge, node } from "../../../src/workflows/builders";
 import {
   frameSinkHarness,
   integrationTwoLeafDocument,

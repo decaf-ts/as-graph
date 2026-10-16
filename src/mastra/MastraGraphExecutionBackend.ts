@@ -250,6 +250,37 @@ export class MastraGraphExecutionBackend
     return entry.document;
   }
 
+  /**
+   * Seeds canonical workflow documents into the translated-workflow catalogue so
+   * they are served by {@link listWorkflows}/{@link getWorkflow} exactly like a
+   * document recorded by {@link execute}. Seeded entries are owner-less, so the
+   * C23 filter keeps them visible to every caller (the owner-less visibility
+   * rule). Fails closed when the backend has not been initialized.
+   *
+   * @param documents - The canonical documents to register.
+   * @returns The seeded workflow summaries.
+   * @throws {GraphExecutionError} when the backend is not initialized.
+   */
+  async seedWorkflows(
+    documents: readonly GraphWorkflowDocument[]
+  ): Promise<GraphBackendWorkflowSummary[]> {
+    if (!this.initialized) {
+      throw new GraphExecutionError(
+        "MastraGraphExecutionBackend must be initialized before seeding workflows",
+        GRAPH_MASTRA_UNSUPPORTED_KIND
+      );
+    }
+    const summaries: GraphBackendWorkflowSummary[] = [];
+    for (const document of documents) {
+      this.documents.set(document.id, { document });
+      summaries.push({
+        id: document.id,
+        ...(document.name ? { name: document.name } : {}),
+      });
+    }
+    return summaries;
+  }
+
   async execute(
     request: GraphBackendExecutionRequest,
     ...args: MaybeContextualArg<Context>

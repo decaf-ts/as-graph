@@ -16,6 +16,7 @@
  * the `GRAPH_BACKEND_ENGINE` environment variable, so switching engines is a
  * configuration change, never a code change.
  */
+import type { GraphWorkflowDocument } from "../../shared/graph";
 import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
 import { GraphExecutionBackendRegistry } from "../../engine/execution/GraphExecutionBackendRegistry";
 import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
@@ -122,6 +123,13 @@ export interface GraphBackendHostOptions {
   /** Host wiring for the Dagster variant. */
   dagster?: GraphDagsterHostOptions;
   /**
+   * Canonical workflow documents seeded into the selected engine's catalogue at
+   * boot (the host's fixture registry). Forwarded to the module options so the
+   * per-engine workflow catalogue serves the fixture set for whichever variant
+   * the host booted. The seed stays engine-dependent and read-only for Dagster.
+   */
+  seedWorkflows?: readonly GraphWorkflowDocument[];
+  /**
    * Existing module options to extend. The host overrides only `backend` and
    * `engines.defaultEngineId`, so a caller keeps its auth, limits, adapter, and
    * rate-limit configuration.
@@ -210,6 +218,9 @@ export async function createGraphBackendHost(
   const moduleOptions: GraphExecutionModuleOptions = {
     ...base,
     ...(backend ? { backend } : {}),
+    ...(options.seedWorkflows
+      ? { seedWorkflows: options.seedWorkflows }
+      : {}),
     engines: {
       ...(base.engines ?? {}),
       defaultEngineId: variant,
@@ -222,6 +233,50 @@ export async function createGraphBackendHost(
     ...(backend ? { backend } : {}),
     moduleOptions,
   };
+}
+
+/**
+ * Relative specifiers tried, in order, for the demo workflow fixture registry
+ * (`src/workflows`). The registry is typed TS under `src/` — satisfying the
+ * owner directive that demo assets live in `src` — and is excluded from release
+ * packaging (see the `files` ignores). Using relative, extension-varied
+ * specifiers keeps the loader working across the source checkout (ts-jest /
+ * `tsx`) and both compiled outputs without a static dependency.
+ */
+const GRAPH_DEMO_WORKFLOW_SPECIFIERS: readonly string[] = [
+  "../../workflows",
+  "../../workflows/index",
+  "../../workflows/index.js",
+  "../../workflows/index.mjs",
+  "../../workflows/index.cjs",
+];
+
+/**
+ * Loads the host's demo workflow fixture registry for boot-time seeding. This is
+ * the engine driver's seeding path (R4): the fixture registry is imported only
+ * by tests and by this loader. Because the registry is excluded from release
+ * packaging, the loader is best-effort — it returns the fixture documents when
+ * the registry is present (a source checkout or development install) and an
+ * empty set when it is absent (a published package), never failing the boot.
+ *
+ * @returns The canonical documents to seed, or an empty array when the registry
+ *   is unavailable.
+ */
+export async function loadGraphDemoWorkflows(): Promise<
+  readonly GraphWorkflowDocument[]
+> {
+  for (const specifier of GRAPH_DEMO_WORKFLOW_SPECIFIERS) {
+    try {
+      const module = (await import(specifier)) as {
+        graphWorkflowFixtures?: readonly { document: GraphWorkflowDocument }[];
+      };
+      const fixtures = module.graphWorkflowFixtures;
+      return fixtures ? fixtures.map((fixture) => fixture.document) : [];
+    } catch {
+      // Try the next candidate specifier.
+    }
+  }
+  return [];
 }
 
 /** The allowlisted engine id for a variant (the backend flavour). */

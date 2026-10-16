@@ -1,9 +1,9 @@
 /**
- * @module as-graph/tests/fixtures/workflows/types
+ * @module as-graph/workflows/types
  * @summary Types for the persisted demo workflow fixture registry (SAA-2049).
  */
-import type { GraphWorkflowDocument } from "../../../src/shared/graph";
-import type { GraphExecutionValues } from "../../../src/engine/types";
+import type { GraphWorkflowDocument } from "../shared/graph";
+import type { GraphExecutionValues } from "../engine/types";
 
 /**
  * The six node-configuration combinations the fixture set must cover

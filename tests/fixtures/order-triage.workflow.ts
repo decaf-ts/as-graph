@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/order-triage
+ * @module as-graph/tests/fixtures/order-triage
  * @summary SAA-2115 items 3/4 evidence fixtures: one reference workflow
  * (`order-triage`) authored through all four authoring paths (canonical JSON,
  * raw document builder, chainable flow builder, decorated compiler) plus a
@@ -19,25 +19,25 @@ import {
   port,
   PortDirection,
   state,
-} from "../../../src/shared/graph";
+} from "../../src/shared/graph";
 import type {
   ConditionExpression,
   GraphJsonValue,
   GraphWorkflowDocument,
   SwitchCase,
   SwitchNodeMetadata,
-} from "../../../src/shared/graph";
-import { GraphNode } from "../../../src/node/base";
-import { CodeNode } from "../../../src/node";
+} from "../../src/shared/graph";
+import { GraphNode } from "../../src/node/base";
+import { CodeNode } from "../../src/node";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
-} from "../../../src/engine/types";
+} from "../../src/engine/types";
 import {
   GraphFlowBuilder,
   GraphWorkflowDocumentBuilder,
-} from "../../../src/shared/graph";
-import { graphDecoratedWorkflowCompiler } from "../../../src/shared/graph";
+} from "../../src/shared/graph";
+import { graphDecoratedWorkflowCompiler } from "../../src/shared/graph";
 
 // ---------------------------------------------------------------------------
 // Shared authoring constants

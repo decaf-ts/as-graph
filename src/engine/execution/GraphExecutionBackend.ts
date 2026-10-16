@@ -103,6 +103,17 @@ export interface GraphBackendWorkflowStore {
     workflowId: string,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphWorkflowDocument>;
+  /**
+   * Persists a canonical workflow document (the seed surface). Optional: a
+   * read-only store omits it, and the backend's `seedWorkflows` then fails
+   * closed instead of silently dropping the seeds. `GraphWorkflowService`
+   * structurally satisfies it.
+   */
+  saveDocument?(
+    workflowId: string,
+    document: GraphWorkflowDocument,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<unknown>;
 }
 
 /**
@@ -239,6 +250,20 @@ export interface GraphExecutionBackend<
     workflowId: string,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphWorkflowDocument>;
+  /**
+   * Seeds canonical workflow documents into this backend's own catalogue so
+   * they are served by {@link listWorkflows}/{@link getWorkflow}. The host
+   * supplies its fixture registry at boot and the backend registers the
+   * documents through its own engine-dependent store (persistence for the local
+   * backend, translated catalogue for Mastra, the read-only catalogue for
+   * Dagster). Returns the seeded summaries. A backend without a writable
+   * catalogue omits this method; the facade fails closed rather than silently
+   * dropping the seeds.
+   */
+  seedWorkflows?(
+    documents: readonly GraphWorkflowDocument[],
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphBackendWorkflowSummary[]>;
   /**
    * Executes a validated/resolved workflow.
    *

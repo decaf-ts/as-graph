@@ -166,6 +166,15 @@ export interface GraphExecutionEngineConfig {
    */
   workflowStore?: GraphBackendWorkflowStore;
   /**
+   * Canonical workflow documents to seed into the active backend's own
+   * catalogue at boot (the host's fixture registry). Each backend registers
+   * them through its engine-dependent store so the per-engine catalogue
+   * (`graph/engines/{engineId}/workflows`) serves them. The engine fails closed
+   * with `GRAPH_BACKEND_SEED_NOT_SUPPORTED` when seeds are supplied but the
+   * backend exposes no seed surface, so a host never silently loses its seeds.
+   */
+  seedWorkflows?: readonly GraphWorkflowDocument[];
+  /**
    * Decaf adapter backing cached/pinned value persistence. Defaults to the
    * globally configured adapter (`Adapter.current`); tests pass a `RamAdapter`
    * and production passes a durable adapter.
@@ -343,6 +352,19 @@ export class GraphExecutionEngine
         : {}),
       engine: this,
     });
+    if (config.seedWorkflows && config.seedWorkflows.length > 0) {
+      const seed = backend.seedWorkflows;
+      if (typeof seed !== "function") {
+        throw new GraphExecutionError(
+          `Graph execution backend '${
+            backend.constructor?.name ?? "GraphExecutionBackend"
+          }' does not support workflow seeding`,
+          "GRAPH_BACKEND_SEED_NOT_SUPPORTED",
+          { backend: backend.constructor?.name ?? "GraphExecutionBackend" }
+        );
+      }
+      await seed.call(backend, config.seedWorkflows, ...args.slice(1));
+    }
     await config.onEngineCreated?.(this);
     return { config, client };
   }

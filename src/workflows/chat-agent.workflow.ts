@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/chat-agent
+ * @module as-graph/workflows/chat-agent
  * @summary Demo workflow: chat trigger → agent (prompt/response/actions) → log → result.
  * @description Covers `core.trigger.chat`, `core.agent`, `core.flow.log` and the
  * `result` boundary. Combos: exposed ports (data edges) and defaults.

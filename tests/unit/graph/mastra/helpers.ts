@@ -17,7 +17,7 @@ import type {
 } from "../../../../src/engine/execution/GraphExecutionBackend";
 import type { GraphExecutionFrame } from "../../../../src/engine/execution/GraphExecutionFrame";
 import type { MastraNodeStepHandler } from "../../../../src/mastra/types";
-import { document, edge, node } from "../../../fixtures/workflows/builders";
+import { document, edge, node } from "../../../../src/workflows/builders";
 
 /**
  * A minimal {@link MastraNodeStepHandler} that builds a real `@mastra/core`

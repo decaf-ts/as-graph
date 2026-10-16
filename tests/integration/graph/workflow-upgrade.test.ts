@@ -28,11 +28,11 @@ import {
   orderTriageDocument,
   ORDER_TRIAGE_TRIAGE_CODE,
   StatefulFixtureNode,
-} from "../../fixtures/workflows/order-triage.workflow";
+} from "../../fixtures/order-triage.workflow";
 import {
   bootFixtureEngine,
   runFixtureDocument,
-} from "../../fixtures/workflows/engine";
+} from "../../fixtures/workflow-engine";
 import {
   nodeExecutor,
   resolveDocument,

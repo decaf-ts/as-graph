@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/boundary-value
+ * @module as-graph/workflows/boundary-value
  * @summary Demo workflow: workflow input value boundary → output value boundary.
  * @description Covers the `value` (`GraphInputValueNode`) and `result`
  * (`GraphOutputValueNode`) boundary kinds. Combos: exposed ports (data edges)

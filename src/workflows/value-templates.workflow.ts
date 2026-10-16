@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/value-templates
+ * @module as-graph/workflows/value-templates
  * @summary Demo workflow: user properties stored as `GraphValueTemplate`s.
  * @description Covers `core.utility.log` carrying the `code-expression` and
  * `text-template` user-property combos as `GraphValueTemplate` objects. The
@@ -8,7 +8,7 @@
  * Combos: text template, code expression (user property), exposed ports and
  * defaults.
  */
-import type { GraphValueTemplate } from "../../../src/shared/graph";
+import type { GraphValueTemplate } from "../shared/graph";
 import { document, edge, node, port } from "./builders";
 import type { GraphWorkflowFixture } from "./types";
 

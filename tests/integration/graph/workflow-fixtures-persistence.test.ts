@@ -11,12 +11,13 @@ import { RamAdapter } from "@decaf-ts/core/ram";
 import { Injectables } from "@decaf-ts/injectable-decorators";
 import { GraphWorkflowService } from "../../../src/engine/services/GraphWorkflowService";
 import { GraphEnvironment } from "../../../src/engine/services/GraphEnvironment";
+import { LocalGraphExecutionBackend } from "../../../src/engine/execution/LocalGraphExecutionBackend";
 import {
   LEVEL_EXPRESSION_TEMPLATE,
   MESSAGE_TEMPLATE,
   graphWorkflowFixtures,
   type GraphWorkflowFixture,
-} from "../../fixtures/workflows";
+} from "../../../src/workflows";
 import { resolveGraphValueTemplate } from "../../../src/shared/graph";
 
 RamAdapter.decoration();
@@ -133,5 +134,50 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
       `javascript:${LEVEL_EXPRESSION_TEMPLATE.expression}`,
       `text:${MESSAGE_TEMPLATE.expression}`,
     ]);
+  });
+
+  describe("local backend seeding persists into the repository (SAA-721)", () => {
+    /** The expected fixture id set, derived from the registry export. */
+    const fixtureIds = graphWorkflowFixtures
+      .map((fixture) => fixture.document.id)
+      .sort();
+
+    it("LocalGraphExecutionBackend.seedWorkflows persists the whole fixture set and serves it back", async () => {
+      const service = new GraphWorkflowService();
+      const backend = new LocalGraphExecutionBackend();
+      await backend.initialize({ workflowStore: service } as never);
+
+      const seeded = await backend.seedWorkflows(
+        graphWorkflowFixtures.map((fixture) => fixture.document)
+      );
+      expect(seeded.map((summary) => summary.id).sort()).toEqual(fixtureIds);
+
+      const listed = await backend.listWorkflows();
+      expect(listed.map((record) => record.id).sort()).toEqual(fixtureIds);
+
+      for (const fixture of graphWorkflowFixtures) {
+        await expect(backend.getWorkflow(fixture.document.id)).resolves.toEqual(
+          fixture.document
+        );
+      }
+    });
+
+    it("a fresh GraphWorkflowService over the same adapter reloads the seeded fixtures", async () => {
+      const service = new GraphWorkflowService();
+      const backend = new LocalGraphExecutionBackend();
+      await backend.initialize({ workflowStore: service } as never);
+      await backend.seedWorkflows(
+        graphWorkflowFixtures.map((fixture) => fixture.document)
+      );
+
+      resetWorkflowServiceInjectable();
+      const fresh = new GraphWorkflowService();
+      expect(fresh).not.toBe(service);
+      for (const fixture of graphWorkflowFixtures) {
+        await expect(
+          fresh.getDocument(fixture.document.id)
+        ).resolves.toEqual(fixture.document);
+      }
+    });
   });
 });

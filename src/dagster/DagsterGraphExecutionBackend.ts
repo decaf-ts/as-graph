@@ -380,6 +380,13 @@ export class DagsterGraphExecutionBackend
   private client?: DagsterClient;
   private readonly mapper = new DagsterResultMapper();
   private readonly bridges = new Map<string, DagsterGraphEventBridge>();
+  /**
+   * Read-only catalogue of seeded canonical documents. Seeding registers the
+   * documents a host supplies at boot (its fixture registry) so they are listed
+   * and looked up through this backend; it is NOT an authoring surface — the
+   * backend's declared authoring capabilities stay `not_supported`.
+   */
+  private readonly seeded = new Map<string, GraphWorkflowDocument>();
   private defaultTags: Record<string, string> = {};
   private _config?: DagsterGraphExecutionBackendConfig;
   private executionEnabled = false;
@@ -419,29 +426,77 @@ export class DagsterGraphExecutionBackend
    * listing/lookup is supported exactly when the client port exposes it.
    */
   get capabilities(): GraphBackendCapabilities {
-    return dagsterBackendCapabilities(this.client);
+    const base = dagsterBackendCapabilities(this.client);
+    // Seeded fixtures make listing/lookup available even without a wired client;
+    // a wired client already declares the operations supported.
+    if (this.seeded.size === 0) return base;
+    return {
+      ...base,
+      workflows: { list: "supported", get: "supported" },
+    };
   }
 
   /**
-   * Lists the deployment's Dagster jobs through the client port.
+   * Lists the seeded fixture catalogue plus the deployment's Dagster jobs
+   * through the client port. Seeded fixtures (owner-less, read-only) always
+   * appear; deployment jobs are appended when a client port exposes job
+   * listing, de-duplicated by id.
    *
    * @returns Real workflow summaries.
-   * @throws {GraphExecutionError} when the client port exposes no job listing.
+   * @throws {GraphExecutionError} when there is nothing to list: no seeded
+   *   fixtures and the client port exposes no job listing.
    */
   async listWorkflows(): Promise<GraphBackendWorkflowSummary[]> {
-    const client = this.requireClient();
+    const seeded: GraphBackendWorkflowSummary[] = [
+      ...this.seeded.values(),
+    ].map((document) => ({
+      id: document.id,
+      ...(document.name ? { name: document.name } : {}),
+    }));
+
+    const client =
+      this.client ?? (seeded.length > 0 ? undefined : this.requireClient());
+    if (!client) return seeded;
     if (typeof client.listJobs !== "function") {
+      if (seeded.length > 0) return seeded;
       throw new GraphExecutionError(
         "Dagster client port exposes no job listing; workflow listing is not supported",
         DAGSTER_ERROR.WORKFLOWS_NOT_SUPPORTED
       );
     }
     const jobs = await client.listJobs();
-    return jobs.map((job) => ({
-      id: job.name,
-      name: job.name,
-      ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
-    }));
+    const known = new Set(seeded.map((summary) => summary.id));
+    const deploymentJobs = jobs
+      .filter((job) => !known.has(job.name))
+      .map((job) => ({
+        id: job.name,
+        name: job.name,
+        ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
+      }));
+    return [...seeded, ...deploymentJobs];
+  }
+
+  /**
+   * Seeds canonical workflow documents into this backend's read-only catalogue
+   * so they are listed and looked up alongside the deployment's jobs. Seeding is
+   * a host boot action, never an authoring surface: the backend's declared
+   * authoring capabilities stay `not_supported`.
+   *
+   * @param documents - The canonical documents to register.
+   * @returns The seeded workflow summaries.
+   */
+  async seedWorkflows(
+    documents: readonly GraphWorkflowDocument[]
+  ): Promise<GraphBackendWorkflowSummary[]> {
+    const summaries: GraphBackendWorkflowSummary[] = [];
+    for (const document of documents) {
+      this.seeded.set(document.id, document);
+      summaries.push({
+        id: document.id,
+        ...(document.name ? { name: document.name } : {}),
+      });
+    }
+    return summaries;
   }
 
   /**
@@ -454,6 +509,8 @@ export class DagsterGraphExecutionBackend
    * @throws {GraphExecutionError} when the client port exposes no job lookup.
    */
   async getWorkflow(workflowId: string): Promise<GraphWorkflowDocument> {
+    const seeded = this.seeded.get(workflowId);
+    if (seeded) return seeded;
     const client = this.requireClient();
     if (typeof client.getJob !== "function") {
       throw new GraphExecutionError(

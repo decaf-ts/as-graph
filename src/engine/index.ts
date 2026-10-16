@@ -80,6 +80,7 @@ export * from "./runs";
 export * from "./services/GraphEnvironment";
 export * from "./services/GraphWorkflowService";
 export * from "./services/GraphRunModelService";
+export * from "./services/GraphNodeModelService";
 
 // Snapshots (TASK-219)
 export * from "./snapshots/GraphExecutionSnapshotMapper";

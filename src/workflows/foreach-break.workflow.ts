@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/foreach-break
+ * @module as-graph/workflows/foreach-break
  * @summary Demo workflow: foreach loop whose body doubles items then breaks.
  * @description Covers `core.loop.foreach`, `core.flow.break` and
  * `core.utility.code`. Combos: exposed ports (literal code + data edges),

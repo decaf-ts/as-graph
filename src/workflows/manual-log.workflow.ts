@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows/manual-log
+ * @module as-graph/workflows/manual-log
  * @summary Demo workflow: manual trigger → flow log + utility log → result boundary.
  * @description Covers `core.trigger.manual`, `core.flow.log`,
  * `core.utility.log` and the `result` boundary kind. Combos: straight value

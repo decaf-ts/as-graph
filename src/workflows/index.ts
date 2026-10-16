@@ -1,5 +1,5 @@
 /**
- * @module as-graph/tests/fixtures/workflows
+ * @module as-graph/workflows
  * @summary Persisted demo workflow fixture registry (SAA-2049 / SAA-2015 W4b).
  * @description Exports every demo `GraphWorkflowDocument`, a registry keyed by
  * fixture id, the node→workflow→combo matrix, and the complete list of built-in

@@ -220,6 +220,41 @@ export class LocalGraphExecutionBackend
   }
 
   /**
+   * Seeds canonical workflow documents into the wired `GraphWorkflowStore`
+   * port so the local reference backend's catalogue serves them. Each document
+   * is persisted through the store's own write path (`saveDocument`), so the
+   * seed honours the same boundary validation and ownership rules as any other
+   * write — never a bypass. The port must expose `saveDocument`; a read-only
+   * store fails closed.
+   *
+   * @param documents - The canonical documents to persist.
+   * @param args - Optional decaf contextual arguments forwarded to the store.
+   * @returns The seeded workflow summaries.
+   * @throws {GraphExecutionError} when no writable workflow store is wired in.
+   */
+  async seedWorkflows(
+    documents: readonly GraphWorkflowDocument[],
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphBackendWorkflowSummary[]> {
+    const store = this.workflowStore;
+    if (!store || typeof store.saveDocument !== "function") {
+      throw new GraphExecutionError(
+        "LocalGraphExecutionBackend has no writable workflowStore configured; workflow seeding is not supported",
+        "GRAPH_BACKEND_SEED_NOT_SUPPORTED"
+      );
+    }
+    const summaries: GraphBackendWorkflowSummary[] = [];
+    for (const document of documents) {
+      await store.saveDocument(document.id, document, ...args);
+      summaries.push({
+        id: document.id,
+        ...(document.name !== undefined ? { name: document.name } : {}),
+      });
+    }
+    return summaries;
+  }
+
+  /**
    * Executes a validated/resolved workflow's plan against the facade-owned
    * frame carried by the request's event sink.
    *

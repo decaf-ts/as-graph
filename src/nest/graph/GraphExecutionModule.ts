@@ -19,11 +19,12 @@ import type { AuthHandler } from "@decaf-ts/for-http/server";
 
 import { Adapter } from "@decaf-ts/core";
 import { RamAdapter, RamFlavour } from "@decaf-ts/core/ram";
-import type { GraphRunLimits } from "../../shared/graph";
+import type { GraphRunLimits, GraphWorkflowDocument } from "../../shared/graph";
 import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
 import {
   GraphExecutionEngine,
   GraphNodeCatalogue,
+  GraphNodeModelService,
   GraphRunService,
   GraphStoreError,
   type GraphCredentialAuthorizer,
@@ -165,6 +166,16 @@ export interface GraphExecutionModuleOptions {
    * wrapper does this) so the manifest and the per-engine catalogue agree.
    */
   backend?: GraphExecutionBackend<any>;
+  /**
+   * Canonical workflow documents to seed into the active backend's catalogue at
+   * boot, so the per-engine workflow catalogue
+   * (`graph/engines/{engineId}/workflows`) and the ownership-filtered serving
+   * list (`graph/workflows`) serve the host's fixture set for whichever engine
+   * the host booted. The seed is engine-dependent (persistence for local,
+   * translated catalogue for Mastra, read-only catalogue for Dagster) and fails
+   * closed when the active backend exposes no seed surface.
+   */
+  seedWorkflows?: readonly GraphWorkflowDocument[];
   /**
    * Production hosts MUST wire a {@link GraphCredentialAuthorizer} backed by
    * their credential store (DECAF-50 §4.8 stage 8). Without it, stage-8
@@ -349,6 +360,9 @@ export class GraphExecutionModule {
           await engine.boot({
             ...config,
             ...(options.backend ? { backend: options.backend } : {}),
+            ...(options.seedWorkflows
+              ? { seedWorkflows: options.seedWorkflows }
+              : {}),
             workflowStore: workflowService,
             authEnabled: resolveGraphAuthEnabled(options),
             ...(options.authMatch ? { authMatch: options.authMatch } : {}),
@@ -400,7 +414,35 @@ export class GraphExecutionModule {
       },
       {
         provide: GraphWorkflowService,
-        useFactory: () => new GraphWorkflowService(),
+        useFactory: async () => {
+          const service = new GraphWorkflowService();
+          // Seed the ownership-filtered serving list (`GET /graph/workflows`)
+          // with the host's fixture registry so it lists the full fixture set
+          // for whichever engine the host booted. The engine independently
+          // seeds the active backend's own catalogue for the engine-scoped list
+          // (`GET /graph/engines/{engineId}/workflows`); for the local variant
+          // both paths resolve to this same service and the re-save is an
+          // owner-equality-preserving update.
+          if (options.seedWorkflows && options.seedWorkflows.length > 0) {
+            for (const document of options.seedWorkflows) {
+              await service.saveDocument(document.id, document);
+            }
+          }
+          return service;
+        },
+      },
+      {
+        // Expose registered node kinds through repository/adapter CRUD/listing
+        // (SAA-774 R3): mirror the populated catalogue into the RAM-backed
+        // `GraphNodeModel` rows at boot so `GraphNodeRepository` listing/read
+        // works out of the box for whichever engine the host booted.
+        provide: GraphNodeModelService,
+        useFactory: async (catalogue: GraphNodeCatalogue) => {
+          const service = new GraphNodeModelService();
+          await service.syncFromCatalogue(catalogue);
+          return service;
+        },
+        inject: [GraphNodeCatalogue],
       },
       {
         provide: GraphRunService,
@@ -486,6 +528,7 @@ export class GraphExecutionModule {
         RamGraphRunEventStore,
         GraphRunService,
         GraphWorkflowService,
+        GraphNodeModelService,
         GraphEngineCapabilityService,
       ],
     };

@@ -24,7 +24,7 @@ import {
   document,
   edge,
   node,
-} from "../../fixtures/workflows/builders";
+} from "../../../src/workflows/builders";
 
 /** A recorded step invocation, proving a real Mastra step executed. */
 export interface StepCall {

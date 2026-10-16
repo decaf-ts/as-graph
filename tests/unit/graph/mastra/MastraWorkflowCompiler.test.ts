@@ -8,7 +8,7 @@
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import { graphRunDocumentFingerprint } from "../../../../src/engine/runs/GraphRunFingerprint";
 import { GRAPH_MASTRA_RESUME_SCHEMA_UNSAFE, GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../../src/mastra/types";
-import { document, node } from "../../../fixtures/workflows/builders";
+import { document, node } from "../../../../src/workflows/builders";
 import {
   graphCodeOf,
   humanApprovalDocument,
