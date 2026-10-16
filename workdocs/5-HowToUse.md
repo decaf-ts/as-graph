@@ -658,7 +658,7 @@ is absent.
 
 | Script | Purpose |
 | --- | --- |
-| `npm run build` / `build:prod` | Compile ESM + CJS + types |
+| `npm run build` / `build:prod` | Compile ESM + CJS + types; `postbuild`/`postbuild:prod` run the `check:emitted-specifiers` guard, which fails the build when any relative module specifier in the emitted `lib/cjs`/`lib/esm` output does not resolve |
 | `npm run start:backend` / `start:backend:local` | Boot the standalone host with the built-in local engine (`:3000`) |
 | `npm run start:backend:mastra` | Boot the standalone host with the Mastra engine (`GRAPH_BACKEND_ENGINE=mastra`) |
 | `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |

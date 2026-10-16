@@ -91,6 +91,9 @@
     "reset": "rm -rf * && git checkout . && git pull && npm run do-install",
     "build": "build-scripts --dev",
     "build:prod": "build-scripts --prod",
+    "check:emitted-specifiers": "node ./scripts/check-emitted-relative-specifiers.mjs",
+    "postbuild": "npm run check:emitted-specifiers",
+    "postbuild:prod": "npm run check:emitted-specifiers",
     "start:backend": "node ./lib/cjs/nest/graph/main.cjs",
     "start:backend:local": "GRAPH_BACKEND_ENGINE=local node ./lib/cjs/nest/graph/main.cjs",
     "start:backend:mastra": "GRAPH_BACKEND_ENGINE=mastra node ./lib/cjs/nest/graph/main.cjs",
@@ -192,7 +195,7 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@decaf-ts/utils": "latest",
+    "@decaf-ts/utils": "1.14.0",
     "@nestjs/testing": "^11.2.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
