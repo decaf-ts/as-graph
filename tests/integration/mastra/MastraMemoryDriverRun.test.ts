@@ -475,6 +475,70 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
     }
   });
 
+  it("refuses a pg credentialRef naming a non-MASTRA_ host variable (SAA-922)", async () => {
+    // Pre-fix (SAA-911 staged baseline) this resolved the host secret
+    // LANGFUSE_SECRET_KEY as the pg password and constructed the store.
+    const hostOriginal = process.env["LANGFUSE_SECRET_KEY"];
+    process.env["LANGFUSE_SECRET_KEY"] = "host-secret";
+    try {
+      const graphCode = await rejectionGraphCodeOf(() =>
+        resolveMastraMemoryStorage(
+          {
+            provider: "pg",
+            connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+            credentialRef: {
+              credentialId: "LANGFUSE_SECRET_KEY",
+              credentialType: "pg",
+            },
+          } as MastraMemoryConfig,
+          "mem"
+        )
+      );
+      expect(graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+    } finally {
+      if (hostOriginal === undefined) {
+        delete process.env["LANGFUSE_SECRET_KEY"];
+      } else {
+        process.env["LANGFUSE_SECRET_KEY"] = hostOriginal;
+      }
+    }
+  });
+
+  it("refuses plaintext pg credential material nested in the connection options (SAA-922)", async () => {
+    // Pre-fix only the connection's top-level keys were scanned; a nested
+    // password slipped through and the store was constructed.
+    process.env[ENV_PASSWORD_OVERRIDE] = "resolved-pg-secret";
+    try {
+      for (const nested of [
+        { nested: { password: "plaintext-secret" } },
+        { pool: { options: { connectionString: "postgres://u:p@h/db" } } },
+      ]) {
+        const graphCode = await rejectionGraphCodeOf(() =>
+          resolveMastraMemoryStorage(
+            {
+              provider: "pg",
+              connection: {
+                host: "localhost",
+                port: 5432,
+                database: "db",
+                user: "u",
+                ...nested,
+              },
+              credentialRef: {
+                credentialId: ENV_PASSWORD_OVERRIDE,
+                credentialType: "pg",
+              },
+            } as MastraMemoryConfig,
+            "mem"
+          )
+        );
+        expect(graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
+      }
+    } finally {
+      delete process.env[ENV_PASSWORD_OVERRIDE];
+    }
+  });
+
   it("fails closed with the provider-unknown code for an unsupported provider", async () => {
     const graphCode = await rejectionGraphCodeOf(() =>
       resolveMastraMemoryStorage(

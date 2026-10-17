@@ -9,8 +9,12 @@
  * resolved value flows only into the binding's own constructor options — it
  * is never echoed into an error or a descriptor. All failures use the
  * fail-closed mastra error codes; no real backend package is needed.
+ * SAA-922 regression coverage pins the MASTRA_ credential-variable naming
+ * convention (a `credentialRef` can never name an arbitrary host secret) and
+ * the recursive plaintext scan of the `connection` options.
  */
-import { describe, it, expect, afterEach } from "@jest/globals";
+import { describe, it, expect, afterEach, beforeEach } from "@jest/globals";
+import type { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 import {
   resolveMastraVectorStore,
   type MastraVectorConstructor,
@@ -167,5 +171,140 @@ describe("mastra vector-store credential gate (SAA-911 F4)", () => {
     expect(graphCodeOf(() => resolveMastraVectorStore(config, {}))).toBe(
       "GRAPH_MASTRA_VECTOR_UNAVAILABLE"
     );
+  });
+});
+
+/**
+ * The error a resolver call throws, for assertions on its graph code and
+ * details; fails the test when the call resolves instead of refusing.
+ */
+function refusalOf(fn: () => unknown): GraphExecutionError {
+  try {
+    fn();
+  } catch (error) {
+    return error as GraphExecutionError;
+  }
+  throw new Error("expected the resolver to refuse the configuration");
+}
+
+describe("mastra vector-store MASTRA_ credential-name gate (SAA-922 regression)", () => {
+  /** Host variables the hostile configs reference, saved for restoration. */
+  const HOST_VARS = [
+    "LANGFUSE_SECRET_KEY",
+    "MY_TOKEN",
+    "langfuse_secret_key",
+    "MASTRA_PG\nPASSWORD",
+  ] as const;
+  const hostOriginals: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const name of HOST_VARS) {
+      hostOriginals[name] = process.env[name];
+      process.env[name] = "host-secret";
+    }
+  });
+
+  afterEach(() => {
+    for (const name of HOST_VARS) {
+      if (hostOriginals[name] === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = hostOriginals[name];
+      }
+    }
+  });
+
+  it("refuses a pgvector credentialRef naming a non-MASTRA_ host variable", () => {
+    // Pre-fix (SAA-911 staged baseline) this resolved the host secret
+    // LANGFUSE_SECRET_KEY into the binding's password options.
+    const config = {
+      provider: "pgvector",
+      id: "vs",
+      connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+      credentialRef: { credentialId: "LANGFUSE_SECRET_KEY", credentialType: "pg" },
+    } as unknown as MastraVectorStoreConfig;
+    const refusal = refusalOf(() =>
+      resolveMastraVectorStore(config, {
+        bindings: { pgvector: recordingBinding },
+      })
+    );
+    expect(refusal.graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+    expect(JSON.stringify(refusal)).not.toContain("host-secret");
+  });
+
+  it("refuses a credentialed redis store referencing a non-MASTRA_ host variable", () => {
+    const config = {
+      provider: "redis",
+      id: "vs",
+      connection: { host: "localhost", port: 6379 },
+      credentialRef: { credentialId: "LANGFUSE_SECRET_KEY", credentialType: "redis" },
+    } as unknown as MastraVectorStoreConfig;
+    const refusal = refusalOf(() =>
+      resolveMastraVectorStore(config, {
+        bindings: { redis: recordingBinding },
+      })
+    );
+    expect(refusal.graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+  });
+
+  it("refuses non-conforming credential names even when the host variable exists", () => {
+    // A lowercase name, a foreign prefix, and a valid-looking name carrying
+    // embedded junk must all fail closed — pre-fix each resolved when the
+    // host variable was set.
+    for (const name of ["langfuse_secret_key", "MY_TOKEN", "MASTRA_PG\nPASSWORD"]) {
+      const config = {
+        provider: "pgvector",
+        id: "vs",
+        connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+        credentialRef: { credentialId: name, credentialType: "pg" },
+      } as unknown as MastraVectorStoreConfig;
+      const refusal = refusalOf(() =>
+        resolveMastraVectorStore(config, {
+          bindings: { pgvector: recordingBinding },
+        })
+      );
+      expect(refusal.graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+      expect(refusal.details).toMatchObject({ credentialId: name });
+    }
+  });
+
+  it("refuses plaintext credential material nested inside the connection options", () => {
+    // Pre-fix only the connection's top-level keys were scanned; nested
+    // members (plain objects, array elements, deep connectionString) slipped
+    // through into the binding options.
+    const nested: Array<[Record<string, unknown>, string]> = [
+      [{ nested: { password: "plaintext-secret" } }, "nested.password"],
+      [
+        { tables: [{ name: "docs", password: "plaintext-secret" }] },
+        "tables.password",
+      ],
+      [
+        {
+          pool: { tunables: { connectionString: "postgres://u:p@h/db" } },
+        },
+        "pool.tunables.connectionString",
+      ],
+    ];
+    for (const [members, path] of nested) {
+      const config = {
+        provider: "pgvector",
+        id: "vs",
+        connection: { host: "localhost", ...members },
+        credentialRef: { credentialId: ENV_OVERRIDE, credentialType: "pg" },
+      } as unknown as MastraVectorStoreConfig;
+      process.env[ENV_OVERRIDE] = "resolved-secret";
+      const refusal = refusalOf(() =>
+        resolveMastraVectorStore(config, {
+          bindings: { pgvector: recordingBinding },
+        })
+      );
+      expect(refusal.graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
+      expect(refusal.details).toMatchObject({
+        key: path.split(".").pop(),
+        path,
+      });
+      expect(JSON.stringify(refusal)).not.toContain("plaintext-secret");
+      delete process.env[ENV_OVERRIDE];
+    }
   });
 });

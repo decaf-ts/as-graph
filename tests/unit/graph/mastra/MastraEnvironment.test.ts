@@ -22,6 +22,8 @@ import {
   MastraEnvironment,
   assertMastraProviderCredentials,
   hasMastraProviderCredentials,
+  mastraCredentialEnvNameOf,
+  resolveMastraCredentialValue,
 } from "../../../../src/mastra/MastraEnvironment";
 import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 
@@ -227,5 +229,81 @@ describe("gate C file state (SAA-836 S1)", () => {
 
     expect(gitignore).toContain("/.env.secret");
     expect(gitignore).toContain("/.env");
+  });
+});
+
+describe("MASTRA_ credential-name gate (SAA-922 regression)", () => {
+  /** The provider/id/surface context the gate errors name. */
+  const context = { provider: "pg", id: "mem", surface: "memory" };
+
+  it("resolveMastraCredentialValue refuses a non-MASTRA_ name even when the variable exists", () => {
+    // Pre-fix (SAA-911 staged baseline) this returned "x": a direct caller
+    // could read an arbitrary host variable by name.
+    expect(() =>
+      resolveMastraCredentialValue("LANGFUSE_SECRET_KEY", {
+        LANGFUSE_SECRET_KEY: "x",
+      })
+    ).toThrow(
+      expect.objectContaining({
+        graphCode: GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+      })
+    );
+  });
+
+  it("resolveMastraCredentialValue still resolves a valid MASTRA_ name", () => {
+    expect(
+      resolveMastraCredentialValue("MASTRA_PG_PASSWORD", {
+        MASTRA_PG_PASSWORD: "resolved-secret",
+      })
+    ).toBe("resolved-secret");
+  });
+
+  it("resolveMastraCredentialValue still fails closed for an unset MASTRA_ variable", () => {
+    expect(() =>
+      resolveMastraCredentialValue("MASTRA_PG_PASSWORD", {})
+    ).toThrow(
+      expect.objectContaining({
+        graphCode: GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+      })
+    );
+  });
+
+  it("mastraCredentialEnvNameOf refuses non-conforming credentialId names", () => {
+    for (const name of [
+      "langfuse_secret_key",
+      "MY_TOKEN",
+      "MASTRA_",
+      "MASTRA_PG PASSWORD",
+    ]) {
+      const refusal = (() => {
+        try {
+          mastraCredentialEnvNameOf(
+            { credentialRef: { credentialId: name, credentialType: "pg" } },
+            context,
+            "pg password"
+          );
+        } catch (error) {
+          return error as GraphExecutionError;
+        }
+        throw new Error(`expected '${name}' to be refused`);
+      })();
+      expect(refusal.graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+      expect(refusal.details).toMatchObject({ credentialId: name });
+    }
+  });
+
+  it("mastraCredentialEnvNameOf still returns a trimmed conforming MASTRA_ name", () => {
+    expect(
+      mastraCredentialEnvNameOf(
+        {
+          credentialRef: {
+            credentialId: "  MASTRA_PG_PASSWORD  ",
+            credentialType: "pg",
+          },
+        },
+        context,
+        "pg password"
+      )
+    ).toBe("MASTRA_PG_PASSWORD");
   });
 });
