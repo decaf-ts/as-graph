@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 20 built-in kinds as manifest+executor pairs,
+ * @description Validates the 59 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -40,6 +40,24 @@ import { freshCatalogue, nodeExecutionRequest } from "./engine-fixtures";
 jest.setTimeout(30000);
 
 /**
+ * The manifest icon overlays the SAA-836 M6 channel/voice kinds declare: the
+ * channel trigger/response kinds carry their platform supplier icon and the
+ * voice kind carries the speaker icon, while every other Agent-family kind
+ * keeps the family robot icon.
+ */
+const GRAPH_M6_AGENT_SUPPLIER_ICONS: Record<string, string> = {
+  "core.agent.trigger.slack": "ti-brand-slack",
+  "core.agent.trigger.discord": "ti-brand-discord",
+  "core.agent.trigger.telegram": "ti-brand-telegram",
+  "core.agent.trigger.teams": "ti-brand-teams",
+  "core.agent.response.slack": "ti-brand-slack",
+  "core.agent.response.discord": "ti-brand-discord",
+  "core.agent.response.telegram": "ti-brand-telegram",
+  "core.agent.response.teams": "ti-brand-teams",
+  "core.agent.voice": "ti-volume-2",
+};
+
+/**
  * Runs {@link registerBuiltInGraphNodes} for a fresh catalogue and returns the
  * catalogue.
  */
@@ -52,7 +70,7 @@ async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
 describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(22);
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(59);
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
@@ -61,15 +79,15 @@ describe("GraphBuiltInRegistrations", () => {
         Function
       );
     }
-    expect(catalogue.size).toBe(22);
+    expect(catalogue.size).toBe(59);
   });
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
-    // registerBuiltInGraphNodes registers all 22 built-ins with no engine
+    // registerBuiltInGraphNodes registers all 59 built-ins with no engine
     // argument: each executor is derived from the node class's static execute.
     await registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(22);
+    expect(catalogue.size).toBe(59);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
       expect(await catalogue.has(kind)).toBe(true);
       expect((await catalogue.getManifest(kind)).kind).toBe(kind);
@@ -95,7 +113,7 @@ describe("GraphBuiltInRegistrations", () => {
     await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
     ).resolves.toBeDefined();
-    expect(catalogue.size).toBe(22);
+    expect(catalogue.size).toBe(59);
   });
 
   it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
@@ -159,6 +177,43 @@ describe("GraphBuiltInRegistrations", () => {
       "core.utility.log",
       "core.flow.break",
       "core.agent",
+      "core.agent.tool",
+      "core.agent.toolSelector",
+      "core.agent.hook",
+      "core.agent.toolDeny",
+      "core.agent.delegationHook",
+      "core.agent.skill",
+      "core.agent.skillSelector",
+      "core.agent.sandbox",
+      "core.agent.scorer",
+      "core.agent.scorerSelector",
+      "core.agent.memory",
+      "core.agent.memorySelector",
+      "core.agent.embedding",
+      "core.agent.vectorStore",
+      "core.agent.retriever",
+      "core.agent.chunking",
+      "core.agent.rerank",
+      "core.agent.chain.qa",
+      "core.agent.chain.basic",
+      "core.agent.chain.summarization",
+      "core.agent.structuredOutputParser",
+      "core.agent.informationExtractor",
+      "core.agent.langchainCode",
+      "core.agent.inputProcessor",
+      "core.agent.outputProcessor",
+      "core.agent.guardrail",
+      "core.agent.hitl",
+      "core.agent.trigger.mcp",
+      "core.agent.trigger.slack",
+      "core.agent.trigger.discord",
+      "core.agent.trigger.telegram",
+      "core.agent.trigger.teams",
+      "core.agent.response.slack",
+      "core.agent.response.discord",
+      "core.agent.response.telegram",
+      "core.agent.response.teams",
+      "core.agent.voice",
       "core.loop.foreach",
       "core.loop.while",
       "core.loop.until",
@@ -201,7 +256,7 @@ describe("GraphBuiltInRegistrations", () => {
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
   it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(22);
+    expect(registrations.length).toBe(59);
     const catalogue = await buildBuiltInCatalogue();
     expect(() => catalogue.register(registrations[0] as never)).toThrow(
       GraphNodeRegistrationError
@@ -230,17 +285,23 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
             ? "trigger"
             : manifest.kind.startsWith("core.utility.")
               ? "utility"
-              : manifest.kind === "core.agent"
+              : family === "Agent"
                 ? "agent"
                 : manifest.kind.startsWith("core.loop.")
                   ? "loop"
                   : "flow"
       );
-      if (manifest.kind === "core.agent") {
-        // the Agent class omits color/icon on @node(); the display is
+      if (family === "Agent") {
+        // the Agent family omits color/icon on @node(); the display is
         // resolved from the registered "Agent" category style instead
         expect(manifest.display.color).toBeUndefined();
-        expect(manifest.display.icon?.name).toBe("ti-robot");
+        // SAA-836 M6: the channel trigger/response kinds carry their platform
+        // supplier icon and the voice kind carries the speaker icon via
+        // manifest icon overlays; every other Agent kind keeps the family
+        // robot icon.
+        expect(manifest.display.icon?.name).toBe(
+          GRAPH_M6_AGENT_SUPPLIER_ICONS[manifest.kind] ?? "ti-robot"
+        );
       } else if (family === "Boundary") {
         // the Boundary family is not yet in the §21.8.2 category-style
         // registry, so each manifest carries an explicit color/icon while
@@ -347,9 +408,9 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       if (manifest.display.description) {
         expect(typeof manifest.display.description).toBe("string");
       }
-      if (manifest.kind === "core.agent") {
-        // §22.2.4: Agent omits @node() color/icon — both resolve through the
-        // registered "Agent" category style
+      if (family === "Agent") {
+        // §22.2.4: the Agent family omits @node() color/icon — both resolve
+        // through the registered "Agent" category style
         expect(manifest.display.color).toBeUndefined();
         expect(
           resolveEffectiveColor(manifest.display.color, "Agent")
@@ -378,7 +439,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 22 built-ins present exactly these six families
+    // the 59 built-ins present exactly these six families
     expect([...families].sort()).toEqual([
       "Agent",
       "Boundary",

@@ -12,7 +12,13 @@
       "connectionCategories": {
         "model": "Model",
         "memory": "Memory",
-        "workspace": "Workspace"
+        "workspace": "Workspace",
+        "tools": "Tools",
+        "hooks": "Hooks",
+        "skill": "Skill",
+        "sandbox": "Sandbox",
+        "scorers": "Scorers",
+        "embedding": "Embedding"
       },
       "trigger": {
         "manual": {
@@ -627,12 +633,1111 @@
               "workspace": {
                 "label": "Workspace"
               }
+            },
+            "scorers": {
+              "scorers": {
+                "label": "Scorers"
+              }
+            },
+            "embedding": {
+              "embedding": {
+                "label": "Embedding"
+              }
+            },
+            "hooks": {
+              "hooks": {
+                "label": "Hooks"
+              }
+            },
+            "sandbox": {
+              "sandbox": {
+                "label": "Sandbox"
+              }
+            },
+            "tools": {
+              "tools": {
+                "label": "Tools"
+              }
+            },
+            "skill": {
+              "skill": {
+                "label": "Skill"
+              }
+            },
+            "inputProcessors": {
+              "inputProcessors": {
+                "label": "Input processors"
+              }
+            },
+            "outputProcessors": {
+              "outputProcessors": {
+                "label": "Output processors"
+              }
             }
           },
           "fields": {
             "prompt": {
               "label": "Prompt",
               "placeholder": "Prompt for the agent"
+            },
+            "name": {
+              "label": "Name",
+              "placeholder": "The agent's display name"
+            },
+            "description": {
+              "label": "Description"
+            },
+            "instructions": {
+              "label": "Instructions",
+              "placeholder": "System instructions guiding the agent"
+            },
+            "skillsFormat": {
+              "label": "Skills format"
+            },
+            "maxRetries": {
+              "label": "Max retries"
+            },
+            "modelAdapter": {
+              "label": "Model adapter"
+            },
+            "structuredOutput": {
+              "label": "Structured output"
+            },
+            "agentOptions": {
+              "label": "Advanced options"
+            }
+          }
+        },
+        "tool": {
+          "name": "Tool",
+          "description": "Supplies one configured mastra tool to the agent's tools zone.",
+          "fields": {
+            "toolId": {
+              "label": "Tool id",
+              "placeholder": "The mastra tool id"
+            },
+            "description": {
+              "label": "Description"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Tool resource"
+              }
+            },
+            "tools": {
+              "tool": {
+                "label": "Tool"
+              }
+            }
+          }
+        },
+        "tool_selector": {
+          "name": "Tool selector",
+          "description": "Selects one connected tool from a decision input.",
+          "fields": {
+            "tools": {
+              "label": "Tool ids"
+            }
+          },
+          "ports": {
+            "output": {
+              "selected": {
+                "label": "Selected"
+              },
+              "resource": {
+                "label": "Tool resource"
+              }
+            },
+            "tools": {
+              "tool": {
+                "label": "Tools"
+              }
+            }
+          }
+        },
+        "hook": {
+          "name": "Tool hook",
+          "description": "Represents a before/after tool call hook and routes its context into a sub-flow.",
+          "fields": {
+            "phase": {
+              "label": "Hook phase"
+            },
+            "toolName": {
+              "label": "Tool name"
+            }
+          },
+          "ports": {
+            "output": {
+              "toolName": {
+                "label": "Tool name"
+              },
+              "input": {
+                "label": "Input"
+              },
+              "output": {
+                "label": "Output"
+              },
+              "error": {
+                "label": "Error"
+              }
+            },
+            "hooks": {
+              "hook": {
+                "label": "Hook"
+              }
+            }
+          }
+        },
+        "tool_deny": {
+          "name": "Tool deny",
+          "description": "Denies a tool call from inside a hook before-sub-flow.",
+          "fields": {
+            "replacement": {
+              "label": "Replacement output"
+            },
+            "reason": {
+              "label": "Reason"
+            }
+          },
+          "ports": {
+            "output": {
+              "proceed": {
+                "label": "Proceed"
+              },
+              "value": {
+                "label": "Value"
+              },
+              "denied": {
+                "label": "Denied"
+              },
+              "reason": {
+                "label": "Reason"
+              }
+            }
+          }
+        },
+        "delegation_hook": {
+          "name": "Delegation hook",
+          "description": "Represents an onDelegationStart/onDelegationComplete hook for a sub-agent.",
+          "fields": {
+            "phase": {
+              "label": "Delegation phase"
+            },
+            "subAgentId": {
+              "label": "Sub-agent id"
+            }
+          },
+          "ports": {
+            "hooks": {
+              "hook": {
+                "label": "Hook"
+              }
+            }
+          }
+        },
+        "skill": {
+          "name": "Skill",
+          "description": "Supplies one configured skill to the agent's skill zone.",
+          "fields": {
+            "name": {
+              "label": "Skill name"
+            },
+            "description": {
+              "label": "Description"
+            },
+            "instructions": {
+              "label": "Instructions"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Skill resource"
+              }
+            },
+            "skill": {
+              "skill": {
+                "label": "Skill"
+              }
+            }
+          }
+        },
+        "skill_selector": {
+          "name": "Skill selector",
+          "description": "Selects one connected skill from a decision input.",
+          "fields": {
+            "skills": {
+              "label": "Skill names"
+            }
+          },
+          "ports": {
+            "output": {
+              "selected": {
+                "label": "Selected"
+              },
+              "resource": {
+                "label": "Skill resource"
+              }
+            },
+            "skill": {
+              "skill": {
+                "label": "Skills"
+              }
+            }
+          }
+        },
+        "sandbox": {
+          "name": "Sandbox",
+          "description": "Supplies a configured sandbox/filesystem resource to the agent's sandbox zone.",
+          "fields": {
+            "workingDirectory": {
+              "label": "Working directory"
+            },
+            "isolation": {
+              "label": "Isolation"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Sandbox resource"
+              }
+            },
+            "sandbox": {
+              "sandbox": {
+                "label": "Sandbox"
+              }
+            }
+          }
+        },
+        "scorer": {
+          "name": "Scorer",
+          "description": "Supplies one configured scorer to the agent's scorers zone.",
+          "fields": {
+            "scorerId": {
+              "label": "Scorer id"
+            },
+            "description": {
+              "label": "Description"
+            },
+            "scorerType": {
+              "label": "Scorer type"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Scorer resource"
+              }
+            },
+            "scorers": {
+              "scorer": {
+                "label": "Scorer"
+              }
+            }
+          }
+        },
+        "scorer_selector": {
+          "name": "Scorer selector",
+          "description": "Selects one connected scorer from a decision input.",
+          "fields": {
+            "scorers": {
+              "label": "Scorer ids"
+            }
+          },
+          "ports": {
+            "output": {
+              "selected": {
+                "label": "Selected"
+              },
+              "resource": {
+                "label": "Scorer resource"
+              }
+            },
+            "scorers": {
+              "scorer": {
+                "label": "Scorers"
+              }
+            }
+          }
+        },
+        "memory": {
+          "name": "Memory",
+          "description": "Supplies a configured mastra memory (conversation history, semantic recall, working memory) to the agent's memory zone.",
+          "fields": {
+            "provider": {
+              "label": "Provider"
+            },
+            "memoryId": {
+              "label": "Memory id"
+            },
+            "threadId": {
+              "label": "Thread id",
+              "placeholder": "The conversation thread id"
+            },
+            "resourceId": {
+              "label": "Resource id"
+            },
+            "lastMessages": {
+              "label": "Last messages"
+            },
+            "semanticRecall": {
+              "label": "Semantic recall"
+            },
+            "workingMemoryTemplate": {
+              "label": "Working memory template",
+              "placeholder": "Working memory template, e.g. User name: {{name}}"
+            },
+            "generateTitle": {
+              "label": "Generate titles"
+            },
+            "memoryOptions": {
+              "label": "Memory options"
+            },
+            "connection": {
+              "label": "Connection"
+            },
+            "credentialRef": {
+              "label": "Credential reference"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Memory resource"
+              }
+            },
+            "memory": {
+              "memory": {
+                "label": "Memory"
+              }
+            }
+          }
+        },
+        "memory_selector": {
+          "name": "Memory selector",
+          "description": "Selects one connected memory from a decision input.",
+          "fields": {
+            "memories": {
+              "label": "Memory ids"
+            }
+          },
+          "ports": {
+            "output": {
+              "selected": {
+                "label": "Selected"
+              },
+              "resource": {
+                "label": "Memory resource"
+              }
+            },
+            "memory": {
+              "memory": {
+                "label": "Memories"
+              }
+            }
+          }
+        },
+        "embedding": {
+          "name": "Embedding",
+          "description": "Supplies a configured embedding model to the agent's embedding zone.",
+          "fields": {
+            "modelAdapter": {
+              "label": "Embedding model",
+              "placeholder": "provider and model id"
+            },
+            "dimension": {
+              "label": "Dimension"
+            },
+            "batchSize": {
+              "label": "Batch size"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Embedding resource"
+              }
+            },
+            "embedding": {
+              "embedding": {
+                "label": "Embedding"
+              }
+            }
+          }
+        },
+        "vector_store": {
+          "name": "Vector store",
+          "description": "Supplies a configured RAG vector store to a retriever.",
+          "fields": {
+            "provider": {
+              "label": "Provider"
+            },
+            "storeId": {
+              "label": "Store id"
+            },
+            "indexName": {
+              "label": "Index name"
+            },
+            "dimension": {
+              "label": "Dimension"
+            },
+            "metric": {
+              "label": "Metric"
+            },
+            "connection": {
+              "label": "Connection"
+            },
+            "credentialRef": {
+              "label": "Credential reference"
+            }
+          },
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Vector store resource"
+              },
+              "inserted": {
+                "label": "Inserted ids"
+              },
+              "documents": {
+                "label": "Documents"
+              }
+            }
+          }
+        },
+        "retriever": {
+          "name": "Retriever",
+          "description": "Retrieves documents from a configured vector store.",
+          "fields": {
+            "store": {
+              "label": "Vector store"
+            },
+            "query": {
+              "label": "Query"
+            },
+            "queryVector": {
+              "label": "Query vector"
+            },
+            "filter": {
+              "label": "Filter"
+            },
+            "topK": {
+              "label": "Top K"
+            },
+            "indexName": {
+              "label": "Index name"
+            }
+          },
+          "ports": {
+            "output": {
+              "documents": {
+                "label": "Documents"
+              },
+              "resource": {
+                "label": "Retriever resource"
+              }
+            }
+          }
+        },
+        "chunking": {
+          "name": "Chunking",
+          "description": "Splits documents/text into overlapping chunks for RAG.",
+          "fields": {
+            "strategy": {
+              "label": "Strategy"
+            },
+            "chunkSize": {
+              "label": "Chunk size"
+            },
+            "chunkOverlap": {
+              "label": "Chunk overlap"
+            },
+            "separator": {
+              "label": "Separator"
+            }
+          },
+          "ports": {
+            "output": {
+              "chunks": {
+                "label": "Chunks"
+              },
+              "count": {
+                "label": "Chunk count"
+              }
+            }
+          }
+        },
+        "rerank": {
+          "name": "Rerank",
+          "description": "Reorders candidate documents by relevance to a query.",
+          "fields": {
+            "documents": {
+              "label": "Documents"
+            },
+            "query": {
+              "label": "Query"
+            },
+            "modelAdapter": {
+              "label": "Reranker model"
+            },
+            "topN": {
+              "label": "Top N"
+            }
+          },
+          "ports": {
+            "output": {
+              "documents": {
+                "label": "Documents"
+              },
+              "resource": {
+                "label": "Reranker resource"
+              }
+            }
+          }
+        },
+        "chain": {
+          "qa": {
+            "name": "Q&A chain",
+            "description": "Answers a query from retrieved context.",
+            "fields": {
+              "query": {
+                "label": "Query"
+              },
+              "context": {
+                "label": "Context"
+              },
+              "modelAdapter": {
+                "label": "Model"
+              },
+              "promptTemplate": {
+                "label": "Prompt template"
+              },
+              "returnSourceDocuments": {
+                "label": "Return source documents"
+              }
+            },
+            "ports": {
+              "output": {
+                "text": {
+                  "label": "Answer"
+                },
+                "sourceDocuments": {
+                  "label": "Source documents"
+                },
+                "resource": {
+                  "label": "Chain resource"
+                }
+              }
+            }
+          },
+          "basic": {
+            "name": "Basic LLM chain",
+            "description": "Runs a single prompt against a configured model.",
+            "fields": {
+              "input": {
+                "label": "Input"
+              },
+              "modelAdapter": {
+                "label": "Model"
+              },
+              "promptTemplate": {
+                "label": "Prompt template"
+              }
+            },
+            "ports": {
+              "output": {
+                "text": {
+                  "label": "Text"
+                },
+                "resource": {
+                  "label": "Chain resource"
+                }
+              }
+            }
+          },
+          "summarization": {
+            "name": "Summarization chain",
+            "description": "Summarizes documents/text with a configured model.",
+            "fields": {
+              "documents": {
+                "label": "Documents"
+              },
+              "modelAdapter": {
+                "label": "Model"
+              },
+              "strategy": {
+                "label": "Strategy"
+              },
+              "instructions": {
+                "label": "Instructions"
+              }
+            },
+            "ports": {
+              "output": {
+                "text": {
+                  "label": "Summary"
+                },
+                "resource": {
+                  "label": "Chain resource"
+                }
+              }
+            }
+          }
+        },
+        "structured_output_parser": {
+          "name": "Structured output parser",
+          "description": "Parses model text into the declared structured shape.",
+          "fields": {
+            "text": {
+              "label": "Text"
+            },
+            "structuredOutput": {
+              "label": "Structured output"
+            },
+            "strict": {
+              "label": "Strict"
+            }
+          },
+          "ports": {
+            "output": {
+              "object": {
+                "label": "Object"
+              },
+              "resource": {
+                "label": "Parser resource"
+              }
+            }
+          }
+        },
+        "information_extractor": {
+          "name": "Information extractor",
+          "description": "Extracts declared structured fields out of text.",
+          "fields": {
+            "text": {
+              "label": "Text"
+            },
+            "modelAdapter": {
+              "label": "Model"
+            },
+            "structuredOutput": {
+              "label": "Structured output"
+            },
+            "instructions": {
+              "label": "Instructions"
+            }
+          },
+          "ports": {
+            "output": {
+              "data": {
+                "label": "Data"
+              },
+              "resource": {
+                "label": "Extractor resource"
+              }
+            }
+          }
+        },
+        "langchain_code": {
+          "name": "LangChain code",
+          "description": "User-authored AI glue compiled into a mastra step.",
+          "fields": {
+            "input": {
+              "label": "Input"
+            },
+            "code": {
+              "label": "Code"
+            },
+            "language": {
+              "label": "Language"
+            },
+            "mode": {
+              "label": "Mode"
+            }
+          },
+          "ports": {
+            "output": {
+              "output": {
+                "label": "Output"
+              },
+              "resource": {
+                "label": "Code resource"
+              }
+            }
+          }
+        },
+        "input_processor": {
+          "name": "Input processor",
+          "description": "Supplies one configured mastra input processor (preprocessor) to the agent's input-processors zone.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Input processor resource"
+              }
+            },
+            "inputProcessors": {
+              "inputProcessors": {
+                "label": "Input processors"
+              }
+            }
+          },
+          "fields": {
+            "processorType": {
+              "label": "Processor type"
+            },
+            "options": {
+              "label": "Processor options"
+            },
+            "modelAdapter": {
+              "label": "Model adapter"
+            }
+          }
+        },
+        "output_processor": {
+          "name": "Output processor",
+          "description": "Supplies one configured mastra output processor (post-processor) to the agent's output-processors zone.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Output processor resource"
+              }
+            },
+            "outputProcessors": {
+              "outputProcessors": {
+                "label": "Output processors"
+              }
+            }
+          },
+          "fields": {
+            "processorType": {
+              "label": "Processor type"
+            },
+            "options": {
+              "label": "Processor options"
+            }
+          }
+        },
+        "guardrail": {
+          "name": "Guardrail",
+          "description": "Intercepts invalid model output on the agent's output-processors zone; block strategy aborts via mastra's tripwire.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Guardrail resource"
+              }
+            },
+            "guardrail": {
+              "guardrail": {
+                "label": "Output processors"
+              }
+            }
+          },
+          "fields": {
+            "guardrailType": {
+              "label": "Guardrail type"
+            },
+            "strategy": {
+              "label": "Strategy"
+            },
+            "options": {
+              "label": "Guardrail options"
+            },
+            "modelAdapter": {
+              "label": "Model adapter"
+            }
+          }
+        },
+        "hitl": {
+          "name": "Human in the loop",
+          "description": "Suspends the workflow until a user supplies the requested input, then resumes through the mastra resume path.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Value"
+              }
+            },
+            "output": {
+              "approved": {
+                "label": "Approved"
+              },
+              "rejected": {
+                "label": "Rejected"
+              }
+            }
+          },
+          "fields": {
+            "message": {
+              "label": "Message",
+              "placeholder": "Human-facing message shown while suspended"
+            },
+            "prompt": {
+              "label": "Prompt",
+              "placeholder": "The question asked to the user"
+            },
+            "resumeSchema": {
+              "label": "Resume schema",
+              "placeholder": "Shape of the user input, declared via the model builder"
+            }
+          }
+        },
+        "mcp_trigger": {
+          "name": "MCP Server Trigger",
+          "description": "Exposes the enclosing workflow as an MCP server through the host-supplied mastra MCP server surface.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "MCP server"
+              }
+            }
+          },
+          "fields": {
+            "serverId": {
+              "label": "Server id",
+              "placeholder": "Unique MCP server id exposed to clients"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "instructions": {
+              "label": "Instructions"
+            },
+            "transport": {
+              "label": "Transport"
+            }
+          }
+        },
+        "slack_trigger": {
+          "name": "Slack trigger",
+          "description": "Receives an inbound Slack conversation message and carries the thread binding so the reply lands in the same conversation.",
+          "ports": {
+            "output": {
+              "message": {
+                "label": "Message"
+              },
+              "sessionId": {
+                "label": "Session"
+              },
+              "userId": {
+                "label": "User"
+              },
+              "threadId": {
+                "label": "Thread"
+              },
+              "resource": {
+                "label": "Channel adapter"
+              }
+            }
+          }
+        },
+        "discord_trigger": {
+          "name": "Discord trigger",
+          "description": "Receives an inbound Discord conversation message and carries the thread binding so the reply lands in the same conversation.",
+          "ports": {
+            "output": {
+              "message": {
+                "label": "Message"
+              },
+              "sessionId": {
+                "label": "Session"
+              },
+              "userId": {
+                "label": "User"
+              },
+              "threadId": {
+                "label": "Thread"
+              },
+              "resource": {
+                "label": "Channel adapter"
+              }
+            }
+          }
+        },
+        "telegram_trigger": {
+          "name": "Telegram trigger",
+          "description": "Receives an inbound Telegram conversation message and carries the thread binding so the reply lands in the same conversation.",
+          "ports": {
+            "output": {
+              "message": {
+                "label": "Message"
+              },
+              "sessionId": {
+                "label": "Session"
+              },
+              "userId": {
+                "label": "User"
+              },
+              "threadId": {
+                "label": "Thread"
+              },
+              "resource": {
+                "label": "Channel adapter"
+              }
+            }
+          }
+        },
+        "teams_trigger": {
+          "name": "Teams trigger",
+          "description": "Receives an inbound Teams conversation message and carries the thread binding so the reply lands in the same conversation.",
+          "ports": {
+            "output": {
+              "message": {
+                "label": "Message"
+              },
+              "sessionId": {
+                "label": "Session"
+              },
+              "userId": {
+                "label": "User"
+              },
+              "threadId": {
+                "label": "Thread"
+              },
+              "resource": {
+                "label": "Channel adapter"
+              }
+            }
+          }
+        },
+        "slack_response": {
+          "name": "Slack response",
+          "description": "Posts the agent's reply back to the Slack conversation the trigger received it from.",
+          "ports": {
+            "input": {
+              "response": {
+                "label": "Reply"
+              },
+              "threadId": {
+                "label": "Thread",
+                "placeholder": "Conversation thread to reply in"
+              }
+            },
+            "output": {
+              "resource": {
+                "label": "Posted reply"
+              }
+            }
+          },
+          "fields": {
+            "response": {
+              "label": "Reply"
+            },
+            "threadId": {
+              "label": "Thread",
+              "placeholder": "Conversation thread to reply in"
+            }
+          }
+        },
+        "discord_response": {
+          "name": "Discord response",
+          "description": "Posts the agent's reply back to the Discord conversation the trigger received it from.",
+          "ports": {
+            "input": {
+              "response": {
+                "label": "Reply"
+              },
+              "threadId": {
+                "label": "Thread",
+                "placeholder": "Conversation thread to reply in"
+              }
+            },
+            "output": {
+              "resource": {
+                "label": "Posted reply"
+              }
+            }
+          },
+          "fields": {
+            "response": {
+              "label": "Reply"
+            },
+            "threadId": {
+              "label": "Thread",
+              "placeholder": "Conversation thread to reply in"
+            }
+          }
+        },
+        "telegram_response": {
+          "name": "Telegram response",
+          "description": "Posts the agent's reply back to the Telegram conversation the trigger received it from.",
+          "ports": {
+            "input": {
+              "response": {
+                "label": "Reply"
+              },
+              "threadId": {
+                "label": "Thread",
+                "placeholder": "Conversation thread to reply in"
+              }
+            },
+            "output": {
+              "resource": {
+                "label": "Posted reply"
+              }
+            }
+          },
+          "fields": {
+            "response": {
+              "label": "Reply"
+            },
+            "threadId": {
+              "label": "Thread",
+              "placeholder": "Conversation thread to reply in"
+            }
+          }
+        },
+        "teams_response": {
+          "name": "Teams response",
+          "description": "Posts the agent's reply back to the Teams conversation the trigger received it from.",
+          "ports": {
+            "input": {
+              "response": {
+                "label": "Reply"
+              },
+              "threadId": {
+                "label": "Thread",
+                "placeholder": "Conversation thread to reply in"
+              }
+            },
+            "output": {
+              "resource": {
+                "label": "Posted reply"
+              }
+            }
+          },
+          "fields": {
+            "response": {
+              "label": "Reply"
+            },
+            "threadId": {
+              "label": "Thread",
+              "placeholder": "Conversation thread to reply in"
+            }
+          }
+        },
+        "voice": {
+          "name": "Voice",
+          "description": "Resolves the mastra voice surface for the configured voice through the host-supplied voice factory.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Voice surface"
+              }
+            }
+          },
+          "fields": {
+            "speaker": {
+              "label": "Speaker"
+            },
+            "speechModel": {
+              "label": "Speech model"
+            },
+            "listeningModel": {
+              "label": "Listening model"
             }
           }
         }
@@ -677,6 +1782,65 @@
       },
       "fingerprint": {
         "label": "Fingerprint"
+      }
+    },
+    "metrics": {
+      "run": {
+        "runId": {
+          "label": "Run id"
+        },
+        "workflowId": {
+          "label": "Workflow id"
+        },
+        "resourceId": {
+          "label": "Resource id"
+        },
+        "status": {
+          "label": "Status"
+        }
+      },
+      "score": {
+        "scoreId": {
+          "label": "Score id"
+        },
+        "runId": {
+          "label": "Run id"
+        },
+        "workflowId": {
+          "label": "Workflow id"
+        },
+        "scorerId": {
+          "label": "Scorer id"
+        },
+        "score": {
+          "label": "Score"
+        },
+        "reason": {
+          "label": "Reason"
+        }
+      },
+      "trace": {
+        "spanId": {
+          "label": "Span id"
+        },
+        "traceId": {
+          "label": "Trace id"
+        },
+        "runId": {
+          "label": "Run id"
+        },
+        "workflowId": {
+          "label": "Workflow id"
+        },
+        "name": {
+          "label": "Name"
+        },
+        "spanType": {
+          "label": "Span type"
+        },
+        "status": {
+          "label": "Status"
+        }
       }
     }
   }

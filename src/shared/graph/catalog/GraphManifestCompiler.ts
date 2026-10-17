@@ -2,7 +2,11 @@ import { ValidationError } from "@decaf-ts/db-decorators";
 import type { Constructor } from "@decaf-ts/decoration";
 import { ValidationKeys } from "@decaf-ts/decorator-validation";
 import type { Model } from "@decaf-ts/decorator-validation";
-import type { GraphNodeDefinition, GraphPortDefinition } from "../constants";
+import type {
+  GraphNodeDefinition,
+  GraphPortDefinition,
+  GraphPortZone,
+} from "../constants";
 import { graphDefinitionOf, graphLeafPortsOf, graphNodeMetadataOf, graphPortsOf } from "../reader";
 import type { GraphJsonValue } from "../document/GraphJsonValue";
 import { cloneGraphJsonValue, isGraphJsonSafeValue } from "../document/GraphJsonValue";
@@ -172,6 +176,43 @@ function graphPortIdOf(port: GraphPortDefinition): string {
   return port.path ?? port.property;
 }
 
+const GRAPH_PORT_ZONE_SIDES = ["top", "bottom", "left", "right"] as const;
+const GRAPH_PORT_ZONE_ALIGNS = ["start", "center", "end"] as const;
+
+/**
+ * Normalises a port's `@connection({ zone })` metadata into a manifest zone
+ * (SAA-836 M1), dropping an unknown side and any non-finite order so a malformed
+ * declaration can never leak a non-serialisable or renderer-ambiguous zone.
+ *
+ * @param port - The resolved port definition.
+ * @returns The manifest zone, or `undefined` when none is declared.
+ */
+function graphPortZoneOf(port: GraphPortDefinition): GraphPortZone | undefined {
+  const raw = port.graph?.["zone"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const side = record["side"];
+  if (
+    typeof side !== "string" ||
+    !(GRAPH_PORT_ZONE_SIDES as readonly string[]).includes(side)
+  ) {
+    return undefined;
+  }
+  const zone: GraphPortZone = { side: side as GraphPortZone["side"] };
+  const align = record["align"];
+  if (
+    typeof align === "string" &&
+    (GRAPH_PORT_ZONE_ALIGNS as readonly string[]).includes(align)
+  ) {
+    zone.align = align as GraphPortZone["align"];
+  }
+  const order = record["order"];
+  if (typeof order === "number" && Number.isFinite(order)) {
+    zone.order = order;
+  }
+  return zone;
+}
+
 function graphPortManifestOf(
   port: GraphPortDefinition,
   connectionsPolicy?: GraphConnectionPolicy
@@ -186,6 +227,8 @@ function graphPortManifestOf(
   if (port.hidden) manifest.hidden = true;
   const category = port.graph?.["category"];
   if (typeof category === "string") manifest.category = category;
+  const zone = graphPortZoneOf(port);
+  if (zone) manifest.zone = zone;
   if (port.graph?.["userControlled"] === true) manifest.configurable = true;
   const handle = port.graph?.["handle"];
   if (typeof handle === "string") manifest.handle = handle;
@@ -394,6 +437,13 @@ function graphPortsPolicyOf(rules: unknown): GraphConnectionPolicy | undefined {
   const blocked = record["blockedKinds"];
   if (Array.isArray(blocked) && blocked.every((entry) => typeof entry === "string")) {
     policy.blockedNodeKinds = blocked as string[];
+  }
+  const allowedCategories = record["allowedPortCategories"];
+  if (
+    Array.isArray(allowedCategories) &&
+    allowedCategories.every((entry) => typeof entry === "string")
+  ) {
+    policy.allowedPortCategories = allowedCategories as string[];
   }
   const max = record["maxConnections"];
   if (typeof max === "number" && Number.isFinite(max)) {

@@ -19,6 +19,15 @@ export const GRAPH_WORKFLOW_BOUNDARY = "$workflow";
 export const GRAPH_LOCAL_EXECUTION_BACKEND = "local";
 
 /**
+ * Machine code returned when the general (local) engine is asked to execute a
+ * node kind that only the mastra engine can run (SAA-837 M1). The local backend
+ * declares the mastra AI family unsupported and fails closed instead of
+ * fabricating a result.
+ */
+export const GRAPH_LOCAL_UNSUPPORTED_NODE_KIND =
+  "GRAPH_LOCAL_UNSUPPORTED_NODE_KIND";
+
+/**
  * Default concurrency for parallel node execution within a layer.
  */
 export const GRAPH_DEFAULT_CONCURRENCY = 4;

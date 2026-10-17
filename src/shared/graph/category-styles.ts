@@ -30,6 +30,13 @@ export function registerBuiltinCategoryStyles(): void {
   registerGraphCategoryStyle("model", { color: "#3b82f6", icon: "ti-cpu" });
   registerGraphCategoryStyle("memory", { color: "#10b981", icon: "ti-database" });
   registerGraphCategoryStyle("workspace", { color: "#f59e0b", icon: "ti-folder" });
+  // Mastra agent port zones (SAA-836 M3)
+  registerGraphCategoryStyle("tools", { color: "#0ea5e9", icon: "ti-tools" });
+  registerGraphCategoryStyle("hooks", { color: "#f97316", icon: "ti-webhook" });
+  registerGraphCategoryStyle("skill", { color: "#8b5cf6", icon: "ti-bulb" });
+  registerGraphCategoryStyle("sandbox", { color: "#14b8a6", icon: "ti-box" });
+  registerGraphCategoryStyle("scorers", { color: "#ec4899", icon: "ti-star" });
+  registerGraphCategoryStyle("embedding", { color: "#6366f1", icon: "ti-vector" });
 }
 
 // Register at module load so the styles are available immediately.

@@ -21,12 +21,14 @@ import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
 import { GraphExecutionBackendRegistry } from "../../engine/execution/GraphExecutionBackendRegistry";
 import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
 import { GRAPH_LOCAL_EXECUTION_BACKEND } from "../../engine/constants";
-import { MastraGraphExecutionBackend } from "../../mastra/MastraGraphExecutionBackend";
+// SAA-836 M6: the mastra and dagster engine backends load at runtime — the
+// static backend imports were replaced by per-variant dynamic imports inside
+// `buildGraphBackend`, so a consumer booting one engine never loads the
+// other engine's code (only leaf, type-only or constants modules are shared).
 import {
   MASTRA_BACKEND_FLAVOUR,
   type MastraBackendConfig,
 } from "../../mastra/types";
-import { DagsterGraphExecutionBackend } from "../../dagster/DagsterGraphExecutionBackend";
 import type {
   DagsterClient,
   DagsterGraphExecutionBackendConfig,
@@ -202,11 +204,21 @@ async function buildGraphBackend(
 ): Promise<GraphExecutionBackend | undefined> {
   switch (options.variant) {
     case "mastra": {
+      // SAA-836 M6: the mastra backend loads at runtime, so booting the
+      // mastra variant never loads the dagster engine code.
+      const { MastraGraphExecutionBackend } = await import(
+        "../../mastra/MastraGraphExecutionBackend"
+      );
       const backend = new MastraGraphExecutionBackend();
       await backend.initialize(options.mastra ?? {});
       return backend;
     }
     case "dagster": {
+      // SAA-836 M6: the dagster backend loads at runtime, so booting the
+      // dagster variant never loads the mastra engine code.
+      const { DagsterGraphExecutionBackend } = await import(
+        "../../dagster/DagsterGraphExecutionBackend"
+      );
       const backend = new DagsterGraphExecutionBackend();
       const wiring = options.dagster ?? {};
       const config = {

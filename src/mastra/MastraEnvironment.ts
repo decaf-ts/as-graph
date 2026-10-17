@@ -32,6 +32,21 @@ export const GRAPH_MASTRA_ENGINE_DISABLED = "GRAPH_MASTRA_ENGINE_DISABLED";
 /** Default environment-variable name carrying the provider credential. */
 export const MASTRA_DEFAULT_CREDENTIAL_ENV = "MASTRA_PROVIDER_API_KEY";
 
+/** Default environment-variable name carrying the langfuse public key. */
+export const MASTRA_DEFAULT_LANGFUSE_PUBLIC_KEY_ENV = "LANGFUSE_PUBLIC_KEY";
+
+/** Default environment-variable name carrying the langfuse secret key. */
+export const MASTRA_DEFAULT_LANGFUSE_SECRET_KEY_ENV = "LANGFUSE_SECRET_KEY";
+
+/** Default langfuse endpoint (langfuse cloud) used when none is configured. */
+export const MASTRA_DEFAULT_LANGFUSE_ENDPOINT = "https://cloud.langfuse.com";
+
+/** Default service name attached to mastra engine observability exports. */
+export const MASTRA_DEFAULT_OBSERVABILITY_SERVICE_NAME = "as-graph-mastra";
+
+/** Default base directory for the per-layer filesystem adapters. */
+export const MASTRA_DEFAULT_PERSISTENCE_FS_ROOT = "var/as-graph-mastra";
+
 /** Shape of the mastra engine domain in the accumulated environment. */
 export interface MastraEnvironmentOptions {
   mastra: {
@@ -61,8 +76,73 @@ export interface MastraEnvironmentOptions {
        */
       apiKeyEnv: string;
     };
+    /**
+     * Observability configuration (SAA-836 O1): the mastra engine's
+     * observability layer, with langfuse as the default and always-present
+     * export target. Sourced from `.env` (non-secret); the langfuse
+     * credentials are referenced **by name only** (gate C) — their values
+     * live in the user-supplied `.env.secret`.
+     */
+    observability: {
+      /**
+       * Whether the mastra engine's observability layer is wired at boot
+       * (langfuse export target + the OUR-node isolation exporter). When
+       * enabled, wiring fails closed when the langfuse credentials are
+       * missing from the runtime environment.
+       */
+      enabled: boolean;
+      /** The service name attached to every exported trace. */
+      serviceName: string;
+      /**
+       * Optional deployment environment tag attached to every exported
+       * trace (e.g. `production` / `staging`); empty means unset.
+       */
+      environment: string;
+      langfuse: {
+        /**
+         * The langfuse endpoint (non-secret): the deployed langfuse web/API
+         * base URL traces are exported to. Defaults to langfuse cloud.
+         */
+        endpoint: string;
+        /**
+         * The name of the environment variable carrying the langfuse public
+         * key. The value itself lives in the user-supplied `.env.secret`
+         * and is only read at exporter construction (gate C).
+         */
+        publicKeyEnv: string;
+        /**
+         * The name of the environment variable carrying the langfuse secret
+         * key. The value itself lives in the user-supplied `.env.secret`
+         * and is only read at exporter construction (gate C).
+         */
+        secretKeyEnv: string;
+      };
+    };
+    /**
+     * Per-layer persistence routing (SAA-836 O1, gate A approved): maps each
+     * mastra-layer object kind to its best-fit storage adapter. Sourced from
+     * `.env` (non-secret). Workflows are NOT routed here — they persist via
+     * the as-graph adapter only (binding rule). Driver-backed adapters
+     * (PG/CouchDB) activate only when a host supplies its own adapter (R8).
+     */
+    persistence: {
+      /** Adapter for the replay-snapshot layer (`fs` by default). */
+      replaysAdapter: MastraPersistenceAdapterKind;
+      /** Adapter for the compiled-workflow cache layer (`ram` by default). */
+      cacheAdapter: MastraPersistenceAdapterKind;
+      /** Adapter for the pinned-values layer (`fs` by default). */
+      pinsAdapter: MastraPersistenceAdapterKind;
+      /**
+       * Base directory for the filesystem adapter's persisted data. A
+       * per-adapter-alias sub-directory is created automatically.
+       */
+      fsRoot: string;
+    };
   };
 }
+
+/** The adapter kinds the per-layer persistence router can construct. */
+export type MastraPersistenceAdapterKind = "ram" | "fs" | "host";
 
 /**
  * The mastra engine environment: accumulates the shared `@decaf-ts/logging`
@@ -72,6 +152,15 @@ export interface MastraEnvironmentOptions {
  * - `MASTRA__ENGINE__ENABLED` / `MASTRA__ENGINE__TERMINAL_TIMEOUT_MS`
  * - `MASTRA__PROVIDER__ENDPOINT` / `MASTRA__PROVIDER__MODEL`
  * - `MASTRA__CREDENTIALS__API_KEY_ENV`
+ * - `MASTRA__OBSERVABILITY__ENABLED` / `MASTRA__OBSERVABILITY__SERVICE_NAME` /
+ *   `MASTRA__OBSERVABILITY__ENVIRONMENT`
+ * - `MASTRA__OBSERVABILITY__LANGFUSE__ENDPOINT` /
+ *   `MASTRA__OBSERVABILITY__LANGFUSE__PUBLIC_KEY_ENV` /
+ *   `MASTRA__OBSERVABILITY__LANGFUSE__SECRET_KEY_ENV`
+ * - `MASTRA__PERSISTENCE__REPLAYS__ADAPTER` /
+ *   `MASTRA__PERSISTENCE__CACHE__ADAPTER` /
+ *   `MASTRA__PERSISTENCE__PINS__ADAPTER` /
+ *   `MASTRA__PERSISTENCE__FS__ROOT`
  */
 export const MastraEnvironment =
   LoggedEnvironment.accumulate<MastraEnvironmentOptions>({
@@ -86,6 +175,22 @@ export const MastraEnvironment =
       },
       credentials: {
         apiKeyEnv: MASTRA_DEFAULT_CREDENTIAL_ENV,
+      },
+      observability: {
+        enabled: true,
+        serviceName: MASTRA_DEFAULT_OBSERVABILITY_SERVICE_NAME,
+        environment: "",
+        langfuse: {
+          endpoint: MASTRA_DEFAULT_LANGFUSE_ENDPOINT,
+          publicKeyEnv: MASTRA_DEFAULT_LANGFUSE_PUBLIC_KEY_ENV,
+          secretKeyEnv: MASTRA_DEFAULT_LANGFUSE_SECRET_KEY_ENV,
+        },
+      },
+      persistence: {
+        replaysAdapter: "fs",
+        cacheAdapter: "ram",
+        pinsAdapter: "fs",
+        fsRoot: MASTRA_DEFAULT_PERSISTENCE_FS_ROOT,
       },
     },
   });
@@ -134,4 +239,48 @@ export function hasMastraProviderCredentials(
   } catch {
     return false;
   }
+}
+
+/**
+ * The langfuse observability credentials are unavailable
+ * (`MASTRA__OBSERVABILITY__*` names the credential variables in the
+ * user-supplied `.env.secret`), so the mastra observability layer fails
+ * closed instead of exporting unauthenticated traces (SAA-836 O1, gate C).
+ */
+export const GRAPH_MASTRA_OBSERVABILITY_CREDENTIALS_UNAVAILABLE =
+  "GRAPH_MASTRA_OBSERVABILITY_CREDENTIALS_UNAVAILABLE";
+
+/**
+ * Reads the langfuse credential **names** from the mastra environment and
+ * verifies non-empty values are present in the runtime environment (SAA-836
+ * O1, gate C). The values are only read into the langfuse exporter at
+ * construction time — they are never logged, persisted, or held by the graph
+ * layer beyond the exporter's own configuration.
+ *
+ * @param env - The runtime environment bag to check; defaults to `process.env`.
+ * @returns The resolved credential environment-variable names.
+ * @throws {GraphExecutionError}
+ *   {@link GRAPH_MASTRA_OBSERVABILITY_CREDENTIALS_UNAVAILABLE} when either
+ *   configured langfuse credential variable is unset or empty.
+ */
+export function assertMastraObservabilityCredentials(
+  env: Record<string, string | undefined> = globalThis.process?.env ?? {}
+): { publicKeyEnv: string; secretKeyEnv: string } {
+  const publicKeyEnv =
+    MastraEnvironment.mastra.observability.langfuse.publicKeyEnv ||
+    MASTRA_DEFAULT_LANGFUSE_PUBLIC_KEY_ENV;
+  const secretKeyEnv =
+    MastraEnvironment.mastra.observability.langfuse.secretKeyEnv ||
+    MASTRA_DEFAULT_LANGFUSE_SECRET_KEY_ENV;
+  const missing = [publicKeyEnv, secretKeyEnv].filter(
+    (name) => typeof env[name] !== "string" || (env[name] as string).length === 0
+  );
+  if (missing.length > 0) {
+    throw new GraphExecutionError(
+      `No langfuse observability credentials are available: set non-empty '${publicKeyEnv}' and '${secretKeyEnv}' in the user-supplied .env.secret (see .env.secret.template). The mastra observability layer fails closed without credentials (missing: ${missing.join(", ")}).`,
+      GRAPH_MASTRA_OBSERVABILITY_CREDENTIALS_UNAVAILABLE,
+      { credentialEnvs: missing }
+    );
+  }
+  return { publicKeyEnv, secretKeyEnv };
 }

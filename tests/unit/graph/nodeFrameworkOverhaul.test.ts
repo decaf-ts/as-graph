@@ -147,8 +147,8 @@ describe("node framework overhaul — removed kinds", () => {
     expect(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND).not.toHaveProperty(kind);
   });
 
-  it("registers exactly the 22 remaining built-in kinds", () => {
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)).toHaveLength(22);
+  it("registers exactly the 59 remaining built-in kinds", () => {
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)).toHaveLength(59);
   });
 });
 

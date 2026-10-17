@@ -13,9 +13,18 @@
  *
  * SAA-824 extends the suite with the hardening regressions: an oversized
  * `core.flow.delay` `timeoutMs` is clamped before `setTimeout` and terminates
- * within `maxDelayMs`, a mid-wait `abortSignal` ends the delay promptly,
- * `core.utility.code` fails closed, and `core.agent` returns its forwarded input
- * with the reserved degraded marker.
+ * within `maxDelayMs`, a mid-wait `abortSignal` ends the delay promptly, and
+ * `core.utility.code` fails closed.
+ *
+ * SAA-837 M1 replaced the `core.agent` degraded echo with the real mastra agent
+ * step: with no agent runtime configured the step fails closed with
+ * `GRAPH_MASTRA_AGENT_UNAVAILABLE`, and with a runtime it emits the runtime's
+ * output. The reserved `MASTRA_DEGRADED_OUTPUT_KEY` marker is no longer emitted.
+ *
+ * SAA-836 M2/M4/M5 bring the mastra memory, RAG, and processor/guardrail leaf
+ * kinds into the default handler set: the memory kinds emit their JSON-safe
+ * descriptors, and every RAG and processor kind emits the same `resource`
+ * descriptor shape as the AI-family kinds beside the forwarded input.
  */
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import {
@@ -26,11 +35,16 @@ import {
 import {
   createMastraDefaultStepHandlers,
   DEFAULT_MASTRA_DELAY_MAX_MS,
+  MASTRA_AGENT_FAMILY_STEP_KINDS,
   MASTRA_DEFAULT_STEP_HANDLER_KINDS,
-  MASTRA_DEGRADED_OUTPUT_KEY,
   MASTRA_MAX_SET_TIMEOUT_MS,
+  MASTRA_PROCESSOR_STEP_KINDS,
+  MASTRA_RAG_STEP_KINDS,
 } from "../../../../src/mastra/MastraDefaultStepHandlers";
-import { GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../../src/mastra/types";
+import {
+  GRAPH_MASTRA_AGENT_UNAVAILABLE,
+  GRAPH_MASTRA_UNSUPPORTED_KIND,
+} from "../../../../src/mastra/types";
 import { document, node } from "../../../../src/workflows/builders";
 import { foreachBreakDocument } from "../../../../src/workflows/foreach-break.workflow";
 import { loopsWhileUntilDocument } from "../../../../src/workflows/loops-while-until.workflow";
@@ -52,6 +66,18 @@ function nodeIdOf(kind: string): string {
   )}`;
 }
 
+/**
+ * Every default-handled leaf kind whose step resolves the node's configuration
+ * into a `resource` descriptor beside the forwarded input: the SAA-836 M3
+ * AI-family kinds, the M4 RAG kinds, and the M5 processor/guardrail kinds —
+ * all emit the same `{ kind, nodeId, parameters }` descriptor shape.
+ */
+const RESOURCE_DESCRIPTOR_KINDS: readonly string[] = [
+  ...(MASTRA_AGENT_FAMILY_STEP_KINDS as readonly string[]),
+  ...MASTRA_RAG_STEP_KINDS,
+  ...MASTRA_PROCESSOR_STEP_KINDS,
+];
+
 /** Configured parameters that exercise each kind's special-cased behaviour. */
 function parametersFor(kind: string): Record<string, unknown> {
   switch (kind) {
@@ -62,6 +88,12 @@ function parametersFor(kind: string): Record<string, unknown> {
     case "core.flow.log":
     case "core.utility.log":
       return { message: `log:${kind}` };
+    case "core.trigger.schedule":
+      // SAA-836 M6: the mastra compiler resolves every schedule trigger's cron
+      // declaratively (validated with mastra's validateCron) and fails closed
+      // with GRAPH_MASTRA_SCHEDULE_UNAVAILABLE when none is declared — the
+      // synthetic all-kinds node must carry a cron to compile.
+      return { cron: "0 * * * *" };
     default:
       return {};
   }
@@ -133,20 +165,43 @@ describe("MastraDefaultStepHandlers — handler set (SAA-820)", () => {
           step.execute({ inputData: input })
         ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_UNSUPPORTED_KIND });
       } else if (kind === "core.agent") {
-        // SAA-824 F3: the agent kind forwards its input plus a reserved
-        // degraded marker, instead of a silent pass-through.
+        // SAA-837 M1: the agent kind is mastra-only and fails closed when no
+        // agent runtime is configured, instead of forwarding a fabricated echo.
+        await expect(
+          step.execute({ inputData: input })
+        ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_AGENT_UNAVAILABLE });
+      } else if (RESOURCE_DESCRIPTOR_KINDS.includes(kind)) {
+        // SAA-836 M3/M4/M5: the mastra AI-family, RAG, and processor leaf kinds
+        // resolve their configuration into a `resource` descriptor beside the
+        // forwarded input.
         const output = (await step.execute({ inputData: input })) as Record<
           string,
           unknown
         >;
         expect(output).toEqual({
           ...input,
-          [MASTRA_DEGRADED_OUTPUT_KEY]: {
-            kind: "core.agent",
-            nodeId: nodeIdOf("core.agent"),
-            reason: expect.any(String),
-          },
+          resource: { kind, nodeId: nodeIdOf(kind), parameters: {} },
         });
+      } else if (kind === "core.agent.memory") {
+        // SAA-836 M2: an unconfigured memory provider emits the JSON-safe
+        // fallback descriptor (the live `Memory` is resolved by the agent
+        // runtime, never persisted).
+        const output = (await step.execute({ inputData: input })) as Record<
+          string,
+          unknown
+        >;
+        expect(output).toEqual({
+          ...input,
+          resource: { type: "mastra.memory", id: "memory", provider: "memory" },
+        });
+      } else if (kind === "core.agent.memorySelector") {
+        // SAA-836 M2: with no decision and no declared candidates the selector
+        // emits a null selection beside the forwarded input.
+        const output = (await step.execute({ inputData: input })) as Record<
+          string,
+          unknown
+        >;
+        expect(output).toEqual({ ...input, selected: null, resource: null });
       } else {
         const output = await step.execute({ inputData: input });
         expect({ kind, output }).toEqual({ kind, output: input });
@@ -272,22 +327,21 @@ function singleKindDocument(
 function compileSingleStep(
   kind: string,
   parameters: Record<string, unknown> = {},
-  options: { maxDelayMs?: number } = {}
+  options: Parameters<typeof createMastraDefaultStepHandlers>[0] = {}
 ): ExecutableStep {
   const compiler = new MastraWorkflowCompiler({
     stepHandlers: createMastraDefaultStepHandlers(options),
   });
   const compiled = compiler.compile(
-    singleKindDocument(`saa-824-${kind}`, kind, parameters)
+    singleKindDocument(`saa-837-${kind}`, kind, parameters)
   );
   return compiled.steps.get("target") as ExecutableStep;
 }
 
 describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
-  it("pins the exported clamp and degraded-output constants", () => {
+  it("pins the exported clamp constants", () => {
     expect(MASTRA_MAX_SET_TIMEOUT_MS).toBe(2_147_483_647);
     expect(DEFAULT_MASTRA_DELAY_MAX_MS).toBe(60_000);
-    expect(MASTRA_DEGRADED_OUTPUT_KEY).toBe("__mastraDegraded");
   });
 
   it("clamps an oversized timeoutMs before setTimeout, terminating within maxDelayMs", async () => {
@@ -348,20 +402,30 @@ describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
     );
   });
 
-  it("returns a core.agent step's forwarded input with the reserved degraded marker", async () => {
+  it("fails a compiled core.agent step closed when no runtime is configured", async () => {
     const step = compileSingleStep("core.agent", {});
 
-    const output = (await step.execute({
-      inputData: { alpha: 1 },
-    })) as Record<string, unknown>;
+    await expect(
+      step.execute({ inputData: { alpha: 1 } })
+    ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_AGENT_UNAVAILABLE });
+  });
 
-    expect(output).toEqual({
-      alpha: 1,
-      [MASTRA_DEGRADED_OUTPUT_KEY]: {
-        kind: "core.agent",
-        nodeId: "target",
-        reason: expect.any(String),
+  it("executes a compiled core.agent step through the configured runtime", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const runtime = {
+      execute: async (
+        _node: unknown,
+        inputData: Record<string, unknown>
+      ): Promise<Record<string, unknown>> => {
+        calls.push(inputData);
+        return { response: "runtime response", actions: [] };
       },
-    });
+    };
+    const step = compileSingleStep("core.agent", {}, { agentRuntime: runtime });
+
+    const output = await step.execute({ inputData: { prompt: "hello" } });
+
+    expect(output).toEqual({ response: "runtime response", actions: [] });
+    expect(calls).toEqual([{ prompt: "hello" }]);
   });
 });

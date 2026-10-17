@@ -30,3 +30,8 @@
 !.gitkeep
 /.saa*
 /n8n
+# User-supplied provider credentials (SAA-836 S1, gate C) — never commit
+/.env.secret
+/.env
+# Mastra per-layer persistence FS root (replays/pins; SAA-836 O1)
+/var/

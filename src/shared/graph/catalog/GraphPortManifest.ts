@@ -1,4 +1,5 @@
 import type { GraphJsonValue } from "../document/GraphJsonValue";
+import type { GraphPortZone } from "../constants";
 import type { GraphConnectionPolicy } from "./GraphConnectionPolicy";
 import type { GraphPortManifestElement } from "./GraphPortManifestElement";
 import type { GraphValueSchema } from "./GraphValueSchema";
@@ -14,6 +15,12 @@ export interface GraphPortManifest {
   required?: boolean;
   hidden?: boolean;
   category?: string;
+  /**
+   * Dedicated render zone for a connection port (SAA-836 M1), copied from the
+   * port's `@connection({ zone })` metadata. The manifest is authoritative for
+   * zone placement.
+   */
+  zone?: GraphPortZone;
   handle?: string;
   connectionPolicy?: GraphConnectionPolicy;
   configurable?: boolean;

@@ -68,6 +68,24 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
   { feature: "parametersStateBindings", verdict: "SUPPORTED" },
   { feature: "runsSnapshotsObservables", verdict: "SUPPORTED" },
   {
+    feature: "engineObservability",
+    verdict: "SUPPORTED",
+    detail:
+      "the mastra engine's observability entrypoint catches every signal; langfuse (@mastra/langfuse) is the default and always-present export target, wired from MASTRA__OBSERVABILITY__* with gate-C credentials failing closed",
+  },
+  {
+    feature: "ourNodeObservabilityIsolation",
+    verdict: "SUPPORTED",
+    detail:
+      "the compiler stamps a decafNode origin onto every translated step; the OUR-node exporter scopes OUR-node signals separately from engine-internal signals in OUR observability layer",
+  },
+  {
+    feature: "layeredPersistence",
+    verdict: "SUPPORTED",
+    detail:
+      "gate-A-approved per-layer routing: workflows via the as-graph adapter only, replays versioned-with-restore on fs, cache ledger on ram (atomically invalidated on fingerprint change), pins adapter for host value-store wiring; host adapters override (MASTRA__PERSISTENCE__*)",
+  },
+  {
     feature: "edgeStateEvents",
     verdict: "EXTENSION-POINT",
     detail: "derived from the document's declared routing",
@@ -86,6 +104,88 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
   },
   { feature: "errorBoundary", verdict: "PARTIAL" },
   { feature: "agentLlmNode", verdict: "SUPPORTED" },
+  {
+    feature: "embeddings",
+    verdict: "SUPPORTED",
+    detail: "embedding model carried as agent config (R1)",
+  },
+  {
+    feature: "vectorStores",
+    verdict: "SUPPORTED",
+    detail:
+      "in-memory baseline native; pgvector/redis via mastra-native bindings; age/graph via custom MastraVector stores",
+  },
+  {
+    feature: "ragChains",
+    verdict: "SUPPORTED",
+    detail: "qa/basic/summarization chains compile to mastra workflow steps",
+  },
+  {
+    feature: "inputProcessors",
+    verdict: "SUPPORTED",
+    detail:
+      "mastra's input-processing pipeline applied as per-run agent overrides (SAA-836 M5)",
+  },
+  {
+    feature: "outputProcessors",
+    verdict: "SUPPORTED",
+    detail:
+      "mastra's output-processing pipeline applied as per-run agent overrides (SAA-836 M5)",
+  },
+  {
+    feature: "guardrails",
+    verdict: "SUPPORTED",
+    detail:
+      "guardrail kinds compose with the output-processor pipeline; tripwire aborts map to FAILED",
+  },
+  {
+    feature: "humanInTheLoop",
+    verdict: "SUPPORTED",
+    detail:
+      "core.agent.hitl suspends/resumes via mastra's native suspend/resume step semantics",
+  },
+  {
+    feature: "mcpServerTrigger",
+    verdict: "EXTENSION-POINT",
+    detail:
+      "host-supplied @mastra/mcp server surface; the trigger fails closed without it",
+  },
+  {
+    feature: "scheduleTrigger",
+    verdict: "SUPPORTED",
+    detail:
+      "schedule trigger nodes declare mastra's native scheduled-workflow schedule (validated with mastra's own validateCron); the scheduler starts runs on each cron fire",
+  },
+  {
+    feature: "channelTriggers",
+    verdict: "EXTENSION-POINT",
+    detail:
+      "slack/discord/telegram/teams trigger nodes over host-supplied mastra channel adapters (the adapter catalog is metadata-only); fail closed without the host surface",
+  },
+  {
+    feature: "channelResponses",
+    verdict: "EXTENSION-POINT",
+    detail:
+      "matching response nodes post the reply to the same conversation binding via the host-supplied mastra channel delivery surface; fail closed without it",
+  },
+  {
+    feature: "voice",
+    verdict: "EXTENSION-POINT",
+    detail:
+      "voice node resolves mastra's VoiceConfig shape through a host-supplied voice surface (agent getVoice); @mastra/voice-* providers are not vendored, so it fails closed without the host factory",
+  },
+  {
+    feature: "agentToolBuilders",
+    verdict: "SUPPORTED",
+    detail:
+      "MastraAgentBuilder/MastraToolBuilder produce validated canonical documents for agent and tool nodes with mastra zone wiring",
+  },
+  {
+    feature: "runtimeEngineLoading",
+    verdict: "SUPPORTED",
+    detail:
+      "the backend host loads the mastra/dagster engine backends through runtime dynamic imports, so a consumer of one engine never loads the other",
+  },
   {
     feature: "dynamicTopology",
     verdict: "NOT-SUPPORTED",
@@ -151,6 +251,24 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
     detail:
       "Mastra has no native workflow version; the wrapper tracks the canonical document fingerprint",
   },
+  {
+    feature: "metricsRuns",
+    verdict: "SUPPORTED",
+    detail:
+      "read-only agent run metrics over the host-provided Mastra storage; fails closed when the storage or its workflows domain is absent",
+  },
+  {
+    feature: "metricsScores",
+    verdict: "SUPPORTED",
+    detail:
+      "read-only per-run score metrics over the host-provided Mastra storage; fails closed when the scores domain is absent",
+  },
+  {
+    feature: "metricsTraces",
+    verdict: "SUPPORTED",
+    detail:
+      "read-only per-run trace spans over the host-provided Mastra observability domain; fails closed when the domain is absent",
+  },
 ];
 
 /**
@@ -182,10 +300,31 @@ export interface MastraWorkflowManagementCapabilities {
   version: MastraWorkflowCapabilityStatus;
 }
 
+/**
+ * The Mastra metrics-read capability projection (SAA-836 S2): the read-only
+ * metrics families the backend serves over the host-provided mastra storage,
+ * each resolved honestly from the exported feature table.
+ */
+export interface MastraMetricsReadCapabilities {
+  /** Agent run metrics (list/get) support. */
+  runs: MastraWorkflowCapabilityStatus;
+  /** Per-run score metrics support. */
+  scores: MastraWorkflowCapabilityStatus;
+  /** Per-run trace span metrics support. */
+  traces: MastraWorkflowCapabilityStatus;
+}
+
+/**
+ * The full capability projection of the Mastra backend: the engine-agnostic
+ * engine surface extended with the SAA-346 workflow-management statuses and the
+ * SAA-836 S2 read-only metrics families.
+ */
 export interface MastraBackendCapabilities extends GraphBackendCapabilities {
   /** Workflow list/lookup plus the management statuses. */
   workflows: GraphBackendCapabilities["workflows"] &
     MastraWorkflowManagementCapabilities;
+  /** Read-only metrics families (SAA-836 S2). */
+  metrics: MastraMetricsReadCapabilities;
 }
 
 /**
@@ -226,6 +365,11 @@ export function resolveMastraCapabilities(): MastraBackendCapabilities {
       serialize: mastraCapabilityStatusOf("workflowSerialize"),
       persist: mastraCapabilityStatusOf("workflowPersist"),
       version: mastraCapabilityStatusOf("workflowVersion"),
+    },
+    metrics: {
+      runs: mastraCapabilityStatusOf("metricsRuns"),
+      scores: mastraCapabilityStatusOf("metricsScores"),
+      traces: mastraCapabilityStatusOf("metricsTraces"),
     },
   };
 }

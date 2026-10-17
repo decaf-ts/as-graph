@@ -80,6 +80,7 @@ export class GraphConnectionPolicyValidator {
         (candidate) => candidate.id === edge.targetPort
       )?.connectionPolicy;
       this.validateEdgePolicy(edge, workflow.nodeById, policy, issues);
+      this.validateCategoryMatch(edge, workflow.nodeById, issues);
     }
 
     for (const [key, connections] of connectionsByPort) {
@@ -108,6 +109,40 @@ export class GraphConnectionPolicyValidator {
         });
       }
     }
+  }
+
+  /**
+   * The same-category rule for connection ports (SAA-836 M3): when two
+   * connection ports both declare a `category` (the agent port zone / family
+   * port), the categories must match. This rejects a wrong-family connection
+   * (e.g. a `tools` family port wired into the agent `memory` zone) even when
+   * the target port declares no explicit connection policy. Fires only when
+   * both endpoints declare a category, so category-less structural connections
+   * are unaffected.
+   */
+  private validateCategoryMatch(
+    edge: GraphResolvedEdgeInstance,
+    nodeById: Map<string, GraphResolvedNodeInstance>,
+    issues: GraphValidationIssue[]
+  ): void {
+    const source = nodeById.get(edge.sourceNodeId);
+    const target = nodeById.get(edge.targetNodeId);
+    const sourceCategory = source?.manifest.connections?.find(
+      (candidate) => candidate.id === edge.sourcePort
+    )?.category;
+    const targetCategory = target?.manifest.connections?.find(
+      (candidate) => candidate.id === edge.targetPort
+    )?.category;
+    if (!sourceCategory || !targetCategory) return;
+    if (sourceCategory === targetCategory) return;
+    issues.push({
+      code: "connection.category-mismatch",
+      path: `edges[${edge.id}]`,
+      message: `Connection edge '${edge.id}' joins source port '${edge.sourcePort}' (category '${sourceCategory}') to target port '${edge.targetPort}' (category '${targetCategory}'); connection categories must match`,
+      edgeId: edge.id,
+      nodeId: edge.sourceNodeId,
+      details: { sourceCategory, targetCategory },
+    });
   }
 
   private validateEdgePolicy(

@@ -12,6 +12,43 @@
  * the host. The definition never carries a secret and never carries raw JSON
  * Schema — mastra consumes Zod. The model-builder UI (SAA-836 U1) consumes
  * this same contract; no UI is authored here.
+ *
+ * @mermaid
+ * sequenceDiagram
+ *   autonumber
+ *   participant N as Canonical node structuredOutput parameter
+ *   participant SH as MastraAgentStepHandler step
+ *   participant R as mastraStructuredOutputOf / resolveMastraStructuredOutput
+ *   participant C as MastraModelSchemaConverter (as-zod)
+ *   participant RT as config-backed MastraAgentRuntime
+ *   participant A as mastra agent generate
+ *   N->>SH: structuredOutput definition (parameters)
+ *   SH->>R: mastraStructuredOutputOf(node, resolveModel) (memoized per step)
+ *   alt no structuredOutput parameter declared on the node
+ *     R-->>SH: undefined (agent runs unstructured)
+ *   else declared parameter is not a valid definition
+ *     R--xSH: GRAPH_MASTRA_STRUCTURED_OUTPUT_MALFORMED
+ *   else definition present
+ *     alt host-carried Zod schema
+ *       R-->>R: schema = definition.schema
+ *     else decaf model name
+ *       R->>R: resolveModel(name)
+ *       alt registry misses
+ *         R--xSH: GRAPH_MASTRA_STRUCTURED_OUTPUT_UNRESOLVED
+ *       else registry resolves
+ *         R->>C: mastraSchemaFromModel(model)
+ *         alt conversion fails / non-object schema
+ *           C--xSH: GRAPH_MASTRA_MODEL_SCHEMA_UNAVAILABLE
+ *         else converted
+ *           C-->>R: Zod object schema
+ *         end
+ *       end
+ *     end
+ *     R-->>SH: MastraResolvedStructuredOutput
+ *     SH->>RT: execute(node, inputs, …, structuredOutput)
+ *     RT->>A: generate(prompt, { structuredOutput: { schema, … } })
+ *     A-->>RT: response validated against the Zod schema
+ *   end
  */
 import type { Constructor } from "@decaf-ts/decoration";
 import type { Model } from "@decaf-ts/decorator-validation";
@@ -25,6 +62,14 @@ import type { z } from "zod";
 /** The structured-output definition on a node could not be resolved. */
 export const GRAPH_MASTRA_STRUCTURED_OUTPUT_UNRESOLVED =
   "GRAPH_MASTRA_STRUCTURED_OUTPUT_UNRESOLVED";
+
+/**
+ * A node declares a `structuredOutput` parameter that is not a valid
+ * structured-output definition. Fails the run instead of silently stripping
+ * the declared output-validation control.
+ */
+export const GRAPH_MASTRA_STRUCTURED_OUTPUT_MALFORMED =
+  "GRAPH_MASTRA_STRUCTURED_OUTPUT_MALFORMED";
 
 /**
  * Host-supplied registry resolving a decaf model name to its constructor.
@@ -126,17 +171,34 @@ export function isMastraStructuredOutputDefinition(
 
 /**
  * Reads the structured-output definition authored on a canonical node's
- * `structuredOutput` parameter. Absent or malformed definitions return
- * `undefined` so the caller fails closed instead of resolving a bogus schema.
+ * `structuredOutput` parameter. An absent parameter returns `undefined` so
+ * the caller runs unstructured (the default mastra behaviour); a DECLARED
+ * parameter that fails the guard throws — a declared output-validation
+ * control that is malformed must never silently degrade the agent to
+ * unstructured output (fail closed, not fail silent).
  *
  * @param node - The canonical node instance.
- * @returns The validated definition, or `undefined` when none is present.
+ * @returns The validated definition, or `undefined` when no parameter is
+ *   declared.
+ * @throws {GraphExecutionError}
+ *   {@link GRAPH_MASTRA_STRUCTURED_OUTPUT_MALFORMED} when the node declares
+ *   a `structuredOutput` parameter that is not a valid definition.
  */
 export function mastraStructuredOutputDefinitionOf(
   node: GraphNodeInstance
 ): MastraStructuredOutputDefinition | undefined {
-  const candidate = node.parameters?.["structuredOutput"];
-  return isMastraStructuredOutputDefinition(candidate) ? candidate : undefined;
+  const parameters = node.parameters;
+  if (!parameters || !("structuredOutput" in parameters)) return undefined;
+  const candidate = parameters["structuredOutput"];
+  if (candidate === undefined) return undefined;
+  if (!isMastraStructuredOutputDefinition(candidate)) {
+    throw new GraphExecutionError(
+      "The node declares a 'structuredOutput' parameter that is not a valid structured-output definition",
+      GRAPH_MASTRA_STRUCTURED_OUTPUT_MALFORMED,
+      { nodeKind: node.kind }
+    );
+  }
+  return candidate;
 }
 
 /**
@@ -194,10 +256,11 @@ export function resolveMastraStructuredOutput(
 }
 
 /**
- * Resolves the structured-output option for a canonical node: reads the
- * definition authored on the node and resolves it against the host model
- * registry. When the node carries no definition, the resolution is absent —
- * the agent runs unstructured, which is the default mastra behaviour.
+ * Reads the structured-output definition authored on a canonical node's
+ * `structuredOutput` parameter and resolves it against the host model
+ * registry. When the node declares no parameter, the resolution is absent —
+ * the agent runs unstructured, which is the default mastra behaviour. A
+ * declared parameter that is not a valid definition fails the run.
  *
  * @param node - The canonical node instance.
  * @param resolveModel - The host decaf-model registry.

@@ -46,6 +46,10 @@ import {
   GRAPH_RUN_OPTIONS,
   type GraphRunControllerOptions,
 } from "./GraphRunController";
+import {
+  MASTRA_RUN_METRICS_DELEGATION,
+  mastraRunMetricsDelegationOf,
+} from "../../mastra/MastraRunMetricsEndpoint";
 import { GraphWorkflowService } from "../../engine/services/GraphWorkflowService";
 import { GraphEnvironment } from "../../engine/services/GraphEnvironment";
 import type { GraphWorkflowServiceOptions } from "../../engine/services/GraphEnvironment";
@@ -166,6 +170,16 @@ export interface GraphExecutionModuleOptions {
    * wrapper does this) so the manifest and the per-engine catalogue agree.
    */
   backend?: GraphExecutionBackend<any>;
+  /**
+   * Async factory constructing the active backend at engine-boot time
+   * (SAA-836 O1). Used when the backend needs awaited host wiring (for
+   * example the mastra engine's runtime/observability/persistence bootstrap),
+   * so the host cannot supply the instance synchronously. Takes precedence
+   * below `backend`: when both are set, `backend` wins and the factory is
+   * ignored. The factory must construct and register the backend itself (the
+   * mastra wrapper does this on construction).
+   */
+  backendFactory?: () => Promise<GraphExecutionBackend<any>>;
   /**
    * Canonical workflow documents to seed into the active backend's catalogue at
    * boot, so the per-engine workflow catalogue
@@ -307,6 +321,21 @@ export class GraphExecutionModule {
     const ensureAdapter = () =>
       (adapterReady ??= (async () => {
         if (initAdapter) {
+          // Decaf adapters register in a process-global cache under their
+          // flavour; a second `RamAdapter` construction with the same
+          // flavour throws. Reuse an already-registered RAM adapter (for
+          // example one routed by the mastra per-layer persistence layer)
+          // instead of colliding with it.
+          let existingRam: Adapter<any, any, any, any> | undefined;
+          try {
+            existingRam = Adapter.get(RamFlavour);
+          } catch {
+            existingRam = undefined;
+          }
+          if (existingRam) {
+            Adapter.setCurrent(RamFlavour);
+            return;
+          }
           RamAdapter.decoration();
           Adapter.setCurrent(RamFlavour);
           new RamAdapter({ user: adapterUser });
@@ -356,10 +385,16 @@ export class GraphExecutionModule {
         provide: GraphExecutionEngine,
         useFactory: async (workflowService: GraphWorkflowService) => {
           const config = await sharedConfig();
+          // O1: a host that cannot construct its backend synchronously (the
+          // mastra engine boot awaits runtime wiring) supplies the async
+          // factory instead; `backend` keeps precedence when both are set.
+          const backend =
+            options.backend ??
+            (options.backendFactory ? await options.backendFactory() : undefined);
           const engine = new GraphExecutionEngine();
           await engine.boot({
             ...config,
-            ...(options.backend ? { backend: options.backend } : {}),
+            ...(backend ? { backend } : {}),
             ...(options.seedWorkflows
               ? { seedWorkflows: options.seedWorkflows }
               : {}),
@@ -393,6 +428,16 @@ export class GraphExecutionModule {
       {
         provide: GRAPH_ENGINE_CAPABILITY_OPTIONS,
         useValue: engineOptions,
+      },
+      {
+        // SAA-836 S2: same-endpoint mastra run-metrics delegation for the
+        // editor runs endpoint. Resolves to `undefined` for every non-mastra
+        // backend (capability fail-closed), so the endpoint keeps its local
+        // behaviour unchanged on the other engines.
+        provide: MASTRA_RUN_METRICS_DELEGATION,
+        useFactory: (engine: GraphExecutionEngine) =>
+          mastraRunMetricsDelegationOf(engine.backend),
+        inject: [GraphExecutionEngine],
       },
       {
         provide: GraphEngineCapabilityService,

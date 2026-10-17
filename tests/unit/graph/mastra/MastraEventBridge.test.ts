@@ -406,4 +406,49 @@ describe("MastraEventBridge", () => {
       GraphExecutionEventType.NODE_STATE_CHANGED,
     ]);
   });
+
+  it("records the run terminal status from the terminal workflow event", async () => {
+    async function terminalStatusOf(
+      event: Record<string, unknown>
+    ): Promise<GraphExecutionStatus | undefined> {
+      const { sink } = recordingSink();
+      const bridge = new MastraEventBridge({
+        runId: "run-1",
+        workflowId: source.id,
+        document: source,
+        sink,
+      });
+      expect(bridge.terminalStatus).toBeUndefined();
+      await bridge.handle(event);
+      return bridge.terminalStatus;
+    }
+
+    expect(
+      await terminalStatusOf({
+        type: "workflow-finish",
+        payload: { workflowStatus: "success" },
+      })
+    ).toBe(GraphExecutionStatus.SUCCEEDED);
+    expect(
+      await terminalStatusOf({
+        type: "workflow-finish",
+        payload: { workflowStatus: "failed" },
+      })
+    ).toBe(GraphExecutionStatus.FAILED);
+    expect(
+      await terminalStatusOf({
+        type: "workflow-finish",
+        payload: { workflowStatus: "tripwire" },
+      })
+    ).toBe(GraphExecutionStatus.FAILED);
+    expect(
+      await terminalStatusOf({
+        type: "workflow-finish",
+        payload: { workflowStatus: "canceled" },
+      })
+    ).toBe(GraphExecutionStatus.CANCELLED);
+    expect(await terminalStatusOf({ type: "workflow-canceled" })).toBe(
+      GraphExecutionStatus.CANCELLED
+    );
+  });
 });

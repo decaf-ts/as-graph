@@ -23,6 +23,43 @@ import type {
 import { graphNodeManifest, graphNodeMetadataOf } from "../shared/graph";
 import type { Constructor } from "@decaf-ts/decoration";
 import { AgentNode } from "./agents/agent/node";
+import { AgentToolNode } from "./agents/tools/tool/node";
+import { AgentToolSelectorNode } from "./agents/tools/tool-selector/node";
+import { AgentHookNode } from "./agents/hooks/hook/node";
+import { AgentToolDenyNode } from "./agents/hooks/tool-deny/node";
+import { AgentDelegationHookNode } from "./agents/hooks/delegation/node";
+import { AgentSkillNode } from "./agents/skills/skill/node";
+import { AgentSkillSelectorNode } from "./agents/skills/skill-selector/node";
+import { AgentSandboxNode } from "./agents/sandbox/node";
+import { AgentScorerNode } from "./agents/scorers/scorer/node";
+import { AgentScorerSelectorNode } from "./agents/scorers/scorer-selector/node";
+import { AgentMemoryNode } from "./agents/memory/memory/node";
+import { AgentMemorySelectorNode } from "./agents/memory/memory-selector/node";
+import { AgentEmbeddingNode } from "./agents/rag/embedding/node";
+import { AgentVectorStoreNode } from "./agents/rag/vector-store/node";
+import { AgentRetrieverNode } from "./agents/rag/retriever/node";
+import { AgentChunkingNode } from "./agents/rag/chunking/node";
+import { AgentRerankNode } from "./agents/rag/rerank/node";
+import { AgentQaChainNode } from "./agents/rag/chains/qa/node";
+import { AgentBasicChainNode } from "./agents/rag/chains/basic/node";
+import { AgentSummarizationChainNode } from "./agents/rag/chains/summarization/node";
+import { AgentStructuredOutputParserNode } from "./agents/rag/structured-output-parser/node";
+import { AgentInformationExtractorNode } from "./agents/rag/information-extractor/node";
+import { AgentLangChainCodeNode } from "./agents/rag/langchain-code/node";
+import { AgentInputProcessorNode } from "./agents/processors/input-processor/node";
+import { AgentOutputProcessorNode } from "./agents/processors/output-processor/node";
+import { AgentGuardrailNode } from "./agents/processors/guardrail/node";
+import { AgentHitlNode } from "./agents/hitl/node";
+import { McpServerTriggerNode } from "./agents/triggers/mcp-server/node";
+import { SlackChannelTriggerNode } from "./agents/triggers/slack/node";
+import { DiscordChannelTriggerNode } from "./agents/triggers/discord/node";
+import { TelegramChannelTriggerNode } from "./agents/triggers/telegram/node";
+import { TeamsChannelTriggerNode } from "./agents/triggers/teams/node";
+import { SlackChannelResponseNode } from "./agents/responses/slack/node";
+import { DiscordChannelResponseNode } from "./agents/responses/discord/node";
+import { TelegramChannelResponseNode } from "./agents/responses/telegram/node";
+import { TeamsChannelResponseNode } from "./agents/responses/teams/node";
+import { AgentVoiceNode } from "./agents/voice/node";
 import { BreakFlowNode } from "./flow/break/node";
 import { ErrorBoundaryFlowNode } from "./flow/error-boundary/node";
 import { HumanApprovalFlowNode } from "./flow/human-approval/node";
@@ -75,6 +112,27 @@ function compile(node: unknown): GraphNodeManifest {
   const meta = graphNodeMetadataOf(ctor);
   const title = (meta?.metadata as { title?: string } | undefined)?.title;
   return graphNodeManifest(ctor, title ? { name: title } : {});
+}
+
+/**
+ * Compiles a node manifest with an explicit display-icon overlay (SAA-836
+ * M6): the supplier/speaker icons of the channel trigger/response and voice
+ * kinds are the single sanctioned per-kind icon override — the compiled
+ * manifest's `display.icon` (which the palette renders) carries the supplier
+ * icon instead of the Agent category's base `ti-robot`.
+ *
+ * @param node - The decorated node class constructor.
+ * @param icon - The catalogue icon name to overlay (e.g. `ti-brand-slack`).
+ * @returns The compiled node manifest with the icon overlay.
+ */
+function compileWithIcon(node: unknown, icon: string): GraphNodeManifest {
+  const ctor = node as Constructor;
+  const meta = graphNodeMetadataOf(ctor);
+  const title = (meta?.metadata as { title?: string } | undefined)?.title;
+  return graphNodeManifest(ctor, {
+    ...(title ? { name: title } : {}),
+    icon: { type: "catalogue", name: icon },
+  });
 }
 
 /** Structural overlay for the `core.flow.switch` node: case/default dynamic output ports. */
@@ -283,6 +341,43 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
   compile(UtilityLogNode),
   compile(BreakFlowNode),
   compile(AgentNode),
+  compile(AgentToolNode),
+  compile(AgentToolSelectorNode),
+  compile(AgentHookNode),
+  compile(AgentToolDenyNode),
+  compile(AgentDelegationHookNode),
+  compile(AgentSkillNode),
+  compile(AgentSkillSelectorNode),
+  compile(AgentSandboxNode),
+  compile(AgentScorerNode),
+  compile(AgentScorerSelectorNode),
+  compile(AgentMemoryNode),
+  compile(AgentMemorySelectorNode),
+  compile(AgentEmbeddingNode),
+  compile(AgentVectorStoreNode),
+  compile(AgentRetrieverNode),
+  compile(AgentChunkingNode),
+  compile(AgentRerankNode),
+  compile(AgentQaChainNode),
+  compile(AgentBasicChainNode),
+  compile(AgentSummarizationChainNode),
+  compile(AgentStructuredOutputParserNode),
+  compile(AgentInformationExtractorNode),
+  compile(AgentLangChainCodeNode),
+  compile(AgentInputProcessorNode),
+  compile(AgentOutputProcessorNode),
+  compile(AgentGuardrailNode),
+  compile(AgentHitlNode),
+  compile(McpServerTriggerNode),
+  compileWithIcon(SlackChannelTriggerNode, "ti-brand-slack"),
+  compileWithIcon(DiscordChannelTriggerNode, "ti-brand-discord"),
+  compileWithIcon(TelegramChannelTriggerNode, "ti-brand-telegram"),
+  compileWithIcon(TeamsChannelTriggerNode, "ti-brand-teams"),
+  compileWithIcon(SlackChannelResponseNode, "ti-brand-slack"),
+  compileWithIcon(DiscordChannelResponseNode, "ti-brand-discord"),
+  compileWithIcon(TelegramChannelResponseNode, "ti-brand-telegram"),
+  compileWithIcon(TeamsChannelResponseNode, "ti-brand-teams"),
+  compileWithIcon(AgentVoiceNode, "ti-volume-2"),
   FOREACH_MANIFEST,
   WHILE_MANIFEST,
   UNTIL_MANIFEST,

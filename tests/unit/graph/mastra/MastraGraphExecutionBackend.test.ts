@@ -63,6 +63,11 @@ describe("MastraGraphExecutionBackend", () => {
         persist: "not_supported",
         version: "extension_point",
       },
+      metrics: {
+        runs: "supported",
+        scores: "supported",
+        traces: "supported",
+      },
     });
   });
 

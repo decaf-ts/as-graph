@@ -32,7 +32,8 @@ export const chatAgentFixture: GraphWorkflowFixture = {
   document: chatAgentDocument,
   kinds: ["core.trigger.chat", "core.agent", "core.flow.log", "result"],
   combos: ["exposed-ports", "defaults"],
-  executable: true,
+  executable: false,
+  skipReason:
+    "core.agent is mastra-only (SAA-837 M1); executes on the mastra engine, not the local general engine.",
   inputs: {},
-  expectedOutputs: { answer: "[Agent response] " },
 };

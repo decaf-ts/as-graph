@@ -55,6 +55,12 @@ export type GraphConnectionRule = {
   allowMultiple?: boolean;
   allowedKinds?: GraphNodeKind[];
   blockedKinds?: GraphNodeKind[];
+  /**
+   * Restricts which source connection-port `category` values may connect to a
+   * `@connection()` port. Used by the mastra agent port zones (SAA-836 M3) so a
+   * zone accepts only its matching family.
+   */
+  allowedPortCategories?: string[];
   group?: string;
   maxConnections?: number;
   metadata?: Record<string, unknown>;
@@ -241,6 +247,36 @@ export type GraphWorkflowMetadata = GraphNodeMetadata & {
 };
 
 /**
+ * The node edge a `@connection()` port zone is anchored to. `top`/`bottom`
+ * mirror the mastra agent port-zone brief; `left`/`right` are available for
+ * nodes that anchor zones on their vertical edges.
+ */
+export type GraphPortZoneSide = "top" | "bottom" | "left" | "right";
+
+/**
+ * Alignment of a `@connection()` port zone along its {@link GraphPortZoneSide}.
+ * `start`/`end` map to left/right on a horizontal side and to top/bottom on a
+ * vertical side; `center` is the default.
+ */
+export type GraphPortZoneAlign = "start" | "center" | "end";
+
+/**
+ * Dedicated render zone of a `@connection()` port (SAA-836 M1). The manifest —
+ * not the renderer — is authoritative for where a connection port sits, so the
+ * mastra agent node can declare its distinct zones (memory bottom-left, scorers
+ * top-right, embedding bottom-right, hooks/sandbox top-middle, tools/skill
+ * bottom-middle). Zones sharing a side+align are ordered by {@link order}.
+ */
+export type GraphPortZone = {
+  /** Edge the port zone is anchored to. */
+  side: GraphPortZoneSide;
+  /** Alignment along the side. Defaults to `center`. */
+  align?: GraphPortZoneAlign;
+  /** Position within the same side+align group (ascending). Defaults to `0`. */
+  order?: number;
+};
+
+/**
  * Port-level metadata carried by `@port()`, `@input()` and `@output()` (visibility, connection rules, category, Schema grouping).
  */
 export type GraphPortMetadata = {
@@ -249,6 +285,12 @@ export type GraphPortMetadata = {
   visible?: boolean;
   handle?: string;
   expand?: boolean;
+  /**
+   * Dedicated render zone for a `@connection()` port (SAA-836 M1). When set,
+   * the manifest carries the zone so the renderer places the port on the
+   * declared side/alignment instead of the default bottom row.
+   */
+  zone?: GraphPortZone;
   metadata?: Record<string, unknown>;
   /**
    * Optional category for `@connection()` ports (e.g. `"model"`, `"memory"`,

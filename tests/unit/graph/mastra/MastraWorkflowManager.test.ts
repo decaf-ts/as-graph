@@ -9,6 +9,7 @@
  * `addWorkflow`/`removeWorkflow`/`getWorkflow`/`listWorkflows`/`getWorkflowOrigin`
  * registry methods. The fail-closed cases vary only the wired runtime surface.
  */
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "@jest/globals";
 import { Mastra } from "@mastra/core/mastra";
 import { InMemoryStore } from "@mastra/core/storage";
 import { MastraGraphExecutionBackend } from "../../../../src/mastra/MastraGraphExecutionBackend";
@@ -25,6 +26,29 @@ import { document, edge, node } from "../../../../src/workflows/builders";
 import { leafHandler, twoLeafDocument } from "./helpers";
 
 const NODE_KIND = "test.leaf";
+
+// SAA-891: the mastra engine's observability lane (SAA-836 O1) fails closed
+// without langfuse credentials, and this suite boots real runtimes through
+// `MastraGraphExecutionBackend.initialize`. The management surface under test
+// is independent of observability, so the lane is disabled for the suite (the
+// credential gate itself is covered by MastraEnvironment/MastraObservability
+// tests) and the override is restored afterwards.
+const OBSERVABILITY_ENABLED_OVERRIDE = "MASTRA__OBSERVABILITY__ENABLED";
+let observabilityEnabledOriginal: string | undefined;
+
+beforeAll(() => {
+  observabilityEnabledOriginal = process.env[OBSERVABILITY_ENABLED_OVERRIDE];
+  process.env[OBSERVABILITY_ENABLED_OVERRIDE] = "false";
+});
+
+afterAll(() => {
+  if (observabilityEnabledOriginal === undefined) {
+    delete process.env[OBSERVABILITY_ENABLED_OVERRIDE];
+  } else {
+    process.env[OBSERVABILITY_ENABLED_OVERRIDE] = observabilityEnabledOriginal;
+  }
+});
+
 
 /** A real `Mastra` instance backed by a real `InMemoryStore`, no workflows. */
 function realRuntime(): Mastra {

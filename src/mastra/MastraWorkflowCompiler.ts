@@ -18,6 +18,7 @@ import type { GraphEdgeInstance } from "../shared/graph/document/GraphEdgeInstan
 import type { Condition, SwitchNodeMetadata } from "../shared/graph";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import { graphRunDocumentFingerprint } from "../engine/runs/GraphRunFingerprint";
+import { mastraScheduleConfigsOf } from "./MastraScheduleTrigger";
 import {
   assertMastraResumeSchemaSafe,
   toMastraZodSchema,
@@ -46,11 +47,34 @@ export const GRAPH_MASTRA_UNTIL_KIND = "core.loop.until";
 export const GRAPH_MASTRA_HUMAN_APPROVAL_KIND = "core.flow.humanApproval";
 
 /**
+ * Stamps the OUR-node observability origin (SAA-836 O1) onto a translated
+ * Mastra step: the step's entry `metadata` carries the canonical node id and
+ * kind under the `decafNode` key, which mastra attaches to the step's
+ * `WORKFLOW_STEP` span attributes as `entryMetadata`. The mastra engine's
+ * observability pipeline therefore exports every OUR-node span with its
+ * canonical origin, and {@link DecafNodeObservabilityExporter} can isolate
+ * OUR-node signals in OUR observability layer while mastra catches everything
+ * on its engine.
+ *
+ * @param step - The translated step to stamp.
+ * @param node - The canonical node the step was translated from.
+ * @returns The same step, with the origin stamped into its metadata.
+ */
+function stampDecafNodeOrigin(step: unknown, node: GraphNodeInstance): unknown {
+  const candidate = step as { metadata?: Record<string, unknown> } | null;
+  if (!candidate || typeof candidate !== "object") return step;
+  candidate.metadata = {
+    ...(candidate.metadata ?? {}),
+    decafNode: { id: node.id, kind: node.kind },
+  };
+  return step;
+}
+
+/**
  * Structural subset of the Mastra workflow builder the compiler drives. Kept
  * loose (`unknown` step/condition payloads) so the compiler compiles against
  * any `@mastra/core` minor without type coupling.
- */
-interface MastraWorkflowBuilderLike {
+ */interface MastraWorkflowBuilderLike {
   then(step: unknown): MastraWorkflowBuilderLike;
   branch(branches: unknown): MastraWorkflowBuilderLike;
   foreach(step: unknown, options?: unknown): MastraWorkflowBuilderLike;
@@ -244,10 +268,17 @@ export class MastraWorkflowCompiler {
     const steps = new Map<string, unknown>();
     const resumeSchemas = new Map<string, z.ZodTypeAny>();
     const degradedSchemas: string[] = [];
+    // SAA-836 M6: schedule trigger nodes declare mastra's native
+    // scheduled-workflow functionality — the compiled workflow is created
+    // with the declarative `schedule` input so the mastra scheduler starts
+    // runs on each cron fire. A schedule trigger without a resolvable cron
+    // fails closed (see `mastraScheduleConfigsOf`).
+    const schedule = mastraScheduleConfigsOf(document);
     const builder = createWorkflow({
       id: document.id,
       inputSchema: z.any(),
       outputSchema: z.any(),
+      ...(schedule ? { schedule } : {}),
     }) as unknown as MastraWorkflowBuilderLike;
 
     const ordered = topologicalOrder(document);
@@ -340,7 +371,7 @@ export class MastraWorkflowCompiler {
         degradedSchemas
       );
     }
-    const step = this.buildLeafStep(node, steps, degradedSchemas);
+    const step = this.buildLeafStep(node, steps, degradedSchemas, document);
     return cursor.then(step);
   }
 
@@ -536,31 +567,34 @@ export class MastraWorkflowCompiler {
       parameters["resumeSchema"] as never
     );
     resumeSchemas.set(node.id, resumeSchema);
-    const step = createStep({
-      id: node.id,
-      inputSchema: z.any(),
-      outputSchema: z.any(),
-      suspendSchema: suspendSchema.schema,
-      resumeSchema,
-      execute: async (args: {
-        suspend?: (payload?: unknown) => unknown;
-        resumeData?: unknown;
-      }) => {
-        if (args.resumeData === undefined) {
-          await args.suspend?.({
-            message: parameters["message"],
-            approvers: parameters["approvers"],
-          });
-        }
-        const resumeData = args.resumeData as
-          | { approved?: unknown; value?: unknown }
-          | undefined;
-        const value = resumeData?.value ?? resumeData;
-        return resumeData?.approved === false
-          ? { rejected: value }
-          : { approved: value };
-      },
-    });
+    const step = stampDecafNodeOrigin(
+      createStep({
+        id: node.id,
+        inputSchema: z.any(),
+        outputSchema: z.any(),
+        suspendSchema: suspendSchema.schema,
+        resumeSchema,
+        execute: async (args: {
+          suspend?: (payload?: unknown) => unknown;
+          resumeData?: unknown;
+        }) => {
+          if (args.resumeData === undefined) {
+            await args.suspend?.({
+              message: parameters["message"],
+              approvers: parameters["approvers"],
+            });
+          }
+          const resumeData = args.resumeData as
+            | { approved?: unknown; value?: unknown }
+            | undefined;
+          const value = resumeData?.value ?? resumeData;
+          return resumeData?.approved === false
+            ? { rejected: value }
+            : { approved: value };
+        },
+      }),
+      node
+    );
     steps.set(node.id, step);
     return cursor.then(step);
   }
@@ -579,7 +613,8 @@ export class MastraWorkflowCompiler {
   private buildLeafStep(
     node: GraphNodeInstance,
     steps: Map<string, unknown>,
-    degradedSchemas: string[]
+    degradedSchemas: string[],
+    document?: GraphWorkflowDocument
   ): unknown {
     const handler = this.handlers.get(node.kind);
     if (!handler) {
@@ -589,7 +624,10 @@ export class MastraWorkflowCompiler {
         { nodeId: node.id, kind: node.kind }
       );
     }
-    const step = handler.createStep(node, { stepId: node.id });
+    const step = stampDecafNodeOrigin(
+      handler.createStep(node, { stepId: node.id, document }),
+      node
+    );
     steps.set(node.id, step);
     const schema = toMastraZodSchema(node.metadata?.["outputSchema"] as never);
     if (schema.degraded) degradedSchemas.push(node.id);
@@ -631,7 +669,7 @@ export class MastraWorkflowCompiler {
       (candidate) => candidate.id === targetId
     );
     if (!targetNode) return undefined;
-    return this.buildLeafStep(targetNode, steps, degradedSchemas);
+    return this.buildLeafStep(targetNode, steps, degradedSchemas, document);
   }
 
   /**

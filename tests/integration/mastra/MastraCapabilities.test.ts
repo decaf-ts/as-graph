@@ -106,6 +106,11 @@ describe("Mastra capabilities (SAA-307 item 4)", () => {
         persist: "not_supported",
         version: "extension_point",
       },
+      metrics: {
+        runs: "supported",
+        scores: "supported",
+        traces: "supported",
+      },
     });
   });
 

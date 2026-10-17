@@ -33,10 +33,12 @@ import {
 import {
   GRAPH_DEFAULT_CONCURRENCY,
   GRAPH_LOCAL_EXECUTION_BACKEND,
+  GRAPH_LOCAL_UNSUPPORTED_NODE_KIND,
   GRAPH_MAX_FOREACH_ITERATIONS,
   GRAPH_MAX_LOOP_ITERATIONS,
   GRAPH_WORKFLOW_BOUNDARY,
 } from "../constants";
+import { graphNodeRequiresMastraEngine } from "./GraphNodeEngineRequirements";
 import {
   GraphBreakSignal,
   GraphExecutionError,
@@ -793,12 +795,27 @@ export class LocalGraphExecutionBackend
    * Invokes the node's catalogue-resolved executor (§4.9 request contract,
    * post-cutover: every executor receives the full request with
    * configuration and input data separated).
+   *
+   * The general engine declares the mastra AI family unsupported: a
+   * `core.agent[.*]` node reaching this backend fails closed with
+   * {@link GRAPH_LOCAL_UNSUPPORTED_NODE_KIND} rather than running a placeholder.
    */
   private async invokeExecutor(
     planNode: GraphExecutionPlanNode,
     request: GraphNodeExecutionRequest,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    if (graphNodeRequiresMastraEngine(planNode.kind)) {
+      throw new GraphExecutionError(
+        `Node '${planNode.id}' of kind '${planNode.kind}' requires the mastra engine, which the local backend does not provide`,
+        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND,
+        {
+          nodeId: planNode.id,
+          kind: planNode.kind,
+          backend: GRAPH_LOCAL_EXECUTION_BACKEND,
+        }
+      );
+    }
     return await planNode.executor.execute(request, context);
   }
 

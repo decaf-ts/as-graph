@@ -92,6 +92,13 @@ export class MastraEventBridge {
   private readonly outgoing = new Map<string, GraphEdgeInstance[]>();
   /** Data edges entering each node, keyed by target node id. */
   private readonly incoming = new Map<string, GraphEdgeInstance[]>();
+  /**
+   * The run's terminal execution status, recorded from the `workflow-finish`
+   * event (or `workflow-canceled`). Kept in lock-step with the terminal workflow
+   * event this bridge emits, so a caller can never return a status that
+   * contradicts the event stream it produced.
+   */
+  private terminalWorkflowStatus?: GraphExecutionStatus;
 
   /**
    * Creates the bridge and indexes the document's node-scoped data edges.
@@ -114,6 +121,18 @@ export class MastraEventBridge {
         this.incoming.set(target, list);
       }
     }
+  }
+
+  /**
+   * The run's terminal execution status once the bridge has consumed the
+   * run's `workflow-finish`/`workflow-canceled` event.
+   *
+   * @return {GraphExecutionStatus | undefined} The terminal status, or
+   * `undefined` before a terminal event was consumed or when that event carries
+   * no terminal outcome (e.g. a suspended run).
+   */
+  get terminalStatus(): GraphExecutionStatus | undefined {
+    return this.terminalWorkflowStatus;
   }
 
   /**
@@ -163,6 +182,7 @@ export class MastraEventBridge {
         await this.onWorkflowFinish(event);
         return;
       case "workflow-canceled":
+        this.terminalWorkflowStatus = GraphExecutionStatus.CANCELLED;
         await this.emit({
           type: GraphExecutionEventType.WORKFLOW_CANCELLED,
           status: GraphExecutionStatus.CANCELLED,
@@ -319,7 +339,11 @@ export class MastraEventBridge {
   private async onWorkflowFinish(event: MastraFullStreamEvent): Promise<void> {
     const payload = this.payloadOf(event);
     const workflowStatus = payload["workflowStatus"];
-    if (workflowStatus === "failed") {
+    // `tripwire` is a guardrail failure: Mastra reports the tripped step as a
+    // failed `workflow-step-result` and finishes the run with `workflowStatus:
+    // "tripwire"`. Surface it as a failed terminal status/event, not a completion.
+    if (workflowStatus === "failed" || workflowStatus === "tripwire") {
+      this.terminalWorkflowStatus = GraphExecutionStatus.FAILED;
       await this.emit({
         type: GraphExecutionEventType.WORKFLOW_FAILED,
         status: GraphExecutionStatus.FAILED,
@@ -328,11 +352,15 @@ export class MastraEventBridge {
       return;
     }
     if (workflowStatus === "canceled" || workflowStatus === "cancelled") {
+      this.terminalWorkflowStatus = GraphExecutionStatus.CANCELLED;
       await this.emit({
         type: GraphExecutionEventType.WORKFLOW_CANCELLED,
         status: GraphExecutionStatus.CANCELLED,
       });
       return;
+    }
+    if (workflowStatus === "success" || workflowStatus === "succeeded") {
+      this.terminalWorkflowStatus = GraphExecutionStatus.SUCCEEDED;
     }
     await this.emit({
       type: GraphExecutionEventType.WORKFLOW_COMPLETED,

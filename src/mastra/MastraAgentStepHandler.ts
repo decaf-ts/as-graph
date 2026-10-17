@@ -16,6 +16,11 @@
  * handler resolves them into live mastra-native `Memory` instances, hands them
  * to the agent factory for construction-time attachment, and binds the
  * invocation to the configured thread via mastra's per-run `memory` option.
+ * When the node declares a `structuredOutput` definition (SAA-836 S1), the
+ * handler resolves it into mastra's per-run `structuredOutput` generate option
+ * through the backend structured-output contract (see
+ * {@link MastraStructuredOutput}) and the resolved Zod schema drives and
+ * validates the response.
  *
  * The runtime is deliberately expressed as a port ({@link MastraAgentRuntime}):
  * the backend passes the config-backed implementation, while tests can inject a
@@ -47,6 +52,11 @@ import {
   type MastraAgentWiredProcessors,
   type MastraProcessorModelResolver,
 } from "./MastraAgentProcessors";
+import {
+  mastraStructuredOutputOf,
+  type MastraDecafModelResolver,
+  type MastraResolvedStructuredOutput,
+} from "./MastraStructuredOutput";
 
 /**
  * Host port that performs the actual agent invocation for one `core.agent` node.
@@ -63,6 +73,12 @@ export interface MastraAgentRuntime {
    *   from the agent node's `inputProcessors`/`outputProcessors` zones, when
    *   the document declares any. Applied by the config-backed runtime as
    *   mastra's per-run processor overrides (R3).
+   * @param memories - The live mastra memories resolved from the agent node's
+   *   wired `memory` zone (SAA-836 M2), when any memory provider is connected.
+   * @param structuredOutput - The structured-output option resolved from the
+   *   node's `structuredOutput` definition (SAA-836 S1), when the node
+   *   declares one. Applied by the config-backed runtime as mastra's
+   *   per-run `structuredOutput` option.
    * @returns The canonical agent outputs (`response`, `actions`).
    */
   execute(
@@ -70,7 +86,8 @@ export interface MastraAgentRuntime {
     inputData: Record<string, unknown>,
     signal?: AbortSignal,
     processors?: MastraAgentWiredProcessors,
-    memories?: readonly MastraAgentMemoryWiring[]
+    memories?: readonly MastraAgentMemoryWiring[],
+    structuredOutput?: MastraResolvedStructuredOutput
   ): Promise<Record<string, unknown>>;
 }
 
@@ -84,6 +101,13 @@ export interface MastraAgentStepHandlerOptions {
    * resolution; when omitted, the composed `<provider>/<modelId>` id is used.
    */
   resolveProcessorModel?: MastraProcessorModelResolver;
+  /**
+   * Host decaf-model registry resolving a structured-output definition's model
+   * name to its constructor (SAA-836 S1). The resolved model converts to the
+   * mastra Zod schema through `@decaf-ts/as-zod` (the single conversion path).
+   * When omitted, a definition that references a model by name fails closed.
+   */
+  resolveModel?: MastraDecafModelResolver;
 }
 
 /**
@@ -285,9 +309,13 @@ async function resolveAgent(
 
 /**
  * Builds the config-backed {@link MastraAgentRuntime}: resolves the node's agent
- * and invokes it via `agent.generate(prompt, { abortSignal })`, projecting the
- * result onto the canonical outputs. Fails closed when the resolved agent is
- * missing or exposes no `generate` method.
+ * and invokes it via `agent.generate(prompt, options)`, where the options carry
+ * the caller's `abortSignal` plus the per-run mastra options the step resolved —
+ * wired `inputProcessors`/`outputProcessors` overrides (SAA-836 M5), the wired
+ * memory thread binding (SAA-836 M2), and the `structuredOutput` option
+ * (SAA-836 S1) with the as-zod-derived Zod schema. The result is projected onto
+ * the canonical outputs. Fails closed when the resolved agent is missing or
+ * exposes no `generate` method.
  *
  * @param options - The named-agent map and/or agent factory.
  * @returns The runtime the agent step delegates to.
@@ -296,7 +324,7 @@ export function createMastraAgentRuntimeFromConfig(
   options: MastraAgentFactoryOptions = {}
 ): MastraAgentRuntime {
   return {
-    async execute(node, inputData, signal, processors, memories) {
+    async execute(node, inputData, signal, processors, memories, structuredOutput) {
       const adapter = graphModelAdapterOf(node);
       // SAA-836 M2: resolve the memories wired onto the agent's `memory` zone
       // before the agent itself, so a factory can attach them at construction.
@@ -330,6 +358,12 @@ export function createMastraAgentRuntimeFromConfig(
         inputProcessors?: unknown[];
         outputProcessors?: unknown[];
         memory?: { thread: string; resource?: string };
+        structuredOutput?: {
+          schema: unknown;
+          instructions?: string;
+          jsonPromptInjection?: boolean | "system" | "inline" | "auto";
+          providerOptions?: Record<string, unknown>;
+        };
       } = signal ? { abortSignal: signal } : {};
       if (processors?.inputProcessors.length) {
         generateOptions.inputProcessors = processors.inputProcessors;
@@ -342,6 +376,23 @@ export function createMastraAgentRuntimeFromConfig(
       // semantic recall, and working memory apply to the generate call.
       if (memories && memories.length) {
         generateOptions.memory = memoryGenerateOptionOf(memories);
+      }
+      // SAA-836 S1: apply the node's resolved structured-output definition as
+      // mastra's per-run `structuredOutput` option — the decaf-model-derived
+      // Zod schema (via @decaf-ts/as-zod) drives and validates the response.
+      if (structuredOutput) {
+        generateOptions.structuredOutput = {
+          schema: structuredOutput.schema,
+          ...(structuredOutput.instructions !== undefined
+            ? { instructions: structuredOutput.instructions }
+            : {}),
+          ...(structuredOutput.jsonPromptInjection !== undefined
+            ? { jsonPromptInjection: structuredOutput.jsonPromptInjection }
+            : {}),
+          ...(structuredOutput.providerOptions !== undefined
+            ? { providerOptions: structuredOutput.providerOptions }
+            : {}),
+        };
       }
       const result = await (
         generate as (
@@ -377,6 +428,11 @@ export function createMastraAgentStepHandler(
       // Resolved wired memory provider nodes (SAA-836 M2), memoized per step
       // with the same per-compilation freshness guarantee.
       let wiredMemories: readonly MastraAgentMemoryWiring[] | undefined;
+      // Resolved structured-output option (SAA-836 S1), memoized per step;
+      // a declared definition that cannot resolve fails closed at compile
+      // time, never at run time.
+      let structuredOutput: MastraResolvedStructuredOutput | undefined;
+      let structuredOutputResolved = false;
       return createStep({
         id: stepOptions.stepId,
         inputSchema: z.any(),
@@ -425,12 +481,20 @@ export function createMastraAgentStepHandler(
               (wiredMemories = connectedMastraMemoryWiringOf(document, node));
             if (wiring.length) memories = wiring;
           }
+          // SAA-836 S1: resolve the node's structured-output definition into
+          // the mastra generate option (memoized per step). A declared
+          // definition that cannot resolve fails closed here.
+          if (!structuredOutputResolved) {
+            structuredOutput = mastraStructuredOutputOf(node, options.resolveModel);
+            structuredOutputResolved = true;
+          }
           const output = await runtime.execute(
             node,
             inputData,
             args.abortSignal,
             processors,
-            memories
+            memories,
+            structuredOutput
           );
           return output && typeof output === "object"
             ? (output as Record<string, unknown>)

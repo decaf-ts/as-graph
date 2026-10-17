@@ -148,7 +148,7 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/shared` | UI-known contracts: `@node`/`@graph`/`@port` decorators, the canonical `GraphWorkflowDocument` and its builder/reader/serializer, manifest catalogue types, the persistable `GraphNodeModel` catalogue row with its manifest converters, constants, and frontend-safe execution-state projections |
 | `@decaf-ts/as-graph/nest` | NestJS HTTP/SSE wiring: catalogue, workflow persistence and run-lifecycle controllers |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `GraphNodeRepository` node-kind rows, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
-| `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table. Runs canonical documents on a host-injected `@mastra/core` runtime (pinned `1.74.0`) |
+| `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract) |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
 The `exports` map in `package.json` is:
@@ -286,7 +286,7 @@ The built-in kinds are declared one folder per node under
 | Flow | `core.flow.if`, `core.flow.switch`, `core.flow.delay`, `core.flow.errorBoundary`, `core.flow.humanApproval`, `core.flow.log`, `core.flow.break` |
 | Utility | `core.utility.code`, `core.utility.map`, `core.utility.log` |
 | Loops | `core.loop.foreach`, `core.loop.while`, `core.loop.until` |
-| Agent | `core.agent` |
+| Agent | `core.agent` (the agent node) and its `core.agent.*` family kinds: `core.agent.tool|toolSelector` (tools), `core.agent.hook|toolDeny|delegationHook` (hooks), `core.agent.skill|skillSelector` (skills), `core.agent.sandbox` (sandbox), `core.agent.scorer|scorerSelector` (scorers), `core.agent.memory|memorySelector` (memory), `core.agent.embedding|vectorStore|retriever|rerank|chunking` (RAG), `core.agent.chain.basic|qa|summarization` (RAG chains), `core.agent.inputProcessor|outputProcessor|guardrail|structuredOutputParser|informationExtractor|langchainCode` (processors), `core.agent.hitl` (human-in-the-loop), `core.agent.voice` (voice), `core.agent.trigger.mcp|slack|discord|telegram|teams` (triggers), `core.agent.response.slack|discord|telegram|teams` (channel responses). Every `core.agent[.*]` kind requires the mastra engine — the general (local) engine fails closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` |
 | Boundary | `graph-input-value-node` (`GraphNode<void, …>` — reusable value node whose single `value` output may feed multiple targets), `graph-output-value-node` (`GraphNode<…, void>` — terminal sink whose `value` input receives the workflow result; it has **no output port** — the engine captures workflow outputs from the `$workflow` boundary edges into it) |
 
 There are no `parallel` or `merge` node kinds: the graph itself parallelizes on multiple connections
@@ -300,6 +300,17 @@ fan-in). Notable per-node properties:
 - `core.trigger.form` / `core.trigger.webhook` — `schema`, a `ModelBuilder`-produced model rendered
   with the for-angular model-builder webcomponent (`@uielement("ngx-decaf-model-builder", …)`); the
   resulting `payload` output is a plain data port.
+- `core.agent` — the mastra agent node. Every mastra agent option is a first-class CRUD field
+  (`name`, `description`, `instructions`, `skillsFormat`, `maxRetries`, `structuredOutput`, and the
+  advanced `agentOptions` passthrough), the `prompt` input accepts placeholder expressions like
+  `{{ $input.brief }}`, and the LLM is carried as **config** via the `modelAdapter` parameter
+  (`provider`, `modelId`, optional `credentialRef` credential reference — resolved by document
+  validation stage 8 — plus optional `modelSettings`); there is no model-provider node kind, and the
+  bottom `model`/`workspace` connections stay for explicit wiring only. Its structural dependencies
+  are dedicated connection zones — `memory` bottom-left, `scorers` top-right, `embedding`
+  bottom-right, `hooks`/`sandbox` top-middle, `tools`/`skill` bottom-middle, and the processor
+  zones `inputProcessors`/`outputProcessors` — each accepting only
+  the matching family node's connection (same-category rule).
 
 `@uielement` labels and placeholders are locale keys, not hardcoded strings: the strings live in
 `assets/i18n/en.json`, shipped in the published package.
@@ -443,9 +454,19 @@ with `GRAPH_BACKEND_SEED_NOT_SUPPORTED` when the backend does not implement it.
 ##### Mastra backend (`@decaf-ts/as-graph/mastra`)
 
 `MastraGraphExecutionBackend` translates the canonical document into a Mastra
-workflow, runs it on the injected `@mastra/core` runtime (pinned `1.74.0`),
+workflow, runs it on the injected `@mastra/core` runtime (peer dependency
+`^1.77.0`; the capability manifest pins `MASTRA_PINNED_VERSION = "1.74.0"` as
+the reviewed engine contract),
 bridges Mastra's `fullStream` onto the facade event sink, and enforces the
-schema-safe resume guard on every resume payload. It reports `codeMode:
+schema-safe resume guard on every resume payload. The returned
+`GraphExecutionResult.status` is derived from the run's terminal outcome, never
+assumed from the bare fact that the run resolved: the event bridge records the
+terminal `workflow-finish` status (`failed`/`tripwire` → `failed`,
+`canceled`/`cancelled` → `cancelled`, `success`/`succeeded` → `succeeded`), with
+the run result's/stream's raw status as fallback when the stream was not
+observed — so a failed or guardrail-tripped run reports `failed` and a
+cancelled run reports `cancelled` instead of a false `succeeded`. It reports
+`codeMode:
 "unsupported"` (code-mode surfaces currently fail closed) and surfaces
 `workflowList`/`workflowLookup` over its compiled-workflow cache. Its full
 per-feature capability table (`MASTRA_FEATURE_CAPABILITIES`) declares, per
@@ -459,18 +480,173 @@ import { MastraGraphExecutionBackend } from "@decaf-ts/as-graph/mastra";
 
 const backend = new MastraGraphExecutionBackend(); // self-registers under the "mastra" flavour
 await backend.initialize({
-  mastra,              // the host's @mastra/core runtime instance
-  agents,              // optional agent map for agent/LLM nodes
-  stepHandlers,        // optional MastraNodeStepHandler[] for custom node kinds
-  suspendStateReader,  // optional, for suspend/resume runs
-  maxResumeBytes,      // optional resume payload byte cap
+  mastra,                 // the host's @mastra/core runtime instance
+  agents,                 // optional agent map for `core.agent` nodes, keyed by `<provider>/<modelId>`, model id, or node id
+  createAgent,            // optional factory building an agent from a node's model-adapter config (fallback after `agents`)
+  agentRuntime,           // optional pre-built agent runtime (takes precedence over both)
+  memories, createMemory, // optional memory wiring for `core.agent.memory` nodes
+  stepHandlers,           // optional MastraNodeStepHandler[] for custom node kinds
+  resolveProcessorModel,  // optional model resolver for input/output processors and guardrails
+  resolveStructuredOutputModel, // optional model resolver for structured-output parsing
+  createMcpServer,        // optional MCP server factory — omitting it makes `core.agent.trigger.mcp` fail closed (`GRAPH_MASTRA_MCP_UNAVAILABLE`)
+  resolveChannelAdapter, sendChannelResponse, // optional channel wiring — omitting them makes `core.agent.trigger.*`/`response.*` fail closed (`GRAPH_MASTRA_CHANNEL_UNAVAILABLE`)
+  resolveVoice,           // optional voice wiring — omitting it makes `core.agent.voice` fail closed (`GRAPH_MASTRA_VOICE_UNAVAILABLE`)
+  persistence,            // optional per-layer persistence surface (replays/cache/pins), overriding the `MASTRA__PERSISTENCE__*` env defaults
+  suspendStateReader,     // optional, for suspend/resume runs
+  maxResumeBytes,         // optional resume payload byte cap
+  terminalTimeoutMs,      // optional run-level terminal timeout
 });
 // pass `backend` via GraphExecutionEngineConfig.backend
 ```
 
+`core.agent` executes as a real mastra agent step (no degraded echo): the backend builds the agent
+step handler from an explicit `agentRuntime`, or from `createAgent`/`agents` (consulted in that
+order), invokes the resolved agent with the node's `prompt` input, and projects the result onto the
+node's `response`/`actions` outputs. When none of the three is configured the step fails closed with
+`GRAPH_MASTRA_AGENT_UNAVAILABLE` instead of returning a fabricated result; the `core.agent.*` family
+kinds resolve their configuration into resource descriptors through the default handler set. The
+general (local) engine never runs the mastra AI family: any `core.agent[.*]` node reaching it fails
+closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND`.
+
 The flavour constant is `MASTRA_BACKEND_FLAVOUR` (`"mastra"`); unsupported node
 kinds and unsafe/invalid resume payloads fail loudly with
 `GRAPH_MASTRA_UNSUPPORTED_KIND` / `GRAPH_MASTRA_RESUME_*` errors.
+
+**Single schema conversion path (as-zod).** Every decaf↔mastra schema
+conversion goes through `@decaf-ts/as-zod` — `mastraSchemaFromModel` converts
+a decaf Model constructor into the mastra Zod object schema, and
+`mastraModelFromSchema` converts back. There is no second metadata walker;
+both directions fail closed with `GRAPH_MASTRA_MODEL_SCHEMA_UNAVAILABLE` when
+the conversion cannot produce a usable schema instead of handing the engine a
+degraded schema (only a Zod object schema with a non-empty declared shape can
+drive structured output).
+
+**Structured output.** A graph document authors structured output as a plain,
+JSON-safe definition on a node's `structuredOutput` parameter: a decaf model
+**name** resolved through the host-supplied model registry
+(`MastraDecafModelResolver` — the host owns the model catalogue; the backend
+never invents one), or a host-carried, already-converted Zod schema (takes
+precedence), plus optional `instructions`, `jsonPromptInjection`, and
+`providerOptions` forwarded to mastra verbatim.
+`mastraStructuredOutputOf` resolves it into mastra's `structuredOutput`
+generate option; an unresolvable definition fails closed with
+`GRAPH_MASTRA_STRUCTURED_OUTPUT_UNRESOLVED` rather than silently degrading to
+unstructured output, and an absent definition leaves the agent unstructured
+(mastra's default). The definition never carries a secret and never carries
+raw JSON Schema — mastra consumes Zod. The model-builder UI (SAA-836 U1)
+consumes this same contract.
+
+```typescript
+import {
+  mastraSchemaFromModel,
+  mastraStructuredOutputOf,
+} from "@decaf-ts/as-graph/mastra";
+
+const zodSchema = mastraSchemaFromModel(MyDecafModel); // via @decaf-ts/as-zod
+const structuredOutput = mastraStructuredOutputOf(node, (name) => models[name]);
+// → { schema, instructions?, jsonPromptInjection?, providerOptions? } | undefined
+```
+
+##### Mastra compatibility surface (SAA-836)
+
+Beyond the backend itself, the `@decaf-ts/as-graph/mastra` entrypoint exports
+the full compatibility surface built across the SAA-836 slices:
+
+- **Authoring builders** — `MastraAgentBuilder` (fluent facade over
+  `GraphWorkflowDocumentBuilder` producing valid `core.agent` documents, wiring
+  the agent zones: `tools`, `memory`, `skill`, `scorers`, `hooks`, `sandbox`,
+  `embedding`, `inputProcessors`, `outputProcessors`) and `MastraToolBuilder`
+  (the same contract for `core.agent.tool` documents), plus
+  `MastraToolConfig`/`MastraToolDecorator` for tool authoring.
+- **Memory and vector layers** — `MastraMemory` (mastra memory wiring over
+  `@mastra/memory`, including the `memorySelector` decision sub-flow) and
+  `MastraVectorStore` (`DriverBackedVectorStore`/`InMemoryVectorStore` over
+  `@mastra/libsql`/`@mastra/pg` peers).
+- **Processors** — `MastraAgentProcessors` (input/output processor and
+  guardrail wiring, with the host-supplied `resolveProcessorModel` model hook).
+- **Human-in-the-loop and voice** — `MastraHitlStepHandler` (the
+  `core.agent.hitl` suspend/resume handler) and `MastraVoiceStepHandler`
+  (`core.agent.voice`, failing closed with `GRAPH_MASTRA_VOICE_UNAVAILABLE`
+  when no voice wiring is supplied).
+- **Triggers and channel responses** — `MastraMcpTrigger` (MCP server trigger,
+  fail-closed `GRAPH_MASTRA_MCP_UNAVAILABLE`), `MastraScheduleTrigger`,
+  `MastraChannelTrigger`/`MastraChannelResponse` (Slack/Discord/Telegram/Teams,
+  fail-closed `GRAPH_MASTRA_CHANNEL_UNAVAILABLE` without channel wiring).
+- **Run metrics (S2)** — the read-only metrics layer:
+  `MastraMetricsModels` (run/score/trace rows), `MastraMetricsAdapter`
+  (read-only adapter over the mastra storage), `MastraMetricsStatement` +
+  paginator, `MastraMetricsGateway` (owner-scoped serving), and
+  `MastraRunMetricsEndpoint` (the editor-endpoint delegation behind
+  `GET /graph/workflows/:workflowId/runs`).
+- **Eval models (O1)** — `MastraEvalModels` (read-only experiments/results
+  models for eval pipelines).
+- **Observability and persistence** — `MastraObservability` (langfuse exporter
+  wiring; enabled by default and fail-closed without credentials) and
+  `MastraPersistence` (per-layer replay/cache/pin repositories with the
+  `MASTRA__PERSISTENCE__*` adapter routing). Replay snapshots are **versioned
+  and restorable** (row id `${runId}::v${version}`), backing mastra's own
+  time-travel replay; a recording failure never fails a run, while restoring
+  a missing snapshot fails closed. Workflows persist through the as-graph
+  adapter only, versioned with restore.
+- **Nest wiring** — `MastraGraphExecutionModule` (the mastra `forRoot` module
+  variant of `GraphExecutionModule`).
+
+The agent-family node kinds themselves (memory, RAG, processors, HITL, voice,
+triggers, channel responses) are declared under
+`src/node/agents/**` and registered from their `@node` metadata — see the
+Agent row of the built-in node-kind table above.
+
+##### Mastra engine environment (`.env` / `.env.secret`)
+
+The mastra engine reads its configuration from the accumulated
+`@decaf-ts/logging` environment (`MastraEnvironment`), overridable through
+`MASTRA__*` keys:
+
+| Key | Default | Purpose |
+|:----|:--------|:--------|
+| `MASTRA__ENGINE__ENABLED` | `true` | Enables the mastra engine lane; `false` makes `MastraGraphExecutionBackend.initialize()` fail closed with `GRAPH_MASTRA_ENGINE_DISABLED`. |
+| `MASTRA__ENGINE__TERMINAL_TIMEOUT_MS` | `300000` | Default run-level terminal timeout for mastra runs (used when the backend config sets no positive `terminalTimeoutMs`). |
+| `MASTRA__PROVIDER__ENDPOINT` | `""` | Reserved provider config (declared in `MastraEnvironment`; not yet consumed — agents take their model from the node's `modelAdapter` parameter). |
+| `MASTRA__PROVIDER__MODEL` | `""` | Reserved provider config (declared in `MastraEnvironment`; not yet consumed — agents take their model from the node's `modelAdapter` parameter). |
+| `MASTRA__CREDENTIALS__API_KEY_ENV` | `MASTRA_PROVIDER_API_KEY` | The **name** of the environment variable that carries the provider credential. |
+| `MASTRA__OBSERVABILITY__ENABLED` | `true` | Enables the langfuse observability lane; it **fails closed** when enabled and the langfuse credentials are missing, so a mastra boot without `.env.secret` langfuse keys requires `false`. |
+| `MASTRA__OBSERVABILITY__SERVICE_NAME` | `as-graph-mastra` | Service name attached to observability exports. |
+| `MASTRA__OBSERVABILITY__ENVIRONMENT` | `""` | Environment label attached to observability exports. |
+| `MASTRA__OBSERVABILITY__LANGFUSE__ENDPOINT` | `https://cloud.langfuse.com` | Langfuse web/API base URL traces are exported to. |
+| `MASTRA__OBSERVABILITY__LANGFUSE__PUBLIC_KEY_ENV` / `MASTRA__OBSERVABILITY__LANGFUSE__SECRET_KEY_ENV` | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | The **names** of the environment variables carrying the langfuse keys (values live in `.env.secret` and are read only at exporter construction). |
+| `MASTRA__PERSISTENCE__REPLAYS__ADAPTER` | `fs` | Storage adapter for the replay-snapshot layer (`ram` \| `fs` \| `host`). |
+| `MASTRA__PERSISTENCE__CACHE__ADAPTER` | `ram` | Storage adapter for the compiled-workflow cache layer. |
+| `MASTRA__PERSISTENCE__PINS__ADAPTER` | `fs` | Storage adapter for the pinned-values layer. |
+| `MASTRA__PERSISTENCE__FS__ROOT` | `var/as-graph-mastra` | Base directory for the filesystem adapter's persisted data (a per-adapter-alias sub-directory is created automatically). |
+
+Host-operator workflow (gate C):
+
+- **Non-secret config goes in `.env`** — the engine flags and observability /
+  persistence routing. (The `MASTRA__PROVIDER__ENDPOINT` / `MASTRA__PROVIDER__MODEL`
+  keys are declared but reserved — agents take their model from the node's
+  `modelAdapter` parameter.) `.env` is git-ignored and must never be committed.
+- **The credential value goes in `.env.secret`** — copy the tracked
+  `.env.secret.template` (placeholders only) to `.env.secret`, fill in
+  `MASTRA_PROVIDER_API_KEY` (or point `MASTRA__CREDENTIALS__API_KEY_ENV` at
+  another variable name), and never commit it; `.env.secret` is git-ignored.
+- **Secrets are referenced by name only.** The graph layer reads the
+  credential by environment-variable name and asserts only its presence —
+  `assertMastraProviderCredentials()` throws
+  `GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE` when the referenced variable is
+  unset or empty (no unauthenticated model traffic is ever attempted), and
+  `hasMastraProviderCredentials()` reports availability without throwing. A
+  secret value is never read into, held by, or persisted in the graph layer.
+
+```typescript
+import {
+  assertMastraProviderCredentials,
+  MastraEnvironment,
+} from "@decaf-ts/as-graph/mastra";
+
+MastraEnvironment.mastra.engine.enabled;    // MASTRA__ENGINE__ENABLED
+MastraEnvironment.mastra.provider.endpoint; // MASTRA__PROVIDER__ENDPOINT
+assertMastraProviderCredentials(); // fails closed without a resolvable credential
+```
 
 ##### Dagster backend (`@decaf-ts/as-graph/dagster`)
 
@@ -567,7 +743,12 @@ manifests, documents and engine run results into DOM-free render inputs.
 (`GET /graph/node-types`, `GET /graph/node-types/:kind`, `POST /graph/node-types/:kind/resolve`), canonical
 workflow persistence (`PUT|GET /graph/workflows/:workflowId`, `GET /graph/workflows` ownership-filtered
 summaries, `POST /graph/workflows/validate`), the asynchronous run lifecycle (`POST /graph/runs` → `202`,
-`GET /graph/workflows/:workflowId/runs` per-workflow run listing, `GET /graph/runs/:runId/events` SSE,
+`GET /graph/workflows/:workflowId/runs` per-workflow run listing — with optional
+`page`/`perPage` query params (`400` on non-integer or `< 1` values), and,
+when the active backend is mastra and the workflow is mastra-owned, serving the
+owner-scoped agent run-metrics page envelope `{ data, current, total, count }`
+through the metrics gateway instead of local run rows,
+`GET /graph/runs/:runId/events` SSE,
 `DELETE /graph/runs/:runId`), and the read-only engine capability API (`GET /graph/engines`,
 `GET /graph/engines/:engineId`, `GET /graph/engines/:engineId/workflows`,
 `GET /graph/engines/:engineId/workflows/:workflowId`).
@@ -593,7 +774,7 @@ dynamic engine output. The manifest shape:
       engineId: "local",          // backend flavour (allowlisted id)
       displayName: "Local (built-in)",
       local: true,
-      pinnedEngineVersion: "built-in", // "1.13.25" for dagster, "1.74.0" for mastra
+      pinnedEngineVersion: "built-in", // "1.13.25" for dagster, MASTRA_PINNED_VERSION ("1.74.0") for mastra — the peer dependency contract is @mastra/core ^1.77.0
       capabilities: [
         { feature: "codeMode", verdict: "SUPPORTED", detail?: "…" },
         { feature: "workflowList", verdict: "NOT_SUPPORTED" },
@@ -690,7 +871,10 @@ The standalone host seeds the demo workflow fixture registry into whichever
 engine it boots: `loadGraphDemoWorkflows()` (exported from
 `@decaf-ts/as-graph/nest`) imports the `graphWorkflowFixtures` registry from
 `src/workflows` and passes its canonical documents as `seedWorkflows`, so each
-driver's catalogue lists the full fixture set out of the box. The registry is
+driver's catalogue lists the full fixture set out of the box. Operators can
+suppress boot-time seeding with `GRAPH_SEED_DEMO=off` (also
+`false`/`0`/`no`/`disabled`) — any other value (or an unset variable) keeps the
+default on. The registry is
 test-only content — `npm pack` excludes `lib/**/workflows` — so a
 release-packaged host boots with an empty seed set and its catalogues behave
 exactly as before (the mastra catalogue starts empty; the dagster catalogue
@@ -718,8 +902,14 @@ workflows persisted in the backend's local engine store, including the seeded de
 
 ##### Mastra
 
-In-process; the only prerequisite is the `@mastra/core` peer dependency (pinned `^1.77.0`),
-resolved by `npm install` in `as-graph`. The host lazily builds a real `@mastra/core` runtime.
+In-process; the prerequisites are the `@mastra/core` peer dependency (`^1.77.0`,
+resolved by `npm install` in `as-graph`, alongside the optional `@mastra/memory`,
+`@mastra/libsql`, and `@mastra/pg` peers consumed by the memory/vector-store
+layers) and the langfuse credentials (`LANGFUSE_PUBLIC_KEY` /
+`LANGFUSE_SECRET_KEY` in `.env.secret`) — the observability lane is on by
+default and fails closed without them; disable it with
+`MASTRA__OBSERVABILITY__ENABLED=false`. The host lazily builds a real
+`@mastra/core` runtime.
 
 ```bash
 npm run start:backend:mastra                  # engine: mastra, still on :3000
@@ -788,6 +978,7 @@ is absent.
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
 | `npm run prepare-it-tests` / `teardown-it-tests` | Provision / stop the pinned Dagster gateway fixture |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
+| `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
 | `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) |
 | `npm run test:dist` | Re-run the full suite against the compiled `lib` and `dist` outputs |
 | `npm run test:circular` | Check the source for circular dependencies |

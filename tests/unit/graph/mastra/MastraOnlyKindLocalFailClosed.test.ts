@@ -133,4 +133,37 @@ describe("local engine fails closed on the mastra AI family (SAA-837 M1)", () =>
       expect(calls).toEqual([]);
     }
   );
+
+  // SAA-836 M5: the new mastra-only kinds fail closed on the general engine
+  // through the same `core.agent*` prefix rule — no new engine wiring needed.
+  // SAA-836 M6: the channel trigger/response and voice kinds join them.
+  it.each([
+    "core.agent.inputProcessor",
+    "core.agent.outputProcessor",
+    "core.agent.guardrail",
+    "core.agent.hitl",
+    "core.agent.trigger.mcp",
+    "core.agent.trigger.slack",
+    "core.agent.trigger.discord",
+    "core.agent.trigger.telegram",
+    "core.agent.trigger.teams",
+    "core.agent.response.slack",
+    "core.agent.response.discord",
+    "core.agent.response.telegram",
+    "core.agent.response.teams",
+    "core.agent.voice",
+  ])(
+    "fails a %s node closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND without running its executor",
+    async (kind) => {
+      const { engine, calls } = await bootLocalEngine([kind]);
+
+      const result = await engine.execute(singleNodeDocument(kind), {});
+
+      expect(result.status).toBe(GraphExecutionStatus.FAILED);
+      expect(result.nodeResults["agent"]?.error?.code).toBe(
+        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
+      );
+      expect(calls).toEqual([]);
+    }
+  );
 });

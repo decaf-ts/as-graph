@@ -66,7 +66,48 @@ describe("Mastra workflow-management capabilities (SAA-346)", () => {
         persist: "not_supported",
         version: "extension_point",
       },
+      metrics: {
+        runs: "supported",
+        scores: "supported",
+        traces: "supported",
+      },
     });
+  });
+
+  it("exports the read-only metrics capability rows with honest verdicts", () => {
+    for (const [feature, verdict] of [
+      ["metricsRuns", "SUPPORTED"],
+      ["metricsScores", "SUPPORTED"],
+      ["metricsTraces", "SUPPORTED"],
+    ] as Array<[string, string]>) {
+      const row = mastraCapabilityOf(feature);
+      expect(row).toBeDefined();
+      expect(row!.verdict).toBe(verdict);
+      expect(
+        MASTRA_FEATURE_CAPABILITIES.map((entry) => entry.feature)
+      ).toContain(feature);
+    }
+  });
+
+  it("exports the SAA-836 M6 trigger/voice/builder rows with honest verdicts", () => {
+    for (const [feature, verdict] of [
+      ["scheduleTrigger", "SUPPORTED"],
+      ["channelTriggers", "EXTENSION-POINT"],
+      ["channelResponses", "EXTENSION-POINT"],
+      ["voice", "EXTENSION-POINT"],
+      ["agentToolBuilders", "SUPPORTED"],
+      ["runtimeEngineLoading", "SUPPORTED"],
+    ] as Array<[string, string]>) {
+      const row = mastraCapabilityOf(feature);
+      expect({ feature, defined: row !== undefined }).toEqual({
+        feature,
+        defined: true,
+      });
+      expect(row!.verdict).toBe(verdict);
+      expect(
+        MASTRA_FEATURE_CAPABILITIES.map((entry) => entry.feature)
+      ).toContain(feature);
+    }
   });
 
   it("projects the backend capabilities as exactly resolveMastraCapabilities()", async () => {

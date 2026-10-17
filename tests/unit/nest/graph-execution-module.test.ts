@@ -29,6 +29,9 @@ import { ValidationError } from "@decaf-ts/db-decorators";
 import type { GraphWorkflowDefinition } from "../../../src/shared/graph";
 
 import { type GraphExecutionValues, GraphRunService } from "../../../src";
+import type { GraphExecutionBackend } from "../../../src/engine/execution/GraphExecutionBackend";
+import { GraphExecutionEngine } from "../../../src";
+import { GraphNodeCatalogue } from "../../../src/engine/catalog/GraphNodeCatalogue";
 
 import { GraphExecutionModule } from "../../../src/nest/graph";
 import { GraphWorkflowService } from "../../../src";
@@ -61,6 +64,40 @@ function buildLegacyWorkflowDefinition(): GraphWorkflowDefinition {
 }
 
 jest.setTimeout(30000);
+
+/**
+ * Minimal execution-backend double for the `backend`/`backendFactory` option
+ * wiring tests: the engine boots and re-initializes it, but no run is executed
+ * against it in this suite.
+ */
+class StubGraphExecutionBackend implements GraphExecutionBackend {
+  readonly local = false;
+  readonly codeMode = "unsupported" as const;
+
+  initializeCalls = 0;
+
+  async initialize(): Promise<void> {
+    this.initializeCalls += 1;
+  }
+
+  async execute(): Promise<never> {
+    throw new Error(
+      "StubGraphExecutionBackend is not wired for execution in this suite"
+    );
+  }
+}
+
+/**
+ * Resets the `@service()` singleton `GraphNodeCatalogue` so an additional
+ * `GraphExecutionModule` boot can re-apply the built-in node registrations
+ * (a jest worker can only complete one boot per fresh catalogue).
+ */
+function resetGraphNodeCatalogue(): void {
+  const catalogue = new GraphNodeCatalogue();
+  for (const kind of catalogue.listKinds()) {
+    catalogue.unregister(kind);
+  }
+}
 
 describe("GraphExecutionModule (unit)", () => {
   let app: INestApplication;
@@ -234,5 +271,59 @@ describe("GraphExecutionModule (unit)", () => {
 
     const globalEvents = await api().get("/graph/events");
     expect(globalEvents.status).toBe(404);
+  });
+
+  describe("backend/backendFactory option wiring (SAA-836 O1)", () => {
+    it("keeps `backend` precedence: a supplied backend wins and the factory is never invoked", async () => {
+      resetGraphNodeCatalogue();
+      const backend = new StubGraphExecutionBackend();
+      const backendFactory = jest.fn<() => Promise<GraphExecutionBackend>>(
+        async () => backend
+      );
+
+      const bootModuleRef = await Test.createTestingModule({
+        imports: [
+          TestRequestContextModule,
+          GraphExecutionModule.forRoot({
+            initAdapter: true,
+            backend,
+            backendFactory,
+          }),
+        ],
+      }).compile();
+      const bootApp = bootModuleRef.createNestApplication();
+      await bootApp.init();
+
+      const engine = bootModuleRef.get(GraphExecutionEngine, { strict: false });
+      expect(engine.backend).toBe(backend);
+      expect(backend.initializeCalls).toBe(1);
+      expect(backendFactory).not.toHaveBeenCalled();
+
+      await bootApp.close();
+    }, 20000);
+
+    it("uses `backendFactory` when `backend` is unset: the factory's backend becomes the engine's active backend", async () => {
+      resetGraphNodeCatalogue();
+      const backend = new StubGraphExecutionBackend();
+      const backendFactory = jest.fn<() => Promise<GraphExecutionBackend>>(
+        async () => backend
+      );
+
+      const bootModuleRef = await Test.createTestingModule({
+        imports: [
+          TestRequestContextModule,
+          GraphExecutionModule.forRoot({ initAdapter: true, backendFactory }),
+        ],
+      }).compile();
+      const bootApp = bootModuleRef.createNestApplication();
+      await bootApp.init();
+
+      const engine = bootModuleRef.get(GraphExecutionEngine, { strict: false });
+      expect(engine.backend).toBe(backend);
+      expect(backendFactory).toHaveBeenCalledTimes(1);
+      expect(backend.initializeCalls).toBe(1);
+
+      await bootApp.close();
+    }, 20000);
   });
 });

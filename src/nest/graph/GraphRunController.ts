@@ -48,6 +48,11 @@ import {
   graphWorkflowOwnerOf,
 } from "../../engine/services/GraphWorkflowService";
 import { canAccessGraphResourcePayload } from "../../engine/runs/ownership";
+import {
+  MASTRA_RUN_METRICS_DELEGATION,
+  type MastraRunMetricsDelegation,
+  type MastraRunMetricsPageHttp,
+} from "../../mastra/MastraRunMetricsEndpoint";
 import { toIsoDateString } from "./servingDates";
 import {
   GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
@@ -271,7 +276,9 @@ export class GraphRunController {
     @Optional() @Inject(DecafRequestContext)
     private readonly requestContext?: DecafRequestContext,
     @Optional() @Inject(GRAPH_RUN_OPTIONS)
-    private readonly options: GraphRunControllerOptions = {}
+    private readonly options: GraphRunControllerOptions = {},
+    @Optional() @Inject(MASTRA_RUN_METRICS_DELEGATION)
+    private readonly runMetricsDelegation?: MastraRunMetricsDelegation
   ) {}
 
   /**
@@ -366,6 +373,28 @@ export class GraphRunController {
   }
 
   /**
+   * Parses the optional metrics paging query parameters: both are optional,
+   * and a supplied value must be an integer `>= 1` (fail closed with `400`).
+   */
+  private parseMetricsPageParams(
+    page?: string,
+    perPage?: string
+  ): { page?: number; perPage?: number } {
+    const parseOf = (raw: string | undefined, name: string): number | undefined => {
+      if (raw === undefined || raw === "") return undefined;
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value < 1) {
+        throw new HttpException(
+          `Query parameter '${name}' must be an integer >= 1`,
+          HttpStatus.BAD_REQUEST
+        );
+      }
+      return value;
+    };
+    return { page: parseOf(page, "page"), perPage: parseOf(perPage, "perPage") };
+  }
+
+  /**
    * Lists a workflow's past runs, newest first (DECAF-50 §4.14).
    *
    * The workflow itself is access-checked first (unknown → `404`, foreign
@@ -381,17 +410,42 @@ export class GraphRunController {
    * dates cannot be projected are skipped per row (SAA-93 F4). Auth follows
    * the controller's configured `auth` mode.
    *
+   * Mastra delegation (SAA-836 S2): when the active backend is the mastra
+   * backend and the workflow is mastra-owned, the same endpoint serves the
+   * backend's agent run metrics through the owner-scoped metrics gateway
+   * instead of the local run rows (same-endpoint delegation to mastra).
+   * Supplying `page` and/or `perPage` selects the paginated shape: a JSON
+   * page envelope `{ data, current, total, count }` served through the
+   * mastra paginator; without paging parameters the mastra rows are served
+   * as the flat array shape the endpoint has always returned. A foreign
+   * mastra-owned workflow is denied with the same `404` the mastra catalogue
+   * uses (C23).
+   *
    * @param {string} workflowId - Workflow id path parameter.
-   * @return {Promise<Array<Record<string, unknown>>>} The workflow's runs, newest first.
-   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown workflows/runs, 403 for foreign owners, 401 without an authenticated caller).
+   * @param {string} page - Optional one-indexed page number (mastra-served rows only).
+   * @param {string} perPage - Optional page size (mastra-served rows only, clamped server-side).
+   * @return {Promise<Array<Record<string, unknown>> | MastraRunMetricsPageHttp>} The workflow's runs, newest first.
+   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown workflows/runs, 403 for foreign owners, 401 without an authenticated caller, 400 for invalid paging parameters).
    */
   @Get("workflows/:workflowId/runs")
   async listRuns(
-    @Param("workflowId") workflowId: string
-  ): Promise<Record<string, unknown>[]> {
+    @Param("workflowId") workflowId: string,
+    @Query("page") page?: string,
+    @Query("perPage") perPage?: string
+  ): Promise<Record<string, unknown>[] | MastraRunMetricsPageHttp> {
     const context = this.requireAuthenticatedContext();
     const callerOwner = this.ownerUserOf();
+    const pageParams = this.parseMetricsPageParams(page, perPage);
     try {
+      if (this.runMetricsDelegation) {
+        const delegated = await this.runMetricsDelegation.listRuns(
+          workflowId,
+          callerOwner,
+          pageParams.page,
+          pageParams.perPage
+        );
+        if (delegated !== undefined) return delegated;
+      }
       await this.workflowService.assertAccess(workflowId, context);
       const models = await this.runService.listRunsByWorkflow(
         workflowId,
