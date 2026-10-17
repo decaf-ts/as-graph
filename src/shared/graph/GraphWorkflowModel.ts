@@ -1,5 +1,11 @@
 import { model } from "@decaf-ts/decorator-validation";
-import { BaseModel, column, pk, table } from "@decaf-ts/core";
+import {
+  BaseModel,
+  column,
+  noValidateOnUpdate,
+  pk,
+  table,
+} from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "./document";
 
 /**
@@ -38,6 +44,14 @@ export class GraphWorkflowModel extends BaseModel {
   /** Legacy-transition snapshot (DECAF-50 §4.18); never the executable source of truth. */
   @column()
   snapshot?: Record<string, unknown>;
+
+  /**
+   * Inherited `createdAt` audit column, redeclared with
+   * {@link noValidateOnUpdate} so an update never mutates the creation
+   * timestamp.
+   */
+  @noValidateOnUpdate()
+  override createdAt!: Date;
 
   constructor(arg?: Partial<GraphWorkflowModel>) {
     super(arg);

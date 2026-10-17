@@ -6,7 +6,14 @@
  * within a run; the payload/error columns are stored JSON-safe.
  */
 import { list, model } from "@decaf-ts/decorator-validation";
-import { BaseModel, column, index, pk, table } from "@decaf-ts/core";
+import {
+  BaseModel,
+  column,
+  index,
+  noValidateOnUpdate,
+  pk,
+  table,
+} from "@decaf-ts/core";
 import type { GraphRunEventEnvelope } from "../shared/graph";
 import type { GraphExecutionErrorPayload, GraphExecutionEventType } from "../shared/graph";
 
@@ -64,6 +71,14 @@ export class GraphRunEventModel extends BaseModel {
   @column()
   @list(String)
   path?: string[];
+
+  /**
+   * Inherited `createdAt` audit column, redeclared with
+   * {@link noValidateOnUpdate} so an update (e.g. appending nested-run
+   * outcomes) never mutates the creation timestamp.
+   */
+  @noValidateOnUpdate()
+  override createdAt!: Date;
 
   constructor(arg?: Partial<GraphRunEventModel>) {
     super(arg);

@@ -30,6 +30,22 @@ import type { MastraPersistence } from "./MastraPersistence";
 /** The flavour id the Mastra backend registers under in the backend registry. */
 export const MASTRA_BACKEND_FLAVOUR = "mastra";
 
+/**
+ * The `MastraBackendConfig.storage` declared by the host could not be wired
+ * onto the Mastra runtime (SAA-926 §6.2): the runtime exposes no
+ * `setStorage`/`getStorage` surface, so the declared storage would be silently
+ * ignored and persistence would fall back to in-memory.
+ */
+export const GRAPH_MASTRA_STORAGE_UNWIRED = "GRAPH_MASTRA_STORAGE_UNWIRED";
+/**
+ * The wired Mastra storage does not yield a durable workflows domain
+ * (SAA-926 §6.2/§2.7): the domain is absent, or a composite storage misses it
+ * and core silently fills it with in-memory, losing suspend/resume snapshots
+ * on restart.
+ */
+export const GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY =
+  "GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY";
+
 /** A document node kind the Mastra translator cannot represent. */
 export const GRAPH_MASTRA_UNSUPPORTED_KIND = "GRAPH_MASTRA_UNSUPPORTED_KIND";
 /** A suspendable step declared a missing or degraded resume schema. */
@@ -214,7 +230,14 @@ export interface MastraNodeStepOptions {
 export interface MastraBackendConfig extends Record<string, unknown> {
   /** The Mastra runtime used to create and load runs. */
   mastra?: unknown;
-  /** Optional Mastra storage configuration. */
+  /**
+   * Optional Mastra storage configuration declared by the host (SAA-926
+   * §6.2). Wired explicitly onto the runtime at {@link initialize} and
+   * verified durable: an unwired runtime fails with
+   * {@link GRAPH_MASTRA_STORAGE_UNWIRED} and a non-durable workflows domain
+   * with {@link GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY} — an explicit
+   * `InMemoryStore` is the only accepted in-memory declaration.
+   */
   storage?: unknown;
   /**
    * Optional named agent map used by the `core.agent` step handler (SAA-837

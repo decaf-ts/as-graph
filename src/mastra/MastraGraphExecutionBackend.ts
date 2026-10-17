@@ -11,7 +11,11 @@
  * (`MASTRA__ENGINE__ENABLED`, else `initialize` fails closed with
  * `GRAPH_MASTRA_ENGINE_DISABLED`) and the default run-level terminal timeout is
  * environment-derived (`MASTRA__ENGINE__TERMINAL_TIMEOUT_MS`) unless the host
- * config sets its own.
+ * config sets its own. A host-declared `MastraBackendConfig.storage` is wired
+ * explicitly and verified durable (SAA-926 §6.2, see
+ * {@link wireMastraStorage}), and run handles for resume are recovered through
+ * the storage-backed fallback when the runtime exposes no `getRun`
+ * (SAA-926 §6.3, see {@link recoverMastraRunHandle}).
  */
 import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import { Logging } from "@decaf-ts/logging";
@@ -34,6 +38,11 @@ import { buildGraphExecutionResult } from "../engine/execution/GraphExecutionRes
 import { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
 import { MastraWorkflowManager } from "./MastraWorkflowManager";
 import { MastraEventBridge } from "./MastraEventBridge";
+import { recoverMastraRunHandle } from "./MastraRunRecovery";
+import {
+  wireMastraStorage,
+  type MastraStorageWiringStatus,
+} from "./MastraStorageWiring";
 import { assertMastraResumeAllowed } from "./MastraResumeGuard";
 import { assertMastraResumeSchemaSafe } from "./MastraSchemaConverter";
 import {
@@ -220,6 +229,7 @@ export class MastraGraphExecutionBackend
   private terminalTimeoutMs = MastraEnvironment.mastra.engine.terminalTimeoutMs;
   private initialized = false;
   private _config?: MastraBackendConfig;
+  private _storageStatus?: MastraStorageWiringStatus;
   private persistenceInstance?: MastraPersistence;
   private persistenceOwned = false;
   private persistenceBroken = false;
@@ -244,9 +254,18 @@ export class MastraGraphExecutionBackend
    * `@decaf-ts/as-zod`; when none is supplied the kind is left to fail closed,
    * never to a fabricated echo.
    *
+   * When the host declares `MastraBackendConfig.storage` (SAA-926 §6.2), it is
+   * wired onto the runtime through {@link wireMastraStorage} before any step
+   * handler registration; the wiring fails closed on an unwired runtime or a
+   * non-durable workflows domain, and the resolved outcome is exposed via
+   * {@link MastraGraphExecutionBackend.storageStatus}.
+   *
    * @param config - The host-injected backend configuration.
    * @throws {GraphExecutionError} when the mastra lane is disabled by the
-   *   environment.
+   *   environment, when the declared storage cannot be wired
+   *   ({@link GRAPH_MASTRA_STORAGE_UNWIRED}), or when the wired storage does
+   *   not resolve a durable workflows domain
+   *   ({@link GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY}).
    */
   async initialize(config: MastraBackendConfig): Promise<void> {
     // SAA-836 S1: the engine boots from Environment config only, and fails
@@ -264,6 +283,14 @@ export class MastraGraphExecutionBackend
     this.managementManager = undefined;
     this.suspendStateReader = config.suspendStateReader;
     this.metricsGateway = undefined;
+    // SAA-926 §6.2: `MastraBackendConfig.storage` was declared but never read,
+    // so a host declaring durable storage silently persisted in-memory. Wire the
+    // declared storage onto the runtime and fail closed when the runtime cannot
+    // accept it or the resolved workflows domain is not durable.
+    this._storageStatus = undefined;
+    if (config.storage !== undefined) {
+      this._storageStatus = await wireMastraStorage(this.runtime, config.storage);
+    }
     if (typeof config.maxResumeBytes === "number" && config.maxResumeBytes > 0) {
       this.maxResumeBytes = config.maxResumeBytes;
     }
@@ -997,13 +1024,33 @@ export class MastraGraphExecutionBackend
     return this.initialized;
   }
 
+  /**
+   * The storage-wiring status resolved by the last {@link initialize} when the
+   * host declared `MastraBackendConfig.storage` (SAA-926 §6.2); `undefined`
+   * when the host declared no storage config. The acceptance seam for the
+   * "storage configured and durable" check: `domains.workflows` must not be
+   * `in-memory`/`absent` on a production host.
+   */
+  get storageStatus(): MastraStorageWiringStatus | undefined {
+    return this._storageStatus;
+  }
+
   private async loadRun(runId: GraphRunId): Promise<MastraRunLike | undefined> {
     const runtime = this.runtime;
     if (!isRecord(runtime)) return undefined;
     const getRun = runtime["getRun"];
-    if (typeof getRun !== "function") return undefined;
-    const run = await (getRun as (id: string) => unknown).call(runtime, runId);
-    return isRecord(run) ? (run as unknown as MastraRunLike) : undefined;
+    if (typeof getRun === "function") {
+      const run = await (getRun as (id: string) => unknown).call(runtime, runId);
+      return isRecord(run) ? (run as unknown as MastraRunLike) : undefined;
+    }
+    // SAA-926 §6.3: @mastra/core 1.77.0 exposes no public `getRun` on the
+    // `Mastra` class, so a plain runtime left resume failing closed. Recover
+    // the resumable run handle through mastra's own restart-recovery pattern:
+    // resolve the persisted run record from the configured storage workflows
+    // domain, then rebind the run id onto the live workflow via
+    // `createRun({ runId })`.
+    const recovered = await recoverMastraRunHandle(runtime, runId);
+    return isRecord(recovered) ? (recovered as unknown as MastraRunLike) : undefined;
   }
 
   private errorPayload(error: unknown): {

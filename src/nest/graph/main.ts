@@ -31,8 +31,19 @@
  *   jobs; without it the backend still boots and serves the manifest, and the
  *   catalogue reports `NOT_SUPPORTED`.
  *
+ * Durable persistence (SAA-926 §6.4): with `GRAPH_DB_DRIVER=postgres` the
+ * standalone host boots the durable TypeORM/Postgres adapter for the five
+ * as-graph decaf tables instead of the development RAM adapter, consuming the
+ * enterprise deployment connection contract. The connection is resolved
+ * exclusively from the environment/Docker secrets — either a full
+ * `GRAPH_DB_URL` DSN, or `GRAPH_DB_HOST`/`GRAPH_DB_PORT`/`GRAPH_DB_USER`/
+ * `GRAPH_DB_DATABASE` plus the password file `GRAPH_DB_PASSWORD_FILE`
+ * (default `/run/secrets/postgres_app_password`, the `mastra_app` runtime
+ * role). The `asgraph` schema is owned by the stack's bootstrap migrations.
+ *
  * Usage: `GRAPH_BACKEND_ENGINE=mastra node lib/cjs/nest/graph/main.cjs [port]`
  */
+import * as fs from "node:fs";
 import { NestFactory } from "@nestjs/core";
 import { GraphExecutionModule } from "./GraphExecutionModule";
 import {
@@ -45,6 +56,76 @@ import { DagsterGraphQLClient } from "../../dagster/DagsterGraphQLClient";
 import { createMastraDefaultStepHandlers } from "../../mastra/MastraDefaultStepHandlers";
 import type { MastraBackendConfig } from "../../mastra/types";
 import type { DagsterClient } from "../../dagster/DagsterTypes";
+import type { Adapter } from "@decaf-ts/core";
+import type { DataSourceOptions } from "typeorm";
+
+const DEFAULT_APP_PASSWORD_SECRET_PATH = "/run/secrets/postgres_app_password";
+/**
+ * Reads the `mastra_app` runtime password from its Docker secret file, when
+ * present. The value is never logged.
+ */
+function readGraphDbPassword(): string | undefined {
+  const path =
+    process.env["GRAPH_DB_PASSWORD_FILE"] ?? DEFAULT_APP_PASSWORD_SECRET_PATH;
+  try {
+    const value = fs.readFileSync(path, "utf8").trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolves the durable Postgres connection from the environment/Docker secrets
+ * (never hard-coded), or `undefined` when the durable lane is not selected.
+ */
+function buildGraphDbDataSourceOptions(): DataSourceOptions | undefined {
+  if (process.env["GRAPH_DB_DRIVER"] !== "postgres") return undefined;
+  const url = process.env["GRAPH_DB_URL"];
+  if (url && url.trim().length > 0) {
+    return {
+      type: "postgres",
+      url: url.trim(),
+      schema: process.env["GRAPH_DB_SCHEMA"] ?? "asgraph",
+      synchronize: false,
+    } as DataSourceOptions;
+  }
+  const host = process.env["GRAPH_DB_HOST"];
+  const user = process.env["GRAPH_DB_USER"];
+  const database = process.env["GRAPH_DB_DATABASE"];
+  const password = readGraphDbPassword();
+  if (!host || !user || !database || !password) {
+    throw new Error(
+      "GRAPH_DB_DRIVER=postgres requires a durable connection: set GRAPH_DB_URL, or GRAPH_DB_HOST/GRAPH_DB_USER/GRAPH_DB_DATABASE plus a readable password secret file (GRAPH_DB_PASSWORD_FILE, default /run/secrets/postgres_app_password)"
+    );
+  }
+  return {
+    type: "postgres",
+    host,
+    port: Number(process.env["GRAPH_DB_PORT"] ?? 5432),
+    username: user,
+    password,
+    database,
+    schema: process.env["GRAPH_DB_SCHEMA"] ?? "asgraph",
+    synchronize: false,
+  } as DataSourceOptions;
+}
+
+/** Boots the durable TypeORM/Postgres adapter when the durable lane is selected.
+ *
+ * The adapter module is imported lazily: it transitively loads
+ * `@decaf-ts/for-typeorm`, whose module-load side effects switch the current
+ * decaf adapter flavour to `type-orm` — that must never happen on the
+ * development RAM lane.
+ */
+async function buildGraphDbAdapter(): Promise<Adapter<any, any, any, any> | undefined> {
+  const dataSourceOptions = buildGraphDbDataSourceOptions();
+  if (!dataSourceOptions) return undefined;
+  const { createTypeormGraphAdapter } = await import("../../typeorm/TypeormGraphAdapter");
+  return createTypeormGraphAdapter({
+    dataSource: dataSourceOptions,
+  });
+}
 
 /** Builds a real `@mastra/core` runtime for the Mastra variant, lazily. */
 async function buildMastraConfig(): Promise<MastraBackendConfig> {
@@ -74,6 +155,10 @@ async function bootstrap(): Promise<void> {
   const variant = graphEngineVariantFromEnv();
   const dagsterClient =
     variant === "dagster" ? buildDagsterClient() : undefined;
+  // SAA-926 §6.4: the durable TypeORM/Postgres adapter replaces the
+  // development RAM adapter when the durable lane is selected; otherwise the
+  // standalone dev posture (`initAdapter: true`) is unchanged.
+  const durableAdapter = await buildGraphDbAdapter();
 
   // Seed the demo workflow fixture registry (`src/workflows`) into whichever
   // engine this driver boots, so the per-engine catalogue and the serving list
@@ -99,7 +184,9 @@ async function bootstrap(): Promise<void> {
         }
       : {}),
     base: {
-      initAdapter: true,
+      ...(durableAdapter
+        ? { valueAdapter: durableAdapter }
+        : { initAdapter: true }),
       runs: { auth: "optional", allowAnonymousAccess: true },
       workflows: { auth: "optional", allowAnonymousAccess: true },
       catalogue: { auth: "optional" },

@@ -44,6 +44,8 @@ export * from "./MastraWorkflowCompiler";
 export * from "./MastraDefaultStepHandlers";
 export * from "./MastraWorkflowManager";
 export * from "./MastraResumeGuard";
+export * from "./MastraStorageWiring";
+export * from "./MastraRunRecovery";
 export * from "./MastraGraphExecutionBackend";
 export * from "./MastraMetricsModels";
 export * from "./MastraEvalModels";

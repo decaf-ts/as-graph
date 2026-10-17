@@ -8,7 +8,14 @@
  * decorated class, mirroring {@link GraphWorkflowModel} and {@link GraphRunModel}.
  */
 import { model } from "@decaf-ts/decorator-validation";
-import { BaseModel, column, index, pk, table } from "@decaf-ts/core";
+import {
+  BaseModel,
+  column,
+  index,
+  noValidateOnUpdate,
+  pk,
+  table,
+} from "@decaf-ts/core";
 import type { GraphNodeManifest } from "./catalog";
 
 /**
@@ -46,6 +53,14 @@ export class GraphNodeModel extends BaseModel {
   /** Full JSON-safe manifest for the kind. */
   @column()
   manifest?: GraphNodeManifest;
+
+  /**
+   * Inherited `createdAt` audit column, redeclared with
+   * {@link noValidateOnUpdate} so an update never mutates the creation
+   * timestamp.
+   */
+  @noValidateOnUpdate()
+  override createdAt!: Date;
 
   constructor(arg?: Partial<GraphNodeModel>) {
     super(arg);

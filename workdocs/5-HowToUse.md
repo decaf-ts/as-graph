@@ -26,6 +26,7 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/shared` | UI-known contracts: `@node`/`@graph`/`@port` decorators, the canonical `GraphWorkflowDocument` and its builder/reader/serializer, manifest catalogue types, the persistable `GraphNodeModel` catalogue row with its manifest converters, constants, and frontend-safe execution-state projections |
 | `@decaf-ts/as-graph/nest` | NestJS HTTP/SSE wiring: catalogue, workflow persistence and run-lifecycle controllers |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `GraphNodeRepository` node-kind rows, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
+| `@decaf-ts/as-graph/typeorm` | Durable production persistence: `createTypeormGraphAdapter({ dataSource })` — a `@decaf-ts/for-typeorm` Postgres adapter factory for the five as-graph decaf tables plus the mastra-layer decaf models (flavoured for the durable lane, `jsonb`-pinned structured columns, `synchronize: false`, bootstrap-owned DDL). See [Durable Postgres lane](#durable-postgres-lane-decaf-tsas-graphtypeorm) |
 | `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract) |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
@@ -53,6 +54,11 @@ The `exports` map in `package.json` is:
       "import": { "types": "./lib/types/ram/index.d.mts", "default": "./lib/esm/ram/index.js" },
       "require": { "types": "./lib/types/ram/index.d.cts", "default": "./lib/cjs/ram/index.cjs" },
       "default": "./lib/esm/ram/index.js"
+    },
+    "./typeorm": {
+      "import": { "types": "./lib/types/typeorm/index.d.mts", "default": "./lib/esm/typeorm/index.js" },
+      "require": { "types": "./lib/types/typeorm/index.d.cts", "default": "./lib/cjs/typeorm/index.cjs" },
+      "default": "./lib/esm/typeorm/index.js"
     },
     "./mastra": {
       "import": { "types": "./lib/types/mastra/index.d.mts", "default": "./lib/esm/mastra/index.js" },
@@ -370,12 +376,40 @@ await backend.initialize({
   resolveChannelAdapter, sendChannelResponse, // optional channel wiring — omitting them makes `core.agent.trigger.*`/`response.*` fail closed (`GRAPH_MASTRA_CHANNEL_UNAVAILABLE`)
   resolveVoice,           // optional voice wiring — omitting it makes `core.agent.voice` fail closed (`GRAPH_MASTRA_VOICE_UNAVAILABLE`)
   persistence,            // optional per-layer persistence surface (replays/cache/pins), overriding the `MASTRA__PERSISTENCE__*` env defaults
+  storage,                // optional Mastra storage for the runtime — applied and verified back; see storage wiring below
   suspendStateReader,     // optional, for suspend/resume runs
   maxResumeBytes,         // optional resume payload byte cap
   terminalTimeoutMs,      // optional run-level terminal timeout
 });
 // pass `backend` via GraphExecutionEngineConfig.backend
 ```
+
+**Explicit storage wiring (SAA-926 §6.2).** The optional `storage` config
+member is applied to the wired `@mastra/core` runtime through its
+`setStorage` surface and then verified back through `getStorage()`:
+the wiring fails closed with `GRAPH_MASTRA_STORAGE_UNWIRED` when the runtime
+is not a Mastra instance or exposes no `setStorage` surface (a silently
+ignored declared storage would fall back to in-memory persistence), and with
+`GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY` when the resolved workflows domain is
+absent or silently in-memory — a composite storage that misses the workflows
+domain loses suspend/resume snapshots on restart. The only accepted path to
+an in-memory workflows domain is the host explicitly declaring an
+`InMemoryStore`. `backend.storageStatus` exposes the resolved outcome
+(`{ wired, explicitInMemory, domains: { workflows: "durable" | "in-memory" |
+"absent" } }`; `undefined` when no storage config was declared): production
+hosts must configure Mastra storage explicitly and durably, i.e.
+`storageStatus.domains.workflows === "durable"`.
+
+**Resume run recovery (SAA-926 §6.3).** `@mastra/core` 1.77.0 exposes no
+public `getRun` on the `Mastra` class, so resume on a plain runtime used to
+fail closed. The backend's run loading now falls back to
+`recoverMastraRunHandle` — mastra's own restart-recovery pattern: resolve the
+persisted run record from the configured storage's workflows domain
+(`getWorkflowRunById`) to learn the workflow name, then rebind the run id
+onto the live workflow via `createRun({ runId })`. Hosts can wrap their own
+`getRun` with `createMastraGetRunWrapper(runtime)`, which delegates to a
+runtime-provided `getRun` when present and otherwise recovers the handle the
+same way.
 
 `core.agent` executes as a real mastra agent step (no degraded echo): the backend builds the agent
 step handler from an explicit `agentRuntime`, or from `createAgent`/`agents` (consulted in that
@@ -595,7 +629,7 @@ Run lifecycle and cached/pinned-value persistence always flows through Decaf rep
 | `GraphValueModel` / `GraphValueRepository` | Cached/pinned graph values (must survive restarts for pinning), persisted as `graph_value` rows; per-execution runtime values are not persisted |
 | `GraphNodeRepository` | Node-kind catalogue rows (one row per registered kind, persisted as `graph_node`); the `GraphNodeModel` row class lives in `./shared` so backend stores and UI listing/forms share it |
 | `RamGraphRunStore` / `RamGraphRunEventStore` | Adapter-backed `GraphRunStore`/`GraphRunEventStore` implementations; construct with an initialized adapter |
-| `createRamGraphAdapter(alias?)` | Creates and initializes a `RamAdapter` (tests); production passes a durable adapter (e.g. TypeORM) |
+| `createRamGraphAdapter(alias?)` | Creates and initializes a `RamAdapter` (tests); production passes a durable adapter — see [Durable Postgres lane](#durable-postgres-lane-decaf-tsas-graphtypeorm) |
 | `createGraphValueRepository(adapter)` | Factory for a fresh `GraphValueRepository` instance over the provided adapter |
 
 ```typescript
@@ -610,6 +644,50 @@ are in-process test doubles for the SSE/concurrency test suites; they are not ex
 and must not be used as production persistence. In a NestJS host,
 `GraphExecutionModule.forRoot({ valueAdapter, runAdapter })` wires these adapter-backed stores
 automatically (see [NestJS](#nestjs)).
+
+#### Durable Postgres lane (`@decaf-ts/as-graph/typeorm`)
+
+The stores never create an adapter implicitly: development boots persist through the built-in
+`RamAdapter` (`./ram`), while production hosts must supply a durable adapter for the five as-graph
+decaf tables (`graph_workflow`, `graph_run`, `graph_run_event`, `graph_node`, `graph_value`) plus the
+mastra-layer decaf models. The `./typeorm` export is the durable production path (SAA-926 §6.4):
+`createTypeormGraphAdapter({ dataSource })` builds and initializes a `@decaf-ts/for-typeorm` Postgres
+adapter and registers it as the current decaf adapter, so the engine's repositories resolve the
+flavoured entities.
+
+The factory enforces the production contract on the host config (fail-closed):
+
+- `type: "postgres"` only — the durable as-graph production path is Postgres.
+- `synchronize: false` only — the `asgraph` schema is owned by the stack's bootstrap migrations
+  (executed by the `db-migrate` one-shot service as the `mastra_migrator` role); the least-privilege
+  `mastra_app` runtime role must never mutate it, and the factory force-sets the flag regardless.
+- Credentials are resolved by the host from its environment or Docker secrets — never hard-coded.
+- The as-graph decaf models are flavoured for TypeORM explicitly, their model modules are imported
+  lazily (importing `./typeorm` never flips a development RAM boot sharing the process), structured
+  Object/Array decaf columns are pinned to `jsonb` so the runtime shape matches the bootstrap DDL 1:1,
+  and the model class is canonicalized before TypeORM entity resolution.
+
+```typescript
+import { createTypeormGraphAdapter } from "@decaf-ts/as-graph/typeorm";
+
+const adapter = await createTypeormGraphAdapter({
+  dataSource: {
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    username: "mastra_app",
+    password: /* resolved by the host from its environment or Docker secrets */,
+    database: "mastra",
+    schema: "asgraph",
+    synchronize: false,
+  },
+});
+```
+
+The standalone host selects this lane with `GRAPH_DB_DRIVER=postgres` — the connection is resolved
+from the environment/Docker secrets (`GRAPH_DB_URL`, or `GRAPH_DB_HOST`/`GRAPH_DB_PORT`/
+`GRAPH_DB_USER`/`GRAPH_DB_DATABASE` plus `GRAPH_DB_PASSWORD_FILE`; see the standalone-host
+environment table under [Running each backend + UI combination](#running-each-backend--ui-combination)).
 
 #### Consuming `shared` from a UI
 
@@ -761,6 +839,11 @@ the backend and the UI together with `concurrently`.
 | `GRAPH_BACKEND_PORT` | `3000` | Backend HTTP port (the standalone binary also accepts the port as its first argument) |
 | `DAGSTER_GRAPHQL_URL` | unset | Read-only Dagster client target. Without it the dagster backend still boots and serves the manifest, but the catalogue reports `NOT_SUPPORTED` (`501`) |
 | `DAGSTER_EXECUTION_ENABLED` | `false` | Opt-in gate for launching/replaying existing Dagster runs |
+| `GRAPH_DB_DRIVER` | unset | `postgres` boots the durable TypeORM/Postgres adapter (SAA-926 §6.4); anything else keeps the development `RamAdapter` posture |
+| `GRAPH_DB_URL` | unset | Full Postgres DSN for the durable lane — an alternative to the parts below plus the password file |
+| `GRAPH_DB_HOST` / `GRAPH_DB_PORT` / `GRAPH_DB_USER` / `GRAPH_DB_DATABASE` | — / `5432` | Durable-lane connection parts used when `GRAPH_DB_URL` is unset; an incomplete set fails closed at boot |
+| `GRAPH_DB_PASSWORD_FILE` | `/run/secrets/postgres_app_password` | Docker secret file carrying the `mastra_app` runtime password (the value is never logged) |
+| `GRAPH_DB_SCHEMA` | `asgraph` | Postgres schema owning the as-graph decaf tables |
 | `GRAPH_BACKEND_URL` | `http://localhost:3000` | for-angular injection token for the backend base URL (a provider override, not an env var) |
 
 The host binds to `127.0.0.1` and only admits `http://localhost`/`http://127.0.0.1` CORS origins
@@ -810,7 +893,12 @@ layers) and the langfuse credentials (`LANGFUSE_PUBLIC_KEY` /
 `LANGFUSE_SECRET_KEY` in `.env.secret`) — the observability lane is on by
 default and fails closed without them; disable it with
 `MASTRA__OBSERVABILITY__ENABLED=false`. The host lazily builds a real
-`@mastra/core` runtime.
+`@mastra/core` runtime. The standalone host's mastra wiring declares an
+explicit `InMemoryStore` (development posture); a production host must
+configure Mastra storage explicitly and durably through
+`MastraBackendConfig.storage` and verify
+`backend.storageStatus.domains.workflows === "durable"` (see the
+[Mastra backend](#mastra-backend-decaf-tsas-graphmastra) section).
 
 ```bash
 npm run start:backend:mastra                  # engine: mastra, still on :3000
