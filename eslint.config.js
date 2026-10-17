@@ -17,6 +17,7 @@ export default [
       "!tests/**/*",
       "tests/bundling/**/*",
       "tests/web/**/*",
+      "n8n/**/*",
     ],
   },
   { languageOptions: { globals: globals.browser } },

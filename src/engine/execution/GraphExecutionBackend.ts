@@ -114,6 +114,19 @@ export interface GraphBackendWorkflowStore {
     document: GraphWorkflowDocument,
     ...args: MaybeContextualArg<Context>
   ): Promise<unknown>;
+  /**
+   * Boot-seed surface: persists a canonical workflow document, treating an
+   * existing foreign-owned row as a skip rather than a hard failure (F2
+   * availability fix). Optional; when present the local backend prefers it over
+   * {@link saveDocument} for its host-boot seed so a fixture id a durable store
+   * already holds as a user-owned row cannot fail host bootstrap. Request-path
+   * writes never use it — they stay fail-closed through `saveDocument`.
+   */
+  seedDocument?(
+    workflowId: string,
+    document: GraphWorkflowDocument,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<unknown>;
 }
 
 /**

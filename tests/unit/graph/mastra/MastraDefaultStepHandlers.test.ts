@@ -1,6 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/mastra/MastraDefaultStepHandlers
- * @summary Driver tests for the SAA-810 `MastraDefaultStepHandlers` fix (SAA-820).
+ * @summary Driver tests for the SAA-810 `MastraDefaultStepHandlers` fix (SAA-820,
+ * hardened in SAA-824).
  * @description Proves the host-provided default handler set covers every built-in
  * leaf kind with exactly one handler each, that compiling a canonical document
  * containing every kind yields a step keyed by the node id whose execution
@@ -9,6 +10,12 @@
  * compiler still fails closed with `GRAPH_MASTRA_UNSUPPORTED_KIND` when no
  * handler is registered, and that the corrected canonical `core.loop.*` kind
  * constants translate loop documents instead of failing closed.
+ *
+ * SAA-824 extends the suite with the hardening regressions: an oversized
+ * `core.flow.delay` `timeoutMs` is clamped before `setTimeout` and terminates
+ * within `maxDelayMs`, a mid-wait `abortSignal` ends the delay promptly,
+ * `core.utility.code` fails closed, and `core.agent` returns its forwarded input
+ * with the reserved degraded marker.
  */
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import {
@@ -18,7 +25,10 @@ import {
 } from "../../../../src/mastra/MastraWorkflowCompiler";
 import {
   createMastraDefaultStepHandlers,
+  DEFAULT_MASTRA_DELAY_MAX_MS,
   MASTRA_DEFAULT_STEP_HANDLER_KINDS,
+  MASTRA_DEGRADED_OUTPUT_KEY,
+  MASTRA_MAX_SET_TIMEOUT_MS,
 } from "../../../../src/mastra/MastraDefaultStepHandlers";
 import { GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../../src/mastra/types";
 import { document, node } from "../../../../src/workflows/builders";
@@ -26,10 +36,13 @@ import { foreachBreakDocument } from "../../../../src/workflows/foreach-break.wo
 import { loopsWhileUntilDocument } from "../../../../src/workflows/loops-while-until.workflow";
 import { graphCodeOf } from "./helpers";
 
-/** The step shape this suite exercises (only `id`/`execute` are used). */
+/** The step shape this suite exercises (`id`/`execute`; `abortSignal` for F1). */
 interface ExecutableStep {
   id: string;
-  execute: (args: { inputData?: unknown }) => Promise<unknown>;
+  execute: (args: {
+    inputData?: unknown;
+    abortSignal?: AbortSignal;
+  }) => Promise<unknown>;
 }
 
 /** Deterministic node id for the document slot of a given kind. */
@@ -107,13 +120,35 @@ describe("MastraDefaultStepHandlers — handler set (SAA-820)", () => {
 
     for (const kind of MASTRA_DEFAULT_STEP_HANDLER_KINDS) {
       const step = compiled.steps.get(nodeIdOf(kind)) as ExecutableStep;
-      const output = await step.execute({ inputData: input });
       if (kind === "value") {
+        const output = await step.execute({ inputData: input });
         expect({ kind, output }).toEqual({
           kind,
           output: { value: "configured-value" },
         });
+      } else if (kind === "core.utility.code") {
+        // SAA-824 F2: the code kind now fails closed at execute time instead of
+        // forwarding its input.
+        await expect(
+          step.execute({ inputData: input })
+        ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_UNSUPPORTED_KIND });
+      } else if (kind === "core.agent") {
+        // SAA-824 F3: the agent kind forwards its input plus a reserved
+        // degraded marker, instead of a silent pass-through.
+        const output = (await step.execute({ inputData: input })) as Record<
+          string,
+          unknown
+        >;
+        expect(output).toEqual({
+          ...input,
+          [MASTRA_DEGRADED_OUTPUT_KEY]: {
+            kind: "core.agent",
+            nodeId: nodeIdOf("core.agent"),
+            reason: expect.any(String),
+          },
+        });
       } else {
+        const output = await step.execute({ inputData: input });
         expect({ kind, output }).toEqual({ kind, output: input });
       }
     }
@@ -221,5 +256,112 @@ describe("MastraDefaultStepHandlers — canonical loop kinds (SAA-820)", () => {
     expect(graphCodeOf(() => compiler.compile(stale))).toBe(
       GRAPH_MASTRA_UNSUPPORTED_KIND
     );
+  });
+});
+
+/** A canonical document with a single node of the given kind. */
+function singleKindDocument(
+  id: string,
+  kind: string,
+  parameters: Record<string, unknown> = {}
+) {
+  return document({ id, name: id, nodes: [node("target", kind, parameters)] });
+}
+
+/** Compiles a single node of `kind` and returns its executable step. */
+function compileSingleStep(
+  kind: string,
+  parameters: Record<string, unknown> = {},
+  options: { maxDelayMs?: number } = {}
+): ExecutableStep {
+  const compiler = new MastraWorkflowCompiler({
+    stepHandlers: createMastraDefaultStepHandlers(options),
+  });
+  const compiled = compiler.compile(
+    singleKindDocument(`saa-824-${kind}`, kind, parameters)
+  );
+  return compiled.steps.get("target") as ExecutableStep;
+}
+
+describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
+  it("pins the exported clamp and degraded-output constants", () => {
+    expect(MASTRA_MAX_SET_TIMEOUT_MS).toBe(2_147_483_647);
+    expect(DEFAULT_MASTRA_DELAY_MAX_MS).toBe(60_000);
+    expect(MASTRA_DEGRADED_OUTPUT_KEY).toBe("__mastraDegraded");
+  });
+
+  it("clamps an oversized timeoutMs before setTimeout, terminating within maxDelayMs", async () => {
+    // Regression for SAA-822: a `timeoutMs` at/above `2^31 - 1` must be clamped
+    // BEFORE `setTimeout`. Node's `setTimeout` collapses any delay above
+    // `MASTRA_MAX_SET_TIMEOUT_MS` to ~1ms (TimeoutOverflowWarning), so an
+    // unclamped oversized value would resolve in roughly a millisecond. Waiting
+    // at least half the configured cap proves the declared value was bounded to
+    // the cap before it ever reached `setTimeout`; waiting well under a second
+    // proves the delay terminated as capped.
+    const cap = 50;
+    const step = compileSingleStep(
+      "core.flow.delay",
+      { timeoutMs: MASTRA_MAX_SET_TIMEOUT_MS },
+      { maxDelayMs: cap }
+    );
+
+    const startedAt = Date.now();
+    const output = await step.execute({ inputData: { alpha: 1 } });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(output).toEqual({ alpha: 1 });
+    expect(elapsedMs).toBeGreaterThanOrEqual(cap / 2);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
+  it("resolves promptly when a mid-wait abortSignal aborts the delay step", async () => {
+    const requestedMs = 5_000;
+    const abortAfterMs = 30;
+    const step = compileSingleStep(
+      "core.flow.delay",
+      { timeoutMs: requestedMs },
+      { maxDelayMs: DEFAULT_MASTRA_DELAY_MAX_MS }
+    );
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), abortAfterMs);
+
+    const startedAt = Date.now();
+    const output = await step.execute({
+      inputData: { alpha: 1 },
+      abortSignal: controller.signal,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    clearTimeout(abortTimer);
+
+    expect(output).toEqual({ alpha: 1 });
+    // Ends long before the requested wait, proving the step honoured the abort
+    // and cleared its timer instead of leaving a detached 5s timeout behind
+    // (the suite runs under `--detectOpenHandles`).
+    expect(elapsedMs).toBeLessThan(requestedMs / 2);
+  });
+
+  it("fails a compiled core.utility.code step closed with GRAPH_MASTRA_UNSUPPORTED_KIND", async () => {
+    const step = compileSingleStep("core.utility.code", {});
+
+    await expect(step.execute({ inputData: { alpha: 1 } })).rejects.toMatchObject(
+      { graphCode: GRAPH_MASTRA_UNSUPPORTED_KIND }
+    );
+  });
+
+  it("returns a core.agent step's forwarded input with the reserved degraded marker", async () => {
+    const step = compileSingleStep("core.agent", {});
+
+    const output = (await step.execute({
+      inputData: { alpha: 1 },
+    })) as Record<string, unknown>;
+
+    expect(output).toEqual({
+      alpha: 1,
+      [MASTRA_DEGRADED_OUTPUT_KEY]: {
+        kind: "core.agent",
+        nodeId: "target",
+        reason: expect.any(String),
+      },
+    });
   });
 });

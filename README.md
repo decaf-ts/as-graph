@@ -144,10 +144,10 @@ npm install @decaf-ts/as-graph
 
 | Import | Contains |
 | --- | --- |
-| `@decaf-ts/as-graph` | Backend engine: `GraphExecutionEngine`, planning, validation, auth, loops, pinning, run lifecycle, value store, and the built-in node classes |
-| `@decaf-ts/as-graph/shared` | UI-known contracts: `@node`/`@graph`/`@port` decorators, the canonical `GraphWorkflowDocument` and its builder/reader/serializer, manifest catalogue types, constants, and frontend-safe execution-state projections |
+| `@decaf-ts/as-graph` | Backend engine: `GraphExecutionEngine`, planning, validation, auth, loops, pinning, run lifecycle, value store, the built-in node classes, and the node-kind persistence service (`GraphNodeModelService`) |
+| `@decaf-ts/as-graph/shared` | UI-known contracts: `@node`/`@graph`/`@port` decorators, the canonical `GraphWorkflowDocument` and its builder/reader/serializer, manifest catalogue types, the persistable `GraphNodeModel` catalogue row with its manifest converters, constants, and frontend-safe execution-state projections |
 | `@decaf-ts/as-graph/nest` | NestJS HTTP/SSE wiring: catalogue, workflow persistence and run-lifecycle controllers |
-| `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
+| `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `GraphNodeRepository` node-kind rows, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
 | `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table. Runs canonical documents on a host-injected `@mastra/core` runtime (pinned `1.74.0`) |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
@@ -407,7 +407,7 @@ A backend declares its contract to the facade:
 | `local` | Whether the backend executes in-process. |
 | `codeMode` | `"hostSide"` (code-mode surfaces run through the facade-owned sandbox evaluator) or `"unsupported"`. The facade fails closed with `GRAPH_CODE_MODE_UNSUPPORTED_BACKEND` before delegating a code-mode workflow to any backend that is not local and not `"hostSide"`. |
 | `capabilities` | Optional `GraphBackendCapabilities` (`codeMode` plus `workflows: { list, get }`). When omitted, the facade derives them from the declared `codeMode` and the presence of the optional `listWorkflows`/`getWorkflow` methods (`resolveGraphBackendCapabilities`), so an unsupported operation is reported as `not_supported` instead of silently returning an empty result. |
-| optional methods | `listWorkflows` / `getWorkflow` (workflow catalogue seam), `cancel`, `resume`, `release`, `dispose`. |
+| optional methods | `listWorkflows` / `getWorkflow` (workflow catalogue seam), `seedWorkflows` (workflow seeding seam), `cancel`, `resume`, `release`, `dispose`. |
 
 Engine-level reads of the active backend: `engine.backend`,
 `engine.backendCapabilities`, `engine.listWorkflows()` (active backend),
@@ -415,6 +415,30 @@ and the flavour-scoped `engine.listEngineWorkflows(flavour)` /
 `engine.getEngineWorkflow(flavour, workflowId)` counterparts, which fail closed
 with `GRAPH_EXECUTION_BACKEND_NOT_REGISTERED` (unknown flavour) or
 `GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED` (no listing/lookup support).
+
+##### Workflow seeding
+
+Every backend exposes an optional `seedWorkflows(documents)` seam so a host can
+register canonical `GraphWorkflowDocument`s into the driver's own persistence at
+boot — each driver seeds into its own storage and serves the seeded entries
+through its normal `listWorkflows`/`getWorkflow` path:
+
+- `local` persists each document through the wired `workflowStore` write path
+  (`saveDocument`), so seeding honours the same boundary validation and
+  ownership rules as any other write, and fails closed with
+  `GRAPH_BACKEND_SEED_NOT_SUPPORTED` when no writable store is configured.
+- `mastra` registers the documents in its compiled-workflow cache, so seeded
+  entries are served exactly like a workflow recorded by `execute`; seeded
+  entries are owner-less and therefore visible to every caller.
+- `dagster` adds the documents to its read-only catalogue map alongside the
+  deployment's jobs — a host boot action, never an authoring surface: authoring
+  capabilities stay `not_supported`.
+
+The engine facade wires it at boot: passing
+`seedWorkflows: GraphWorkflowDocument[]` in the `GraphExecutionEngineConfig`
+(or `GraphExecutionModuleOptions.seedWorkflows` for the NestJS module) makes the
+engine call the active backend's `seedWorkflows` during `boot()`, failing closed
+with `GRAPH_BACKEND_SEED_NOT_SUPPORTED` when the backend does not implement it.
 
 ##### Mastra backend (`@decaf-ts/as-graph/mastra`)
 
@@ -492,6 +516,7 @@ Run lifecycle and cached/pinned-value persistence always flows through Decaf rep
 | `GraphRunModel` / `GraphRunRepository` | Run lifecycle records (durable run history), persisted as `graph_run` rows |
 | `GraphRunEventModel` / `GraphRunEventRepository` | Run event envelopes (SSE replay/audit), persisted as `graph_run_event` rows; live subscribers stay in-process |
 | `GraphValueModel` / `GraphValueRepository` | Cached/pinned graph values (must survive restarts for pinning), persisted as `graph_value` rows; per-execution runtime values are not persisted |
+| `GraphNodeRepository` | Node-kind catalogue rows (one row per registered kind, persisted as `graph_node`); the `GraphNodeModel` row class lives in `./shared` so backend stores and UI listing/forms share it |
 | `RamGraphRunStore` / `RamGraphRunEventStore` | Adapter-backed `GraphRunStore`/`GraphRunEventStore` implementations; construct with an initialized adapter |
 | `createRamGraphAdapter(alias?)` | Creates and initializes a `RamAdapter` (tests); production passes a durable adapter (e.g. TypeORM) |
 | `createGraphValueRepository(adapter)` | Factory for a fresh `GraphValueRepository` instance over the provided adapter |
@@ -549,6 +574,12 @@ summaries, `POST /graph/workflows/validate`), the asynchronous run lifecycle (`P
 The engine provider is a Decaf `ClientBasedService`: the module constructs `new GraphExecutionEngine()`
 and initializes it with `await engine.boot(config)`.
 
+The module also mirrors the populated node catalogue into repository-backed rows at boot: a
+`GraphNodeModelService` provider upserts every registered node-kind manifest as a `GraphNodeModel`
+row (`syncFromCatalogue`), so node kinds are exposed through repository/adapter CRUD and listing
+(`GraphNodeRepository`) for whichever engine the host booted — mirroring the
+`GraphWorkflowService`/`GraphRunModelService` persistence pattern.
+
 The engine capability API serves a statically-derived, boot-time capability manifest
 (`GraphEngineCapabilityService`): it is built once from the backends registered in the
 `GraphExecutionBackendRegistry`, only allowlisted flavours (`local`, `mastra`, `dagster`) are advertised,
@@ -590,6 +621,7 @@ an authenticated owner user is rejected with `401`) and can be relaxed to `"opti
 | `initAdapter` / `adapterUser` | Secure-default adapter bootstrap: only `initAdapter: true` installs a standalone `RamAdapter`; otherwise the host must have configured a Decaf adapter via `DecafModule.forRoot(...)`, and construction fails closed with a `GraphStoreError` when none is current |
 | `valueAdapter` | Adapter backing cached/pinned value persistence; falls back to the globally configured adapter (`Adapter.current`) |
 | `runAdapter` | Adapter backing run and run-event persistence; falls back to `valueAdapter`, then to `Adapter.current`. Runs and run events always persist through the adapter-backed `@repository()` stores (`RamGraphRunStore` / `RamGraphRunEventStore`) — never a process-local map |
+| `seedWorkflows` | Canonical workflow documents seeded into the active backend at boot through the backend's `seedWorkflows` seam (see [Workflow seeding](#workflow-seeding)) |
 | `credentialAuthorizer` | Stage-8 credential existence/authorization hook wired into the engine's document validator; without it, credential checks are shape/type-only |
 | `authHandler` | `AuthHandler` class installed via `DecafAuthModule.forRoot` (the for-nest pattern; typical values: `KeycloakAuthHandler` / `KeycloakNamespaceAuthHandler` from `@decaf-ts/integrations/nest`). It primes every request context with the authenticated `user` / `roles` / `namespaces` / `organization`, which `GraphAuthValidator` authorizes each workflow and node against |
 | `authGlobal` | When `true` (default when `authHandler` is set), the auth interceptor is registered globally; `false` installs the handler without a global interceptor (routes opt in with `@Auth()`) |
@@ -652,6 +684,18 @@ the backend and the UI together with `concurrently`.
 The host binds to `127.0.0.1` and only admits `http://localhost`/`http://127.0.0.1` CORS origins
 (development posture, SAA-595 F5).
 
+##### Demo workflow seeding
+
+The standalone host seeds the demo workflow fixture registry into whichever
+engine it boots: `loadGraphDemoWorkflows()` (exported from
+`@decaf-ts/as-graph/nest`) imports the `graphWorkflowFixtures` registry from
+`src/workflows` and passes its canonical documents as `seedWorkflows`, so each
+driver's catalogue lists the full fixture set out of the box. The registry is
+test-only content — `npm pack` excludes `lib/**/workflows` — so a
+release-packaged host boots with an empty seed set and its catalogues behave
+exactly as before (the mastra catalogue starts empty; the dagster catalogue
+needs a wired client).
+
 ##### Standard (local engine)
 
 No backing service. Build the backend, boot it, and run the UI in a second terminal:
@@ -669,8 +713,8 @@ Verify the backend advertises the local engine:
 curl -s http://127.0.0.1:3000/graph/engines   # .defaultEngineId == "local"
 ```
 
-Open the graph route (`http://localhost:8110/graph`); the workflow table lists the workflows
-persisted in the backend's local engine store.
+Open the workflow catalog (`http://localhost:8110/workflows`); the workflow table lists the
+workflows persisted in the backend's local engine store, including the seeded demo fixture set.
 
 ##### Mastra
 
@@ -681,9 +725,10 @@ resolved by `npm install` in `as-graph`. The host lazily builds a real `@mastra/
 npm run start:backend:mastra                  # engine: mastra, still on :3000
 ```
 
-The Mastra catalogue lists workflows already compiled/executed in the process (its
-`workflowList`/`workflowLookup` capability), so `GET /graph/engines/mastra/workflows` returns `[]`
-until a workflow is run. The manifest advertises the mastra engine and its per-feature verdicts.
+The Mastra catalogue lists the workflows registered in the process: the seeded demo fixture set
+(see [Demo workflow seeding](#demo-workflow-seeding)) plus every workflow already compiled/executed
+in the process (its `workflowList`/`workflowLookup` capability). The manifest advertises the mastra
+engine and its per-feature verdicts.
 
 ##### Dagster
 
@@ -698,8 +743,9 @@ DAGSTER_GRAPHQL_URL=http://127.0.0.1:3300/graphql npm run start:backend:dagster
 npm run teardown-it-tests                     # when done
 ```
 
-Without `DAGSTER_GRAPHQL_URL` the dagster host still boots and serves the manifest; its catalogue
-answers `501` (`NOT_SUPPORTED`). To run against an already-running Dagster, set
+Without `DAGSTER_GRAPHQL_URL` the dagster host still boots and serves the manifest; with the
+seeded fixture set its catalogue lists those fixtures read-only, while a release-packaged host
+with an empty seed set answers `501` (`NOT_SUPPORTED`). To run against an already-running Dagster, set
 `DAGSTER_GRAPHQL_URL` yourself and skip `prepare-it-tests`.
 
 > **Environment note (CI sandbox):** inside a container (`/.dockerenv`), the fixture joins the
@@ -713,7 +759,7 @@ answers `501` (`NOT_SUPPORTED`). To run against an already-running Dagster, set
 
 1. `GET /graph/engines` returns the manifest with `defaultEngineId` equal to the booted variant.
 2. `GET /graph/engines/{engineId}/workflows` returns that engine's catalogue (`200`), or `501` when
-   the engine declares no listing support (dagster without a client).
+   the engine declares no listing support (dagster without a client and without seeded fixtures).
 3. In the UI the workflow table shows the catalogue rows and gates create/run/save per the manifest
    verdicts; switching variants requires no UI code change.
 
@@ -734,7 +780,7 @@ is absent.
 
 | Script | Purpose |
 | --- | --- |
-| `npm run build` / `build:prod` | Compile ESM + CJS + types |
+| `npm run build` / `build:prod` | Compile ESM + CJS + types; `postbuild`/`postbuild:prod` run the `check:emitted-specifiers` guard, which fails the build when any relative module specifier in the emitted `lib/cjs`/`lib/esm` output does not resolve |
 | `npm run start:backend` / `start:backend:local` | Boot the standalone host with the built-in local engine (`:3000`) |
 | `npm run start:backend:mastra` | Boot the standalone host with the Mastra engine (`GRAPH_BACKEND_ENGINE=mastra`) |
 | `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |

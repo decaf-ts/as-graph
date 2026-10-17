@@ -438,9 +438,10 @@ export class DagsterGraphExecutionBackend
 
   /**
    * Lists the seeded fixture catalogue plus the deployment's Dagster jobs
-   * through the client port. Seeded fixtures (owner-less, read-only) always
-   * appear; deployment jobs are appended when a client port exposes job
-   * listing, de-duplicated by id.
+   * through the client port. Seeded fixtures (owner-less, read-only) appear for
+   * ids the deployment does not define; a deployment job whose name collides with
+   * a seeded fixture replaces that fixture (F6), so the real job stays reachable
+   * from the listing as well as from {@link getWorkflow}.
    *
    * @returns Real workflow summaries.
    * @throws {GraphExecutionError} when there is nothing to list: no seeded
@@ -465,15 +466,18 @@ export class DagsterGraphExecutionBackend
       );
     }
     const jobs = await client.listJobs();
-    const known = new Set(seeded.map((summary) => summary.id));
-    const deploymentJobs = jobs
-      .filter((job) => !known.has(job.name))
-      .map((job) => ({
-        id: job.name,
-        name: job.name,
-        ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
-      }));
-    return [...seeded, ...deploymentJobs];
+    // The real deployment is authoritative on an id collision (F6): a deployment
+    // job replaces a seeded fixture sharing its id.
+    const deploymentJobs = jobs.map((job) => ({
+      id: job.name,
+      name: job.name,
+      ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
+    }));
+    const deploymentIds = new Set(deploymentJobs.map((job) => job.id));
+    const seededOnly = seeded.filter(
+      (summary) => !deploymentIds.has(summary.id)
+    );
+    return [...seededOnly, ...deploymentJobs];
   }
 
   /**
@@ -504,22 +508,57 @@ export class DagsterGraphExecutionBackend
    * its ACTUAL deployment structure (graph/op structure, asset keys,
    * schedules/sensors) into the canonical document shape.
    *
+   * The real deployment is authoritative on an id collision (F6): when the
+   * deployment defines a job whose name matches the requested id, the deployment
+   * job is served even if a seeded fixture shares that id, so a real job can never
+   * be shadowed by the boot seed. A seeded document is returned only for ids the
+   * deployment does not define (or when no client port is wired).
+   *
    * @param workflowId - The canonical workflow id (the Dagster job name).
-   * @returns A canonical document describing the existing job.
-   * @throws {GraphExecutionError} when the client port exposes no job lookup.
+   * @returns A canonical document describing the existing job, or the seeded fixture.
+   * @throws {GraphExecutionError} when no client is wired and the id is not seeded, or when the client port exposes no job lookup.
    */
   async getWorkflow(workflowId: string): Promise<GraphWorkflowDocument> {
     const seeded = this.seeded.get(workflowId);
+    const client = this.client;
+
+    if (client && typeof client.getJob === "function") {
+      // Consult the deployment before falling back to the seed so a deployment
+      // job that shares a fixture id stays reachable through the graph API (F6).
+      if (!seeded || (await this.deploymentDefinesJob(workflowId))) {
+        return dagsterJobDocument(await client.getJob(workflowId));
+      }
+      return seeded;
+    }
+
     if (seeded) return seeded;
-    const client = this.requireClient();
-    if (typeof client.getJob !== "function") {
+
+    const required = this.requireClient();
+    if (typeof required.getJob !== "function") {
       throw new GraphExecutionError(
         "Dagster client port exposes no job lookup; workflow lookup is not supported",
         DAGSTER_ERROR.WORKFLOWS_NOT_SUPPORTED
       );
     }
-    const job = await client.getJob(workflowId);
-    return dagsterJobDocument(job);
+    return dagsterJobDocument(await required.getJob(workflowId));
+  }
+
+  /**
+   * Whether the Dagster deployment defines a job with the given id (F6). Resolves
+   * an id collision between a seeded fixture and a real deployment job in favour
+   * of the deployment. Fails safe to `false` when the port exposes no job listing
+   * or the listing cannot be read, so an unavailable listing never hides the
+   * seeded catalogue.
+   */
+  private async deploymentDefinesJob(workflowId: string): Promise<boolean> {
+    const client = this.client;
+    if (!client || typeof client.listJobs !== "function") return false;
+    try {
+      const jobs = await client.listJobs();
+      return jobs.some((job) => job.name === workflowId);
+    } catch {
+      return false;
+    }
   }
 
   /**

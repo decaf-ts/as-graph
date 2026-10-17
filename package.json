@@ -195,7 +195,7 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@decaf-ts/utils": "1.14.0",
+    "@decaf-ts/utils": "^1.14.0",
     "@nestjs/testing": "^11.2.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",

@@ -17,6 +17,10 @@
  * run/workflow APIs. `initAdapter: true` installs the standalone RamAdapter
  * so the entry boots without a host-configured Decaf adapter.
  *
+ * Boot-time demo seeding of the fixture registry is on by default (a source
+ * checkout keeps its fixtures) and can be suppressed in a production host with
+ * `GRAPH_SEED_DEMO=off` (F5 hardening), with no code change.
+ *
  * Variant wiring:
  * - `local` (default): the built-in reference interpreter, no extra wiring.
  * - `mastra`: a real `@mastra/core` runtime (lazy-loaded) is injected as the
@@ -33,6 +37,7 @@ import { NestFactory } from "@nestjs/core";
 import { GraphExecutionModule } from "./GraphExecutionModule";
 import {
   createGraphBackendHost,
+  graphDemoSeedEnabledFromEnv,
   graphEngineVariantFromEnv,
   loadGraphDemoWorkflows,
 } from "./GraphBackendHost";
@@ -67,13 +72,18 @@ async function bootstrap(): Promise<void> {
     process.env["GRAPH_BACKEND_PORT"] ?? process.argv[2] ?? 3000
   );
   const variant = graphEngineVariantFromEnv();
-  const dagsterClient = variant === "dagster" ? buildDagsterClient() : undefined;
+  const dagsterClient =
+    variant === "dagster" ? buildDagsterClient() : undefined;
 
   // Seed the demo workflow fixture registry (`src/workflows`) into whichever
   // engine this driver boots, so the per-engine catalogue and the serving list
   // expose the full fixture set out of the box. The registry is excluded from
-  // release packaging, so the loader yields an empty set there.
-  const demoWorkflows = await loadGraphDemoWorkflows();
+  // release packaging, so the loader yields an empty set there. Demo seeding can
+  // be suppressed in a source-built production host without a code change by
+  // setting `GRAPH_SEED_DEMO=off` (F5 hardening).
+  const demoWorkflows = graphDemoSeedEnabledFromEnv()
+    ? await loadGraphDemoWorkflows()
+    : [];
 
   const host = await createGraphBackendHost({
     variant,
@@ -83,7 +93,8 @@ async function bootstrap(): Promise<void> {
       ? {
           dagster: {
             ...(dagsterClient ? { client: dagsterClient } : {}),
-            executionEnabled: process.env["DAGSTER_EXECUTION_ENABLED"] === "true",
+            executionEnabled:
+              process.env["DAGSTER_EXECUTION_ENABLED"] === "true",
           },
         }
       : {}),

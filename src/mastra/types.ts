@@ -43,6 +43,10 @@ export const GRAPH_MASTRA_TRANSLATION_JSON_UNSAFE =
 /** No Mastra agent is available for an agent-backed node. */
 export const GRAPH_MASTRA_AGENT_UNAVAILABLE =
   "GRAPH_MASTRA_AGENT_UNAVAILABLE";
+/** The Mastra execute path did not terminate within its run-level timeout. */
+export const GRAPH_MASTRA_EXECUTE_TIMEOUT = "GRAPH_MASTRA_EXECUTE_TIMEOUT";
+/** The Mastra execute path was aborted by the caller's cancellation signal. */
+export const GRAPH_MASTRA_EXECUTE_ABORTED = "GRAPH_MASTRA_EXECUTE_ABORTED";
 /** The wired Mastra runtime exposes no workflow-management surface. */
 export const GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE =
   "GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE";
@@ -122,6 +126,14 @@ export interface MastraBackendConfig extends Record<string, unknown> {
   suspendStateReader?: MastraSuspendStateReader;
   /** Maximum accepted serialised `resumeData` size, in bytes. */
   maxResumeBytes?: number;
+  /**
+   * Run-level terminal timeout, in milliseconds, for {@link MastraGraphExecutionBackend.execute}.
+   * A translated run that has not terminated within this bound fails closed with
+   * {@link GRAPH_MASTRA_EXECUTE_TIMEOUT} instead of pinning the run slot and event
+   * stream indefinitely; mirrors the Dagster `terminalTimeoutMs` bound. Defaults
+   * to five minutes when omitted.
+   */
+  terminalTimeoutMs?: number;
 }
 
 /**

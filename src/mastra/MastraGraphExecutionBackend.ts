@@ -36,6 +36,8 @@ import {
 } from "./MastraCapabilities";
 import {
   GRAPH_MASTRA_AGENT_UNAVAILABLE,
+  GRAPH_MASTRA_EXECUTE_ABORTED,
+  GRAPH_MASTRA_EXECUTE_TIMEOUT,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
   MASTRA_BACKEND_FLAVOUR,
   type MastraBackendConfig,
@@ -46,6 +48,14 @@ import {
 } from "./types";
 
 const DEFAULT_MAX_RESUME_BYTES = 64 * 1024;
+
+/**
+ * Default run-level terminal timeout, in milliseconds, for {@link
+ * MastraGraphExecutionBackend.execute}. Mirrors the Dagster observation bound
+ * (`DEFAULT_TERMINAL_TIMEOUT_MS`) so a wedged or hostile translated run fails
+ * closed instead of pinning the run slot and event stream indefinitely.
+ */
+const DEFAULT_MASTRA_TERMINAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface MastraRunLike {
   stream(options?: unknown): Promise<{ fullStream?: AsyncIterable<Record<string, unknown>>; result?: Promise<unknown> }>;
@@ -139,6 +149,7 @@ export class MastraGraphExecutionBackend
   private managementManager?: MastraWorkflowManager;
   private suspendStateReader?: MastraSuspendStateReader;
   private maxResumeBytes = DEFAULT_MAX_RESUME_BYTES;
+  private terminalTimeoutMs = DEFAULT_MASTRA_TERMINAL_TIMEOUT_MS;
   private initialized = false;
   private _config?: MastraBackendConfig;
 
@@ -156,6 +167,11 @@ export class MastraGraphExecutionBackend
     if (typeof config.maxResumeBytes === "number" && config.maxResumeBytes > 0) {
       this.maxResumeBytes = config.maxResumeBytes;
     }
+    this.terminalTimeoutMs =
+      typeof config.terminalTimeoutMs === "number" &&
+      config.terminalTimeoutMs > 0
+        ? config.terminalTimeoutMs
+        : DEFAULT_MASTRA_TERMINAL_TIMEOUT_MS;
     const stepHandlers: MastraNodeStepHandler[] = Array.isArray(
       config.stepHandlers
     )
@@ -322,17 +338,24 @@ export class MastraGraphExecutionBackend
     });
 
     let status: GraphExecutionStatus = GraphExecutionStatus.SUCCEEDED;
+    const signal = request.options?.abortSignal;
     try {
       const run = await workflow.createRun({ runId });
-      const stream = await run.stream({ inputData: request.inputs });
-      if (stream.fullStream) {
-        await bridge.attach(stream.fullStream);
-      }
-      if (typeof run.getResult === "function") {
-        await run.getResult();
-      } else if (stream.result) {
-        await stream.result;
-      }
+      const stream = await run.stream({
+        inputData: request.inputs,
+        ...(signal ? { abortSignal: signal } : {}),
+      });
+      const execution = (async (): Promise<void> => {
+        if (stream.fullStream) {
+          await bridge.attach(stream.fullStream);
+        }
+        if (typeof run.getResult === "function") {
+          await run.getResult();
+        } else if (stream.result) {
+          await stream.result;
+        }
+      })();
+      await this.awaitTerminal(execution, signal, request.document.id);
     } catch (error) {
       status = GraphExecutionStatus.FAILED;
       await sink.emit({
@@ -350,6 +373,77 @@ export class MastraGraphExecutionBackend
       status,
       { backend: MASTRA_BACKEND_FLAVOUR, documentFingerprint: compiled.fingerprint }
     );
+  }
+
+  /**
+   * Bounds the translated run's terminal wait by the backend's run-level
+   * `terminalTimeoutMs` and the caller's cancellation signal, mirroring the
+   * Dagster observation bound. Exceeding the timeout fails closed with
+   * {@link GRAPH_MASTRA_EXECUTE_TIMEOUT}; an abort fails closed with
+   * {@link GRAPH_MASTRA_EXECUTE_ABORTED}. The underlying run is not force-killed
+   * (Mastra owns run lifecycle), but the backend stops awaiting it so the run
+   * slot and event bridge are released and the run cannot pin the process.
+   *
+   * @param execution - The in-flight run/stream/result promise.
+   * @param signal - The caller's cancellation signal, when supplied.
+   * @param workflowId - The workflow id the run belongs to (for error details).
+   * @returns Resolves once the run terminates normally.
+   * @throws {GraphExecutionError} on timeout or abort.
+   */
+  private async awaitTerminal(
+    execution: Promise<void>,
+    signal: AbortSignal | undefined,
+    workflowId: string
+  ): Promise<void> {
+    const timeoutMs = this.terminalTimeoutMs;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = (): void => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const finish = (settle: () => void): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        settle();
+      };
+      const onAbort = (): void =>
+        finish(() =>
+          reject(
+            new GraphExecutionError(
+              `Mastra run for workflow '${workflowId}' was aborted`,
+              GRAPH_MASTRA_EXECUTE_ABORTED,
+              { workflowId }
+            )
+          )
+        );
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
+      if (timeoutMs > 0) {
+        timer = setTimeout(
+          () =>
+            finish(() =>
+              reject(
+                new GraphExecutionError(
+                  `Mastra run for workflow '${workflowId}' did not terminate within ${timeoutMs}ms`,
+                  GRAPH_MASTRA_EXECUTE_TIMEOUT,
+                  { workflowId, terminalTimeoutMs: timeoutMs }
+                )
+              )
+            ),
+          timeoutMs
+        );
+      }
+      execution.then(
+        () => finish(resolve),
+        (error) => finish(() => reject(error))
+      );
+    });
   }
 
   /**
@@ -483,6 +577,7 @@ export class MastraGraphExecutionBackend
     this.runWorkflows.clear();
     this.runtime = undefined;
     this.managementManager = undefined;
+    this.terminalTimeoutMs = DEFAULT_MASTRA_TERMINAL_TIMEOUT_MS;
     this.initialized = false;
   }
 
@@ -516,12 +611,20 @@ export class MastraGraphExecutionBackend
     code?: string;
   } {
     if (error instanceof Error) {
+      const graphCode = (error as unknown as { graphCode?: unknown }).graphCode;
+      const code = (error as unknown as { code?: unknown }).code;
+      const normalised =
+        typeof graphCode === "string"
+          ? graphCode
+          : typeof code === "number"
+            ? String(code)
+            : typeof code === "string"
+              ? code
+              : undefined;
       return {
         name: error.name,
         message: error.message,
-        ...(typeof (error as unknown as { code?: unknown }).code === "string"
-          ? { code: (error as unknown as { code: string }).code }
-          : {}),
+        ...(normalised !== undefined ? { code: normalised } : {}),
       };
     }
     return { name: "MastraError", message: String(error) };

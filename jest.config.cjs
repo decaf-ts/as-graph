@@ -19,7 +19,7 @@ const config = {
   },
   testEnvironment: "node",
   testRegex: "/tests/.*\\.(test|spec|e2e)\\.(ts|tsx)$",
-  testPathIgnorePatterns: ["/node_modules/"],
+  testPathIgnorePatterns: ["/node_modules/", "/n8n/"],
   transformIgnorePatterns: [
     "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow)/)",
   ],

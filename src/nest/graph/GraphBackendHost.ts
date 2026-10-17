@@ -94,6 +94,37 @@ export function graphEngineVariantFromEnv(
   return parseGraphEngineVariant(env[GRAPH_BACKEND_ENGINE_ENV]);
 }
 
+/** Environment variable gating boot-time demo-workflow seeding (F5 hardening). */
+export const GRAPH_SEED_DEMO_ENV = "GRAPH_SEED_DEMO";
+
+/** Case-insensitive environment values that suppress demo seeding. */
+const GRAPH_SEED_DEMO_DISABLED_VALUES: readonly string[] = [
+  "off",
+  "false",
+  "0",
+  "no",
+  "disabled",
+];
+
+/**
+ * Resolves whether the standalone host seeds the demo workflow fixture registry
+ * at boot (F5 hardening). Seeding is enabled by default so a source checkout
+ * keeps its fixtures; a production host sets `GRAPH_SEED_DEMO=off` (also accepts
+ * `false` / `0` / `no` / `disabled`, case-insensitive) to suppress owner-less
+ * demo seeding without a code change. An unset or empty value keeps the default
+ * (enabled), so existing hosts are unaffected.
+ *
+ * @param env - The environment to read from (defaults to `process.env`).
+ * @returns `true` when boot-time demo seeding is enabled.
+ */
+export function graphDemoSeedEnabledFromEnv(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  const raw = env[GRAPH_SEED_DEMO_ENV];
+  if (raw === undefined || raw.trim() === "") return true;
+  return !GRAPH_SEED_DEMO_DISABLED_VALUES.includes(raw.trim().toLowerCase());
+}
+
 /** Host wiring for the Dagster variant: the client port plus its gate options. */
 export interface GraphDagsterHostOptions {
   /**

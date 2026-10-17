@@ -237,7 +237,13 @@ export class LocalGraphExecutionBackend
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphBackendWorkflowSummary[]> {
     const store = this.workflowStore;
-    if (!store || typeof store.saveDocument !== "function") {
+    // Prefer the store's boot-seed surface (`seedDocument`) when it exposes one:
+    // it skips (rather than fails on) a fixture id a durable store already holds
+    // as a user-owned row, so host bootstrap cannot be failed by an ownership
+    // collision (F2). Fall back to the plain write path for a store that only
+    // exposes `saveDocument`.
+    const seed = store?.seedDocument ?? store?.saveDocument;
+    if (!store || typeof seed !== "function") {
       throw new GraphExecutionError(
         "LocalGraphExecutionBackend has no writable workflowStore configured; workflow seeding is not supported",
         "GRAPH_BACKEND_SEED_NOT_SUPPORTED"
@@ -245,7 +251,11 @@ export class LocalGraphExecutionBackend
     }
     const summaries: GraphBackendWorkflowSummary[] = [];
     for (const document of documents) {
-      await store.saveDocument(document.id, document, ...args);
+      const persisted = await seed.call(store, document.id, document, ...args);
+      // `seedDocument` returns null when it skipped a foreign-owned row; every
+      // other seed result is the persisted row. Only an explicit skip is omitted
+      // from the seeded summary set.
+      if (persisted === null) continue;
       summaries.push({
         id: document.id,
         ...(document.name !== undefined ? { name: document.name } : {}),

@@ -13,6 +13,7 @@
  */
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import {
+  ForbiddenError,
   ModelService,
   OrderDirection,
   service,
@@ -225,6 +226,47 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
       updatedAt: now,
     });
     return this.create(model, ...ctxArgs);
+  }
+
+  /**
+   * Boot-seed write of a canonical workflow document (F2 availability fix):
+   * behaves exactly like {@link saveDocument} except that an ownership conflict
+   * on an existing foreign-owned row is treated as a skip-and-log instead of a
+   * hard failure. A durable store that already holds a user-owned row for a
+   * fixture id therefore cannot fail host bootstrap, while the security posture
+   * is unchanged: the foreign-owned row is never overwritten and the engine's own
+   * catalogue seed still serves the fixture.
+   *
+   * This is the boot seeding surface only. Request-path writes MUST keep using
+   * {@link saveDocument} / {@link saveSnapshot}, which stay fail-closed on a
+   * foreign-owned overwrite (SAA-105 R3).
+   *
+   * @param {string} workflowId - Workflow id from the fixture registry.
+   * @param {GraphWorkflowDocument} document - Canonical document to seed (its `id` must equal `workflowId`).
+   * @param args - An optional decaf `Context` carrying the owning principal.
+   * @return {Promise<GraphWorkflowModel | null>} The persisted row, or `null` when the seed was skipped because the existing row is owned by another user.
+   * @throws {ValidationError} When the payload shape or the document/path id match is invalid.
+   * @throws {GraphWorkflowDocumentRejectedError} When boundary validation fails.
+   */
+  async seedDocument(
+    workflowId: string,
+    document: GraphWorkflowDocument,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowModel | null> {
+    const { log, ctxArgs } = (await this.logCtx(args, "seedDocument", true)).for(
+      this.seedDocument
+    );
+    try {
+      return await this.saveDocument(workflowId, document, ...ctxArgs);
+    } catch (error) {
+      if (error instanceof ForbiddenError) {
+        log.warn(
+          `Skipping boot seed of graph workflow '${workflowId}': an existing row is owned by another user`
+        );
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**

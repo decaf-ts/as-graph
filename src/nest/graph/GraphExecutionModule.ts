@@ -418,14 +418,18 @@ export class GraphExecutionModule {
           const service = new GraphWorkflowService();
           // Seed the ownership-filtered serving list (`GET /graph/workflows`)
           // with the host's fixture registry so it lists the full fixture set
-          // for whichever engine the host booted. The engine independently
-          // seeds the active backend's own catalogue for the engine-scoped list
+          // for whichever engine the host booted. Uses the tolerant boot-seed
+          // surface (`seedDocument`): a fixture id a durable store already holds
+          // as a user-owned row is skipped and logged instead of rejecting the
+          // async factory and failing Nest bootstrap (F2 availability fix). The
+          // engine independently seeds the active backend's own catalogue for
+          // the engine-scoped list
           // (`GET /graph/engines/{engineId}/workflows`); for the local variant
           // both paths resolve to this same service and the re-save is an
           // owner-equality-preserving update.
           if (options.seedWorkflows && options.seedWorkflows.length > 0) {
             for (const document of options.seedWorkflows) {
-              await service.saveDocument(document.id, document);
+              await service.seedDocument(document.id, document);
             }
           }
           return service;

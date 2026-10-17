@@ -533,12 +533,20 @@ export class MastraEventBridge {
    */
   private errorPayload(error: unknown): { name: string; message: string; code?: string } {
     if (error instanceof Error) {
+      const graphCode = (error as unknown as { graphCode?: unknown }).graphCode;
+      const code = (error as unknown as { code?: unknown }).code;
+      const normalised =
+        typeof graphCode === "string"
+          ? graphCode
+          : typeof code === "number"
+            ? String(code)
+            : typeof code === "string"
+              ? code
+              : undefined;
       return {
         name: error.name,
         message: error.message,
-        ...(typeof (error as unknown as { code?: unknown }).code === "string"
-          ? { code: (error as unknown as { code: string }).code }
-          : {}),
+        ...(normalised !== undefined ? { code: normalised } : {}),
       };
     }
     return { name: "MastraError", message: String(error) };
