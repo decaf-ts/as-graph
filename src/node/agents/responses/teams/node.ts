@@ -33,7 +33,8 @@ export interface TeamsChannelResponseOutput {
 
 /**
  * Teams channel response node: posts the reply to the Teams conversation bound
- * by the wired thread binding through the host-supplied mastra channel
+ * by the response's configured thread binding — a wired thread binding may
+ * never override it (SAA-911 F5) — through the host-supplied mastra channel
  * delivery surface.
  */
 @node("core.agent.response.teams", {

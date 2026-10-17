@@ -14,6 +14,8 @@
  */
 import { LoggedEnvironment } from "@decaf-ts/logging";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
+import { GRAPH_PLAIN_SECRET_KEYS } from "../engine/validation/GraphParameterValidator";
+import { isGraphCredentialReference } from "../shared/graph/catalog/GraphCredentialReference";
 
 /** The provider credential could not be resolved from the environment (SAA-836
  * S1, gate C): the credential variable is unset or empty, so the engine fails
@@ -21,6 +23,15 @@ import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
  */
 export const GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE =
   "GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE";
+
+/**
+ * A mastra backend connection configuration carries plaintext credential
+ * material (SAA-911 F4, gate C): workflow and node configs may only reference
+ * credentials **by name** (`credentialRef`), with the value supplied by the
+ * host through the git-ignored `.env.secret` — never carried in the document.
+ */
+export const GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED =
+  "GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED";
 
 /**
  * The mastra engine lane is disabled in the environment
@@ -283,4 +294,124 @@ export function assertMastraObservabilityCredentials(
     );
   }
   return { publicKeyEnv, secretKeyEnv };
+}
+
+/**
+ * Connection-option members that must never carry plaintext credential
+ * material in a mastra backend config (SAA-911 F4, gate C). Extends the
+ * document-level plain-secret deny-list with the connection-string members a
+ * database URL uses to smuggle credentials.
+ */
+export const MASTRA_CONNECTION_PLAIN_CREDENTIAL_KEYS: readonly string[] = [
+  ...GRAPH_PLAIN_SECRET_KEYS,
+  "connectionString",
+  "dsn",
+  "pwd",
+  "passphrase",
+];
+
+/** Context naming one mastra backend connection for the credential gate. */
+export interface MastraConnectionCredentialContext {
+  /** The storage provider the connection configures (e.g. `pg`, `pgvector`). */
+  provider: string;
+  /** The resolved backend id the connection configures. */
+  id: string;
+  /** The backend surface the connection configures (e.g. `memory`, `vector store`). */
+  surface: string;
+}
+
+/**
+ * Refuses a mastra backend connection configuration that carries plaintext
+ * credential material (SAA-911 F4, gate C). Every deny-listed member is
+ * rejected — not stripped — so an insecure configuration surfaces loudly
+ * instead of silently connecting with document-carried secrets.
+ *
+ * @param connection - The connection options a config declares.
+ * @param context - The provider/id/surface naming the connection in errors.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}
+ *   when any deny-listed member is present.
+ */
+export function assertNoMastraPlainConnectionCredentials(
+  connection: Record<string, unknown>,
+  context: MastraConnectionCredentialContext
+): void {
+  for (const key of Object.keys(connection)) {
+    if (MASTRA_CONNECTION_PLAIN_CREDENTIAL_KEYS.includes(key)) {
+      throw new GraphExecutionError(
+        `The '${context.provider}' ${context.surface} connection options carry plaintext credential material in '${key}'; configs may only reference credentials by name through 'credentialRef', resolved by the host from the git-ignored .env.secret (gate C, SAA-911 F4)`,
+        GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED,
+        { provider: context.provider, id: context.id, key }
+      );
+    }
+  }
+}
+
+/**
+ * Resolves the credential environment-variable **name** a mastra backend
+ * config's `credentialRef` declares (SAA-911 F4, gate C). The reference must
+ * be present and well-formed: a backend that needs a credential fails closed
+ * when its config carries no reference instead of connecting unauthenticated.
+ * The `credentialId` member is the referenced variable's name — the value
+ * itself lives in the user-supplied `.env.secret` (see `.env.secret.template`)
+ * and is never carried by the config.
+ *
+ * @param config - The backend config carrying the optional `credentialRef`.
+ * @param context - The provider/id/surface naming the backend in errors.
+ * @param credential - What the credential authenticates (error text only).
+ * @returns The referenced credential environment-variable name.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
+ *   when the config carries no well-formed `credentialRef`.
+ */
+export function mastraCredentialEnvNameOf(
+  config: { credentialRef?: unknown },
+  context: MastraConnectionCredentialContext,
+  credential: string
+): string {
+  const reference = config.credentialRef;
+  if (!isGraphCredentialReference(reference)) {
+    throw new GraphExecutionError(
+      `The '${context.provider}' ${context.surface} requires a credentialRef naming the environment variable that carries the ${credential} — the value itself lives in the user-supplied .env.secret (see .env.secret.template). The backend fails closed without a credential reference (gate C, SAA-911 F4).`,
+      GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+      { provider: context.provider, id: context.id }
+    );
+  }
+  const name = reference.credentialId.trim();
+  if (name.length === 0) {
+    throw new GraphExecutionError(
+      `The '${context.provider}' ${context.surface} credentialRef carries an empty credentialId; configs reference credentials by environment-variable name (gate C, SAA-911 F4)`,
+      GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+      { provider: context.provider, id: context.id }
+    );
+  }
+  return name;
+}
+
+/**
+ * Resolves a mastra backend credential **value** from the runtime environment
+ * by its referenced name (SAA-911 F4, gate C). The value is read only at
+ * backend-construction time and only flows into the backend's own connection
+ * options — it is never logged, persisted, or held by the graph layer beyond
+ * that constructor call. The gate fails closed when the variable is unset or
+ * empty; the error carries only the variable **name**.
+ *
+ * @param name - The referenced credential environment-variable name.
+ * @param env - The runtime environment bag to resolve from; defaults to
+ *   `process.env`.
+ * @returns The resolved credential value.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
+ *   when the referenced variable is unset or empty.
+ */
+export function resolveMastraCredentialValue(
+  name: string,
+  env: Record<string, string | undefined> = globalThis.process?.env ?? {}
+): string {
+  const value = env[name];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new GraphExecutionError(
+      `The referenced credential '${name}' is not available: set a non-empty value in the user-supplied .env.secret (see .env.secret.template). The backend fails closed without it (gate C, SAA-911 F4).`,
+      GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+      { credentialEnv: name }
+    );
+  }
+  return value;
 }

@@ -439,7 +439,14 @@ the full compatibility surface built across the SAA-836 slices:
 - **Memory and vector layers** — `MastraMemory` (mastra memory wiring over
   `@mastra/memory`, including the `memorySelector` decision sub-flow) and
   `MastraVectorStore` (`DriverBackedVectorStore`/`InMemoryVectorStore` over
-  `@mastra/libsql`/`@mastra/pg` peers).
+  `@mastra/libsql`/`@mastra/pg` peers). Backend configs never carry
+  credential values (SAA-911 F4, gate C): plaintext credential members in a
+  config's `connection` options are refused outright — never stripped — with
+  `GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED`, and `pg`/`pgvector` (and a
+  credentialed `redis`) resolve their password only through a `credentialRef`
+  whose `credentialId` names the `.env.secret` variable carrying it (see the
+  Mastra engine environment section below); the value is resolved from the
+  host environment only at backend-construction time.
 - **Processors** — `MastraAgentProcessors` (input/output processor and
   guardrail wiring, with the host-supplied `resolveProcessorModel` model hook).
 - **Human-in-the-loop and voice** — `MastraHitlStepHandler` (the
@@ -449,7 +456,10 @@ the full compatibility surface built across the SAA-836 slices:
 - **Triggers and channel responses** — `MastraMcpTrigger` (MCP server trigger,
   fail-closed `GRAPH_MASTRA_MCP_UNAVAILABLE`), `MastraScheduleTrigger`,
   `MastraChannelTrigger`/`MastraChannelResponse` (Slack/Discord/Telegram/Teams,
-  fail-closed `GRAPH_MASTRA_CHANNEL_UNAVAILABLE` without channel wiring).
+  fail-closed `GRAPH_MASTRA_CHANNEL_UNAVAILABLE` without channel wiring). A
+  channel response delivers to the node's **configured** conversation
+  binding; a wired `threadId` may never override it — a mismatch fails
+  closed with `GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH` (SAA-911 F5).
 - **Run metrics (S2)** — the read-only metrics layer:
   `MastraMetricsModels` (run/score/trace rows), `MastraMetricsAdapter`
   (read-only adapter over the mastra storage), `MastraMetricsStatement` +
@@ -507,6 +517,19 @@ Host-operator workflow (gate C):
   `.env.secret.template` (placeholders only) to `.env.secret`, fill in
   `MASTRA_PROVIDER_API_KEY` (or point `MASTRA__CREDENTIALS__API_KEY_ENV` at
   another variable name), and never commit it; `.env.secret` is git-ignored.
+- **Backend connection credentials are name-referenced too (SAA-911 F4,
+  gate C)** — a `pg` memory provider, a `pgvector` vector store, or a
+  credentialed `redis` vector store declares a `credentialRef` whose
+  `credentialId` NAMES the environment variable carrying the password
+  (placeholders `MASTRA_PG_PASSWORD` / `MASTRA_PGVECTOR_PASSWORD` /
+  `MASTRA_REDIS_PASSWORD` in `.env.secret.template`); the value is resolved
+  from the host environment only at backend-construction time. Plaintext
+  credential members in a config's `connection` options (e.g. `password`,
+  `connectionString`) are refused outright — never stripped — with
+  `GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED`. The `pg` memory provider requires
+  a complete non-secret host config (`host`, `port`, `database`, `user`)
+  plus its `credentialRef` — a `connectionString` is no longer an accepted
+  alternative.
 - **Secrets are referenced by name only.** The graph layer reads the
   credential by environment-variable name and asserts only its presence —
   `assertMastraProviderCredentials()` throws

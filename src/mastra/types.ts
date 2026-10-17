@@ -92,6 +92,15 @@ export const GRAPH_MASTRA_MCP_UNAVAILABLE = "GRAPH_MASTRA_MCP_UNAVAILABLE";
 export const GRAPH_MASTRA_CHANNEL_UNAVAILABLE =
   "GRAPH_MASTRA_CHANNEL_UNAVAILABLE";
 /**
+ * A channel response step received a wired `threadId` that differs from the
+ * response node's configured conversation binding (SAA-911 F5). The wired
+ * value may be attacker-influenced data (prompt injection), so the override
+ * fails closed instead of silently redirecting the reply to another
+ * conversation thread.
+ */
+export const GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH =
+  "GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH";
+/**
  * A schedule trigger node declared no resolvable cron expression (SAA-836
  * M6), so no scheduled fire can be registered with the mastra scheduler; the
  * translation fails closed instead of silently scheduling nothing.

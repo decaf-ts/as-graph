@@ -26,11 +26,13 @@ import {
   createMastraChannelResponseStepHandlers,
   GRAPH_MASTRA_CHANNEL_RESPONSE_KINDS,
   GRAPH_MASTRA_CHANNEL_RESPONSE_KIND_PREFIX,
+  GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH,
   mastraChannelResponseDescriptorOf as responseDescriptorOf,
   mastraChannelResponseKindOf,
 } from "../../../../src/mastra/MastraChannelResponse";
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import {
+  GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
   GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
   MASTRA_CHANNEL_PLATFORMS,
   type MastraNodeStepHandler,
@@ -334,7 +336,7 @@ describe("channel response steps (SAA-836 M6)", () => {
     expect(payloads.at(-1)).toEqual({ response: "r2", threadId: null });
   });
 
-  it("prefers the wired thread binding over the configured binding", async () => {
+  it("keeps the configured thread binding authoritative over a wired override (SAA-911 F5)", async () => {
     const payloads: Array<Record<string, unknown>> = [];
     const step = compileChannelStep(
       "core.agent.response.teams",
@@ -346,13 +348,51 @@ describe("channel response steps (SAA-836 M6)", () => {
         },
       })
     );
+    // An identical wired binding (the trigger's own conversation carried
+    // straight through) is delivered unchanged.
     await step.execute({
-      inputData: { response: "r", threadId: "wired-channel" },
+      inputData: { response: "r", threadId: "configured-channel" },
     });
     expect(payloads.at(-1)).toEqual({
       response: "r",
-      threadId: "wired-channel",
+      threadId: "configured-channel",
     });
+
+    // A differing wired value may never override the configured binding —
+    // the override fails closed instead of redirecting the reply cross-thread.
+    await expect(
+      step.execute({
+        inputData: { response: "r", threadId: "wired-channel" },
+      })
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
+    });
+    expect(payloads).toHaveLength(1);
+  });
+
+  it("fails closed on an overlong wired thread binding (SAA-911 F5)", async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const step = compileChannelStep(
+      "core.agent.response.slack",
+      {},
+      createMastraChannelResponseStepHandlers({
+        sendChannelResponse: (_descriptor, payload) => {
+          payloads.push(payload);
+          return { ok: true };
+        },
+      })
+    );
+    await expect(
+      step.execute({
+        inputData: {
+          response: "r",
+          threadId: "x".repeat(GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH + 1),
+        },
+      })
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
+    });
+    expect(payloads).toHaveLength(0);
   });
 
   it("fails closed with GRAPH_MASTRA_CHANNEL_UNAVAILABLE without a host delivery factory", async () => {

@@ -18,7 +18,7 @@ import type { Context, MaybeContextualArg } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import { graphRunDocumentFingerprint } from "../engine/runs/GraphRunFingerprint";
-import { canAccessGraphResource } from "../engine/runs/ownership";
+import { canAccessGraphResourcePayload } from "../engine/runs/ownership";
 import { graphWorkflowOwnerOf } from "../engine/services/GraphWorkflowService";
 import { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
 import {
@@ -36,6 +36,38 @@ import {
 
 /** The real `@mastra/core` `Mastra` workflow-management method names. */
 type MastraManagementMethod = keyof MastraWorkflowManagementRuntime;
+
+/**
+ * Whether a runtime `getWorkflow` failure is the real library's structured
+ * not-found error — the only failure the provenance gate may interpret as
+ * "unregistered" (SAA-911 F3). A structured 404 (`details.status === 404`)
+ * or a not-found error id is the library's honest absence report; any other
+ * throw is an indeterminate runtime failure and must fail closed.
+ *
+ * @param error - The error a runtime `getWorkflow` call threw.
+ * @returns `true` when the error is the structured not-found report.
+ */
+function isMastraWorkflowNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as {
+    details?: { status?: unknown };
+    id?: unknown;
+    message?: unknown;
+  };
+  if (
+    record.details &&
+    typeof record.details === "object" &&
+    record.details["status"] === 404
+  ) {
+    return true;
+  }
+  if (typeof record.id === "string" && record.id.includes("NOT_FOUND")) {
+    return true;
+  }
+  return (
+    typeof record.message === "string" && /not found/i.test(record.message)
+  );
+}
 
 /**
  * Structural check for a Decaf execution {@link Context} inside a
@@ -83,6 +115,13 @@ function mastraManagerCallerOwnerOf(
  * Mastra primitive itself and never synthesizes a method the pinned library does not
  * expose. Every method validates the runtime surface it needs first and fails
  * closed with {@link GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE} otherwise.
+ *
+ * Write ownership (SAA-911 F1–F3): every management mutation is write-mediated —
+ * an overwrite of an already wrapper-managed id requires the caller to own the
+ * existing registration, ownership is strict owner equality (the owner-less
+ * read-visibility branch never authorizes a write), and a mutation whose
+ * provenance cannot be determined is refused rather than trusted onto a
+ * possibly foreign registration.
  */
 export class MastraWorkflowManager {
   /** Canonical document revision (fingerprint) by managed workflow id. */
@@ -118,6 +157,9 @@ export class MastraWorkflowManager {
    *   when the runtime exposes no `addWorkflow`.
    * @throws {GraphExecutionError} {@link GRAPH_MASTRA_UNSUPPORTED_KIND} when the
    *   document cannot be translated.
+   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when
+   *   the id is already wrapper-managed by another owner, is a foreign
+   *   registration, or its provenance cannot be determined (SAA-911 F1-F3).
    */
   async create(
     document: GraphWorkflowDocument,
@@ -126,6 +168,13 @@ export class MastraWorkflowManager {
     const runtime = this.requireRuntime("addWorkflow");
     const owner = mastraManagerCallerOwnerOf(args);
     this.assertWritableProvenance(runtime, document.id);
+    // SAA-911 F1: an overwrite of an already wrapper-managed id is a write, so
+    // it requires the caller to own the existing registration. A fresh create
+    // is unconditional — the caller stamps their own owner (the same norm the
+    // GraphWorkflowService upsert applies, SAA-105 R3).
+    if (this.revisions.has(document.id)) {
+      this.assertOwnerAccess(document.id, owner);
+    }
     const compiled = this.compilerOf().compile(document);
     this.revisions.set(document.id, compiled.fingerprint);
     this.owners.set(document.id, owner);
@@ -143,6 +192,10 @@ export class MastraWorkflowManager {
    * @returns The managed workflow descriptor with its new revision.
    * @throws {GraphExecutionError} {@link GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE}
    *   when the runtime exposes no `addWorkflow`/`removeWorkflow`.
+   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when
+   *   the caller does not own the wrapper-managed workflow, the id is a
+   *   foreign registration, or its provenance cannot be determined
+   *   (SAA-911 F1–F3).
    * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_NOT_FOUND} when
    *   no workflow is registered under the document id.
    */
@@ -177,6 +230,10 @@ export class MastraWorkflowManager {
    * @returns `true` when a workflow was removed.
    * @throws {GraphExecutionError} {@link GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE}
    *   when the runtime exposes no `removeWorkflow`.
+   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when
+   *   the caller does not own the wrapper-managed workflow, the id is a
+   *   foreign registration, or its provenance cannot be determined
+   *   (SAA-911 F1–F3).
    * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_NOT_FOUND} when no
    *   workflow is registered under the id.
    */
@@ -334,23 +391,48 @@ export class MastraWorkflowManager {
   }
 
   /**
-   * Fails closed when a management mutation targets a workflow the wrapper did not
-   * create (C3 complete mediation). A wrapper-managed id is writable; any
-   * pre-existing registration — including a host `origin: "code"` workflow — is
-   * protected from overwrite/delete, and an existing workflow whose provenance
-   * cannot be determined is refused rather than mutated.
+   * Fails closed when a management mutation targets a workflow the wrapper did
+   * not create (C3 complete mediation), and equally when the workflow's
+   * provenance cannot be determined (SAA-911 F3). A wrapper-managed id is
+   * writable; a pre-existing registration — including a host `origin: "code"`
+   * workflow — is protected from overwrite/delete; and a runtime failure while
+   * reading the registration state is never treated as "absent": the
+   * provenance gate refuses the mutation rather than failing open onto a
+   * possibly foreign registration.
    *
    * @param runtime - The validated runtime.
    * @param workflowId - The managed workflow id.
-   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when the
-   *   workflow is not wrapper-managed.
+   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when
+   *   the workflow is not wrapper-managed or its provenance is unresolvable.
    */
   private assertWritableProvenance(
     runtime: MastraWorkflowManagementRuntime,
     workflowId: string
   ): void {
     if (this.revisions.has(workflowId)) return;
-    const origin = this.originOf(runtime, workflowId);
+    if (typeof runtime.getWorkflow !== "function") {
+      // Without `getWorkflow` the gate cannot prove the id is unregistered,
+      // so it cannot prove the mutation would not overwrite a foreign
+      // registration — refuse instead of trusting absence (SAA-911 F3).
+      throw new GraphExecutionError(
+        `Mastra runtime exposes no 'getWorkflow'; the provenance of workflow '${workflowId}' cannot be determined, so the wrapper refuses to modify it`,
+        GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+        { workflowId }
+      );
+    }
+    let origin: MastraWorkflowOrigin | undefined;
+    try {
+      origin =
+        typeof runtime.getWorkflowOrigin === "function"
+          ? runtime.getWorkflowOrigin(workflowId)
+          : undefined;
+    } catch {
+      throw new GraphExecutionError(
+        `The Mastra runtime failed to report the registration origin of workflow '${workflowId}'; the wrapper refuses to modify a workflow whose provenance cannot be determined`,
+        GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+        { workflowId }
+      );
+    }
     if (origin !== undefined) {
       throw new GraphExecutionError(
         `Mastra workflow '${workflowId}' is a host registration (origin '${origin}'); the wrapper only manages workflows it created`,
@@ -358,7 +440,25 @@ export class MastraWorkflowManager {
         { workflowId, origin }
       );
     }
-    if (this.registered(runtime, workflowId)) {
+    let registered: boolean;
+    try {
+      const workflow = runtime.getWorkflow(workflowId);
+      registered = workflow !== undefined && workflow !== null;
+    } catch (error) {
+      // The real library reports an unregistered id by throwing its
+      // structured not-found error — the only failure the gate may interpret
+      // as "absent". Any other runtime failure leaves the provenance
+      // undeterminable and fails closed (SAA-911 F3).
+      if (!isMastraWorkflowNotFoundError(error)) {
+        throw new GraphExecutionError(
+          `The Mastra runtime failed to report the registration state of workflow '${workflowId}'; the wrapper refuses to modify a workflow whose provenance cannot be determined`,
+          GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+          { workflowId }
+        );
+      }
+      registered = false;
+    }
+    if (registered) {
       throw new GraphExecutionError(
         `Mastra workflow '${workflowId}' exists but is not wrapper-managed; refusing to modify a foreign registration`,
         GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
@@ -368,65 +468,29 @@ export class MastraWorkflowManager {
   }
 
   /**
-   * Enforces the C23 ownership predicate on a wrapper-managed workflow before a
-   * management mutation, mirroring the backend's `canAccessGraphResource`
-   * enforcement. Owner-less workflows stay writable by every caller.
+   * Enforces strict owner equality on a wrapper-managed workflow before a
+   * management mutation (SAA-911 F2, the SAA-105 R3 write norm). Deliberately
+   * stricter than the read-visibility predicate: the owner-less visibility
+   * branch that lets every caller *read* an owner-less workflow must never
+   * authorize a write, so an owner-less workflow is writable only by an
+   * owner-less caller, and an owned workflow only by its recorded owner.
    *
    * @param workflowId - The managed workflow id.
    * @param callerOwner - The caller owner resolved from the context.
-   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when the
-   *   caller may not write the workflow.
+   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_WORKFLOW_FORBIDDEN} when
+   *   the caller may not write the workflow.
    */
   private assertOwnerAccess(
     workflowId: string,
     callerOwner: string | undefined
   ): void {
     const owner = this.owners.get(workflowId);
-    if (!canAccessGraphResource({ owner }, callerOwner)) {
+    if (!canAccessGraphResourcePayload({ owner }, callerOwner)) {
       throw new GraphExecutionError(
         `Mastra workflow '${workflowId}' is not writable by the caller`,
         GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
         { workflowId }
       );
-    }
-  }
-
-  /**
-   * Reads how the runtime reports a workflow's registration origin.
-   *
-   * @param runtime - The validated runtime.
-   * @param workflowId - The workflow id.
-   * @returns The origin, or `undefined` when the runtime reports none.
-   */
-  private originOf(
-    runtime: MastraWorkflowManagementRuntime,
-    workflowId: string
-  ): MastraWorkflowOrigin | undefined {
-    if (typeof runtime.getWorkflowOrigin !== "function") return undefined;
-    try {
-      return runtime.getWorkflowOrigin(workflowId);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Whether the runtime already has a workflow registered under the id.
-   *
-   * @param runtime - The validated runtime.
-   * @param workflowId - The workflow id.
-   * @returns `true` when a workflow is registered under the id.
-   */
-  private registered(
-    runtime: MastraWorkflowManagementRuntime,
-    workflowId: string
-  ): boolean {
-    if (typeof runtime.getWorkflow !== "function") return false;
-    try {
-      const workflow = runtime.getWorkflow(workflowId);
-      return workflow !== undefined && workflow !== null;
-    } catch {
-      return false;
     }
   }
 

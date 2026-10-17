@@ -49,6 +49,10 @@ import {
   GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
 } from "../../../src/mastra/types";
+import {
+  GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
+  GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED,
+} from "../../../src/mastra/MastraEnvironment";
 import type { MastraBackendConfig, MastraNodeStepHandler } from "../../../src/mastra/types";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { document, edge, node } from "../../../src/workflows/builders";
@@ -58,6 +62,9 @@ import { frameSinkHarness, rejectionGraphCodeOf, type FrameSinkHarness } from ".
 async function bootHost(config: MastraBackendConfig) {
   return createGraphBackendHost({ variant: "mastra", mastra: config });
 }
+
+/** The test-only environment variable carrying the pg credential value. */
+const ENV_PASSWORD_OVERRIDE = "MASTRA_TEST_MEMORY_PG_PASSWORD";
 
 /** The per-run generate options the fake agent records. */
 interface RecordedGenerateOptions {
@@ -392,7 +399,7 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
     expect(graphCode).toBe(GRAPH_MASTRA_MEMORY_UNAVAILABLE);
   });
 
-  it("fails closed for pg without a connectionString or full host config", async () => {
+  it("fails closed for pg without a complete non-secret host config", async () => {
     const graphCode = await rejectionGraphCodeOf(() =>
       resolveMastraMemoryStorage(
         { provider: "pg", connection: { host: "localhost" } } as MastraMemoryConfig,
@@ -400,6 +407,72 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
       )
     );
     expect(graphCode).toBe(GRAPH_MASTRA_MEMORY_UNAVAILABLE);
+  });
+
+  it("refuses plaintext pg credential material in the connection options (SAA-911 F4)", async () => {
+    for (const key of ["connectionString", "password"]) {
+      const graphCode = await rejectionGraphCodeOf(() =>
+        resolveMastraMemoryStorage(
+          {
+            provider: "pg",
+            connection: {
+              host: "localhost",
+              port: 5432,
+              database: "db",
+              user: "u",
+              [key]: "plaintext-secret",
+            },
+            credentialRef: { credentialId: "MASTRA_PG_PASSWORD", credentialType: "pg" },
+          } as unknown as MastraMemoryConfig,
+          "mem"
+        )
+      );
+      expect(graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
+    }
+  });
+
+  it("fails closed for pg without a credentialRef (SAA-911 F4)", async () => {
+    const graphCode = await rejectionGraphCodeOf(() =>
+      resolveMastraMemoryStorage(
+        {
+          provider: "pg",
+          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+        } as MastraMemoryConfig,
+        "mem"
+      )
+    );
+    expect(graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+  });
+
+  it("fails closed for pg whose referenced credential is unset (SAA-911 F4)", async () => {
+    const graphCode = await rejectionGraphCodeOf(() =>
+      resolveMastraMemoryStorage(
+        {
+          provider: "pg",
+          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+          credentialRef: { credentialId: ENV_PASSWORD_OVERRIDE, credentialType: "pg" },
+        } as MastraMemoryConfig,
+        "mem"
+      )
+    );
+    expect(graphCode).toBe(GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE);
+  });
+
+  it("resolves the pg credential by name into the store options only (SAA-911 F4)", async () => {
+    process.env[ENV_PASSWORD_OVERRIDE] = "resolved-pg-secret";
+    try {
+      const store = await resolveMastraMemoryStorage(
+        {
+          provider: "pg",
+          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+          credentialRef: { credentialId: ENV_PASSWORD_OVERRIDE, credentialType: "pg" },
+        } as MastraMemoryConfig,
+        "mem"
+      );
+      expect(store).toBeTruthy();
+    } finally {
+      delete process.env[ENV_PASSWORD_OVERRIDE];
+    }
   });
 
   it("fails closed with the provider-unknown code for an unsupported provider", async () => {

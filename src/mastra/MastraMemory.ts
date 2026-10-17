@@ -15,6 +15,14 @@
  * {@link GRAPH_MASTRA_MEMORY_UNAVAILABLE} when a provider's connection options
  * are incomplete, so no engine fabricates a memory.
  *
+ * Credential gate (SAA-911 F4, gate C): backend configs never carry credential
+ * values. Plaintext credential members in `connection` options are refused —
+ * never stripped — with {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}, and `pg`
+ * requires a `credentialRef` whose `credentialId` NAMES the environment
+ * variable (user-supplied `.env.secret`) carrying the password; the value is
+ * resolved from the host environment only at backend-construction time and is
+ * never logged, persisted, or held by the graph layer.
+ *
  * R9 resource-output semantics: the node's step emits the JSON-safe, secret-free
  * {@link MastraMemoryDescriptor} on its `resource` output; the live `Memory`
  * instance is resolved in-process where it is consumed (the agent runtime) and
@@ -45,6 +53,11 @@ import {
   GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
 } from "./types";
+import {
+  assertNoMastraPlainConnectionCredentials,
+  mastraCredentialEnvNameOf,
+  resolveMastraCredentialValue,
+} from "./MastraEnvironment";
 import { MASTRA_AGENT_ZONE } from "../node/agents/zones";
 
 /** The memory storage providers the memory node can be configured with. */
@@ -89,9 +102,18 @@ export interface MastraMemoryConfig {
    * forwarded verbatim. Named fields override the same key here.
    */
   memoryOptions?: Record<string, unknown>;
-  /** Provider connection options (never a secret; use `credentialRef` instead). */
+  /**
+   * Provider connection options. Never carries credential material (gate C,
+   * SAA-911 F4): plaintext credential members are refused at resolution time.
+   */
   connection?: Record<string, unknown>;
-  /** Optional credential reference resolved by document validation stage 8. */
+  /**
+   * Credential reference resolved by document validation stage 8 (SAA-911
+   * F4, gate C): `credentialId` names the environment variable that carries
+   * the provider credential; the value is resolved from the host environment
+   * (`.env.secret`) only at backend-construction time and is never carried by
+   * the config.
+   */
   credentialRef?: GraphCredentialReference;
 }
 
@@ -285,9 +307,24 @@ function memoryUnavailable(
  * incomplete; an unknown provider fails with
  * {@link GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN} — never a fabricated store.
  *
+ * Credential gate (SAA-911 F4, gate C): the `pg` connection options must carry
+ * a complete non-secret host config (`host`, `port`, `database`, `user`) and a
+ * `credentialRef` naming the environment variable that carries the pg
+ * password — plaintext credential members in the connection are refused and
+ * the credential value is host-resolved from the git-ignored `.env.secret`
+ * only at construction time. `libsql` stays credential-free by configuration
+ * (its `url` member is required and credential-bearing URLs are outside this
+ * slice's scope — see the SAA-911 residual-risk forward item for the O1
+ * storage matrix).
+ *
  * @param config - The validated memory config.
  * @param id - The resolved memory id the store is constructed with.
  * @returns The live storage instance.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}
+ *   when the connection options carry plaintext credential material.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
+ *   when the pg credential reference is absent, malformed, or its environment
+ *   variable is unset or empty.
  * @throws {GraphExecutionError} when the backend options are incomplete or the
  *   provider is unknown.
  */
@@ -315,22 +352,32 @@ export async function resolveMastraMemoryStorage(
       return new LibSQLStore(options as LibSQLConfig);
     }
     case "pg": {
-      const connection = config.connection ?? {};
-      const connectionString = connection["connectionString"];
+      const context = { provider: "pg", id, surface: "memory" };
+      const connection = { ...(config.connection ?? {}) };
+      assertNoMastraPlainConnectionCredentials(connection, context);
       const fullHostConfig =
         typeof connection["host"] === "string" &&
         typeof connection["port"] === "number" &&
         typeof connection["database"] === "string" &&
-        typeof connection["user"] === "string" &&
-        typeof connection["password"] === "string";
-      if (typeof connectionString !== "string" && !fullHostConfig) {
+        typeof connection["user"] === "string";
+      if (!fullHostConfig) {
         throw memoryUnavailable(
           config.provider,
           id,
-          "the connection options must carry a 'connectionString' or a complete host config ('host', 'port', 'database', 'user', 'password') — credential values are host-resolved (gate C)"
+          "the connection options must carry a complete non-secret host config ('host', 'port', 'database', 'user') and a credentialRef naming the environment variable that carries the pg password — credential values are host-resolved from the git-ignored .env.secret (gate C, SAA-911 F4)"
         );
       }
-      const options: Record<string, unknown> = { id, ...connection };
+      const credentialEnv = mastraCredentialEnvNameOf(
+        config,
+        context,
+        "pg password"
+      );
+      const password = resolveMastraCredentialValue(credentialEnv);
+      const options: Record<string, unknown> = {
+        ...connection,
+        id,
+        password,
+      };
       return new PostgresStore(options as PostgresStoreConfig);
     }
     default:

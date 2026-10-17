@@ -118,8 +118,8 @@ function channelHarness(): ChannelHarness {
  * user-controlled `threadId` configuration: the mastra compiler's linear step
  * chain delivers each step the previous step's output as its input, so a wired
  * `threadId` data edge cannot cross the agent hop — the response descriptor's
- * configured-binding fallback is the canonical cross-turn binding surface (the
- * wired-input override is pinned at the step-handler unit level).
+ * configured binding is the canonical cross-turn binding surface, and it is
+ * authoritative: a wired binding may never override it (SAA-911 F5).
  */
 function channelAgentResponseDocument(id: string): GraphWorkflowDocument {
   return document({

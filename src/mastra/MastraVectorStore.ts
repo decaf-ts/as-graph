@@ -11,6 +11,15 @@
  * closed with {@link GRAPH_MASTRA_VECTOR_UNAVAILABLE} when the bound
  * constructor/driver is absent, so no engine fabricates a store.
  *
+ * Credential gate (SAA-911 F4, gate C): backend configs never carry credential
+ * values. Plaintext credential members in `connection` options are refused —
+ * never stripped — with {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED};
+ * `pgvector` requires a `credentialRef` whose `credentialId` NAMES the
+ * environment variable (user-supplied `.env.secret`) carrying the password,
+ * and `redis` resolves one when configured so a passwordless local instance
+ * stays usable. The resolved value flows only into the binding's own options
+ * and is never logged, persisted, or held by the graph layer.
+ *
  * The in-memory provider ships a complete, offline-capable {@link MastraVector}
  * implementation (no external service), which is the baseline used by the RAG
  * driver tests and the config-only fallback.
@@ -39,6 +48,11 @@ import {
   GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
   GRAPH_MASTRA_VECTOR_UNAVAILABLE,
 } from "./types";
+import {
+  assertNoMastraPlainConnectionCredentials,
+  mastraCredentialEnvNameOf,
+  resolveMastraCredentialValue,
+} from "./MastraEnvironment";
 
 /** The vector-store providers the RAG node can be configured with. */
 export type MastraVectorProvider =
@@ -78,9 +92,18 @@ export interface MastraVectorStoreConfig {
   dimension?: number;
   /** The similarity metric the index is created with (defaults to `cosine`). */
   metric?: MastraVectorMetric;
-  /** Provider connection options (never a secret; use `credentialRef` instead). */
+  /**
+   * Provider connection options. Never carries credential material (gate C,
+   * SAA-911 F4): plaintext credential members are refused at resolution time.
+   */
   connection?: Record<string, unknown>;
-  /** Optional credential reference resolved by document validation stage 8. */
+  /**
+   * Credential reference resolved by document validation stage 8 (SAA-911
+   * F4, gate C): `credentialId` names the environment variable that carries
+   * the provider credential; the value is resolved from the host environment
+   * (`.env.secret`) only at backend-construction time and is never carried by
+   * the config.
+   */
   credentialRef?: GraphCredentialReference;
 }
 
@@ -603,14 +626,46 @@ export interface ResolvedMastraVectorStore {
   descriptor: MastraVectorStoreDescriptor;
 }
 
-/** Builds the constructor options a mastra-native binding is instantiated with. */
+/**
+ * Builds the constructor options a mastra-native binding is instantiated with
+ * (SAA-911 F4, gate C): plaintext credential members in the connection are
+ * refused — never stripped — and the credential is resolved **by name** from
+ * the config's `credentialRef` at construction time (the value is read from
+ * the host `.env.secret` environment and only flows into the binding's own
+ * options). `pgvector` always requires a credential reference (PostgreSQL
+ * authenticates every connection); `redis` resolves one when configured so a
+ * passwordless local instance stays usable while a configured credential
+ * still arrives through the name-only reference.
+ *
+ * @param config - The validated vector-store config.
+ * @param provider - The provider the binding is constructed for.
+ * @param id - The resolved store id.
+ * @returns The constructor options, credential-resolved.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}
+ *   when the connection carries plaintext credential material.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
+ *   when a required credential reference is absent or unresolvable.
+ */
 function bindingOptions(
-  config: MastraVectorStoreConfig
+  config: MastraVectorStoreConfig,
+  provider: MastraVectorProvider,
+  id: string
 ): Record<string, unknown> {
+  const context = { provider, id, surface: "vector store" };
+  const connection = { ...(config.connection ?? {}) };
+  assertNoMastraPlainConnectionCredentials(connection, context);
   const options: Record<string, unknown> = {
-    ...(config.connection ?? {}),
-    id: config.id ?? config.indexName ?? config.provider,
+    ...connection,
+    id,
   };
+  if (provider === "pgvector" || (provider === "redis" && config.credentialRef !== undefined)) {
+    const credentialEnv = mastraCredentialEnvNameOf(
+      config,
+      context,
+      `${provider} password`
+    );
+    options["password"] = resolveMastraCredentialValue(credentialEnv);
+  }
   return options;
 }
 
@@ -624,9 +679,20 @@ function bindingOptions(
  * or driver is absent, and an unknown provider fails with
  * {@link GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN} — never a fabricated store.
  *
+ * Credential gate (SAA-911 F4, gate C): `pgvector` requires a `credentialRef`
+ * naming the environment variable that carries the password and `redis`
+ * resolves one when configured — plaintext credential members in `connection`
+ * options are refused in both cases, and the value is resolved from the host
+ * `.env.secret` environment only at construction time.
+ *
  * @param config - The validated vector-store config.
  * @param options - The host bindings and drivers.
  * @returns The live store and its JSON-safe descriptor.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}
+ *   when the connection options carry plaintext credential material.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
+ *   when a required credential reference is absent, malformed, or its
+ *   environment variable is unset or empty.
  * @throws {GraphExecutionError} when the provider binding/driver is unavailable.
  */
 export function resolveMastraVectorStore(
@@ -649,7 +715,12 @@ export function resolveMastraVectorStore(
           { provider: config.provider, id: descriptor.id }
         );
       }
-      return { store: new binding(bindingOptions(config)), descriptor };
+      return {
+        store: new binding(
+          bindingOptions(config, "pgvector", descriptor.id)
+        ),
+        descriptor,
+      };
     }
     case "redis": {
       const binding = options.bindings?.redis;
@@ -660,7 +731,10 @@ export function resolveMastraVectorStore(
           { provider: config.provider, id: descriptor.id }
         );
       }
-      return { store: new binding(bindingOptions(config)), descriptor };
+      return {
+        store: new binding(bindingOptions(config, "redis", descriptor.id)),
+        descriptor,
+      };
     }
     case "age":
     case "graph": {

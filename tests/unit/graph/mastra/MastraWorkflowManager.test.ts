@@ -18,6 +18,7 @@ import { MastraWorkflowManager } from "../../../../src/mastra/MastraWorkflowMana
 import {
   GRAPH_MASTRA_MANAGEMENT_UNAVAILABLE,
   GRAPH_MASTRA_PERSIST_NOT_SUPPORTED,
+  GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
   GRAPH_MASTRA_WORKFLOW_NOT_FOUND,
 } from "../../../../src/mastra/types";
 import { GraphExecutionBackendRegistry } from "../../../../src/engine/execution/GraphExecutionBackendRegistry";
@@ -266,5 +267,164 @@ describe("MastraWorkflowManager (SAA-346)", () => {
       "first",
       "second",
     ]);
+  });
+});
+
+/**
+ * A minimal Decaf execution-context double carrying the resolved owner
+ * (`graphWorkflowOwnerOf` reads `cache["user"]`, falling back to `get("user")`).
+ */
+function ownerContext(user: string | undefined): unknown {
+  return {
+    cache: user === undefined ? {} : { user },
+    get: () => undefined,
+    accumulate: () => undefined,
+    override: () => undefined,
+    toOverrides: () => [],
+  };
+}
+
+describe("workflow-manager write ownership (SAA-911 F1-F3)", () => {
+  it("refuses a create that overwrites a wrapper-managed id owned by another caller (SAA-911 F1)", async () => {
+    const manager = realManager(realRuntime());
+    const source = twoLeafDocument();
+
+    await expect(
+      manager.create(source, ownerContext("alice") as never)
+    ).resolves.toBeTruthy();
+
+    await expect(
+      manager.create(source, ownerContext("bob") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+  });
+
+  it("allows the recorded owner to re-create their own wrapper-managed id (SAA-911 F1)", async () => {
+    const manager = realManager(realRuntime());
+    const source = twoLeafDocument();
+    await manager.create(source, ownerContext("alice") as never);
+
+    await expect(
+      manager.create(editedTwoLeafDocument(), ownerContext("alice") as never)
+    ).resolves.toBeTruthy();
+  });
+
+  it("denies a named caller mutating an owner-less wrapper-managed workflow (SAA-911 F2)", async () => {
+    const manager = realManager(realRuntime());
+    const source = twoLeafDocument();
+    // Owner-less create (no context): the registration records no owner.
+    await manager.create(source);
+
+    await expect(
+      manager.update(editedTwoLeafDocument(), ownerContext("bob") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(
+      manager.delete(source.id, ownerContext("bob") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    // An owner-less caller keeps write access to the owner-less registration.
+    await expect(manager.update(editedTwoLeafDocument())).resolves.toBeTruthy();
+  });
+
+  it("denies every caller but the recorded owner on an owned workflow (SAA-911 F2)", async () => {
+    const manager = realManager(realRuntime());
+    const source = twoLeafDocument();
+    await manager.create(source, ownerContext("alice") as never);
+
+    await expect(
+      manager.update(editedTwoLeafDocument(), ownerContext("bob") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(
+      manager.delete(source.id, ownerContext("bob") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(
+      manager.update(editedTwoLeafDocument(), ownerContext("alice") as never)
+    ).resolves.toBeTruthy();
+  });
+
+  it("denies an owner-less caller mutating an owned wrapper-managed workflow (SAA-911 F2)", async () => {
+    const manager = realManager(realRuntime());
+    const source = twoLeafDocument();
+    await manager.create(source, ownerContext("alice") as never);
+
+    // No context = owner-less caller: strict owner equality denies the
+    // mutation against a registration that records an owner.
+    await expect(
+      manager.update(editedTwoLeafDocument())
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(manager.delete(source.id)).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    // The recorded owner keeps write access, so the denial was caller-driven,
+    // not state-driven.
+    await expect(
+      manager.update(editedTwoLeafDocument(), ownerContext("alice") as never)
+    ).resolves.toBeTruthy();
+  });
+
+  it("fails the provenance gate closed when the runtime cannot report registration state (SAA-911 F3)", async () => {
+    const throwingRuntime = {
+      addWorkflow() {},
+      removeWorkflow() {},
+      getWorkflow() {
+        throw new Error("transient registry fault");
+      },
+      getWorkflowOrigin() {
+        throw new Error("transient registry fault");
+      },
+    };
+    const manager = realManager(throwingRuntime);
+
+    // A throw while reading provenance is never treated as "absent": create,
+    // update, and delete all refuse the mutation.
+    await expect(
+      manager.create(twoLeafDocument(), ownerContext("alice") as never)
+    ).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(manager.update(twoLeafDocument())).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+    await expect(manager.delete("id")).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+  });
+
+  it("refuses to mutate when the runtime exposes no getWorkflow to prove absence (SAA-911 F3)", async () => {
+    const manager = realManager({ addWorkflow() {}, removeWorkflow() {} });
+
+    await expect(manager.create(twoLeafDocument())).rejects.toMatchObject({
+      graphCode: GRAPH_MASTRA_WORKFLOW_FORBIDDEN,
+    });
+  });
+
+  it("treats the real library's structured not-found throw as an unregistered id (SAA-911 F3)", async () => {
+    // Real `@mastra/core` reports an unknown workflow id by throwing a
+    // structured 404 `MastraError`; the provenance gate must interpret that
+    // honest absence report, and only it, as "unregistered".
+    const notFoundError = Object.assign(new Error("Workflow not found"), {
+      id: "MASTRA_GET_WORKFLOW_BY_ID_NOT_FOUND",
+      details: { status: 404 },
+    });
+    const manager = realManager({
+      addWorkflow() {},
+      removeWorkflow() {},
+      getWorkflow() {
+        throw notFoundError;
+      },
+      getWorkflowOrigin: () => undefined,
+    });
+
+    await expect(manager.create(twoLeafDocument())).resolves.toBeTruthy();
   });
 });
