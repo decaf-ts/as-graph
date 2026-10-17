@@ -37,11 +37,11 @@ export const GRAPH_MASTRA_IF_KIND = "core.flow.if";
 /** Document kind translated into a Mastra `switch` branch set. */
 export const GRAPH_MASTRA_SWITCH_KIND = "core.flow.switch";
 /** Document kind translated into a Mastra `foreach` loop. */
-export const GRAPH_MASTRA_FOREACH_KIND = "graph-foreach-loop-node";
+export const GRAPH_MASTRA_FOREACH_KIND = "core.loop.foreach";
 /** Document kind translated into a Mastra `do-while` loop. */
-export const GRAPH_MASTRA_WHILE_KIND = "graph-while-loop-node";
+export const GRAPH_MASTRA_WHILE_KIND = "core.loop.while";
 /** Document kind translated into a Mastra `do-until` loop. */
-export const GRAPH_MASTRA_UNTIL_KIND = "graph-until-loop-node";
+export const GRAPH_MASTRA_UNTIL_KIND = "core.loop.until";
 /** Document kind translated into a Mastra suspending approval step. */
 export const GRAPH_MASTRA_HUMAN_APPROVAL_KIND = "core.flow.humanApproval";
 

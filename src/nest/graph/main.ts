@@ -37,6 +37,7 @@ import {
   loadGraphDemoWorkflows,
 } from "./GraphBackendHost";
 import { DagsterGraphQLClient } from "../../dagster/DagsterGraphQLClient";
+import { createMastraDefaultStepHandlers } from "../../mastra/MastraDefaultStepHandlers";
 import type { MastraBackendConfig } from "../../mastra/types";
 import type { DagsterClient } from "../../dagster/DagsterTypes";
 
@@ -51,7 +52,7 @@ async function buildMastraConfig(): Promise<MastraBackendConfig> {
   ) => unknown)({
     storage: new (InMemoryStore as unknown as new () => unknown)(),
   });
-  return { mastra: runtime };
+  return { mastra: runtime, stepHandlers: createMastraDefaultStepHandlers() };
 }
 
 /** Builds the read-only Dagster client from `DAGSTER_GRAPHQL_URL`, when set. */
