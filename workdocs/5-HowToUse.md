@@ -976,9 +976,9 @@ is absent.
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
 | `npm run prepare-it-tests` / `teardown-it-tests` | Provision / stop the pinned Dagster gateway fixture |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
-| `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so this test file is excluded from the main Jest config (and thus from `test:unit`/`test:all`) |
+| `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so the file stays excluded from the default Jest config and runs first in `test:all` (and therefore in `test`, `test:dist`, `coverage`, `prepare-pr`, and `prepare-release`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
-| `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) |
+| `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) plus the `test:unit:pdf` lane |
 | `npm run test:dist` | Re-run the full suite against the compiled `lib` and `dist` outputs |
 | `npm run test:circular` | Check the source for circular dependencies |
 | `npm run coverage` | Test run with coverage into `workdocs/reports/coverage` |
@@ -986,3 +986,19 @@ is absent.
 | `npm run docs` | Build the generated JSDoc site into `docs/` |
 | `npm run uml` / `drawings` | Render `workdocs/uml/*.puml` and `workdocs/drawings/*.drawio` into `workdocs/resources` |
 | `repo:readme` | Regenerate `README.md` from `workdocs/Readme.md` |
+
+#### Test environment prerequisites
+
+The test and documentation lanes need the declared `devDependencies` present in `node_modules`. An
+install made under `NODE_ENV=production` (where npm defaults to `--omit=dev`) leaves them out and
+produces module-resolution failures that are install gaps, not product regressions:
+
+- `@nestjs/testing` missing — `tests/unit/graph/mastra/MastraCatalogueOwnership.test.ts` and
+  `tests/unit/graph/GraphPortManifestElement.test.ts` cannot load.
+- `eslint` missing — `tests/unit/graph/boundary-wall.test.ts` cannot spawn
+  `node_modules/.bin/eslint`.
+- `@decaf-ts/utils` missing — `npm run docs` fails with `build-scripts: not found` (and the
+  JSDoc/README toolchain cannot run).
+
+Run the install with devDependencies enabled (`NODE_ENV=development npm install`) before treating
+those failures as defects.

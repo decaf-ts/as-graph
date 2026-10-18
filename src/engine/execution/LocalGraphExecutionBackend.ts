@@ -78,6 +78,8 @@ import type {
   GraphFrameAwareEventSink,
 } from "./GraphExecutionBackend";
 import { GraphExecutionBackendRegistry } from "./GraphExecutionBackendRegistry";
+import { graphAuthDataOf } from "../auth";
+import type { GraphAuthData } from "../auth";
 
 /**
  * Compiles a `{{ ... }}` text template into a JavaScript template literal so
@@ -87,6 +89,38 @@ import { GraphExecutionBackendRegistry } from "./GraphExecutionBackendRegistry";
  * @param template - The persisted template body.
  * @returns A backtick-quoted template literal expression.
  */
+/**
+ * Finds the trailing Decaf context in forwarded contextual arguments.
+ *
+ * @param args - Contextual arguments forwarded through the catalogue seam.
+ * @returns The context, or `undefined` when the caller supplied none.
+ */
+function contextArgOf(args: readonly unknown[]): Context | undefined {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const candidate = args[index];
+    if (!candidate || typeof candidate !== "object") continue;
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.get === "function" &&
+      typeof record.accumulate === "function" &&
+      record.cache !== undefined
+    ) {
+      return candidate as Context;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the caller's authenticated principal facts from forwarded args.
+ *
+ * @param args - Contextual arguments forwarded through the catalogue seam.
+ * @returns The auth data (empty for a context-less caller).
+ */
+function callerAuthOf(args: readonly unknown[]): GraphAuthData {
+  return graphAuthDataOf(contextArgOf(args));
+}
+
 function graphTemplateToExpression(template: string): string {
   const escaped = template.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
   const interpolated = escaped.replace(
@@ -111,8 +145,13 @@ export interface LocalGraphExecutionBackendConfig
    * reports the capability as `not_supported` instead of returning an empty list.
    */
   workflowStore?: GraphBackendWorkflowStore;
-  /** The facade engine, exposed to node contexts. */
-  engine: GraphExecutionEngine;
+  /**
+   * The facade engine, exposed to node contexts and used for mediated catalogue
+   * reads. Optional because a standalone backend can legitimately be booted
+   * without an engine (the integration fixture boot does exactly that); such a
+   * backend preserves the direct read path.
+   */
+  engine?: GraphExecutionEngine;
 }
 
 /**
@@ -134,7 +173,7 @@ export class LocalGraphExecutionBackend
   private valueAdapter!: Adapter<any, any, any, any>;
   private codeSandboxEvaluator?: CodeSandboxEvaluator;
   private workflowStore?: GraphBackendWorkflowStore;
-  private engine!: GraphExecutionEngine;
+  private engine?: GraphExecutionEngine;
 
   constructor() {
     GraphExecutionBackendRegistry.register(
@@ -218,7 +257,17 @@ export class LocalGraphExecutionBackend
         "GRAPH_BACKEND_WORKFLOWS_NOT_SUPPORTED"
       );
     }
-    return await store.getDocument(workflowId, ...args);
+    const document = await store.getDocument(workflowId, ...args);
+    // The store enforces owner equality on the persisted row; this enforces the
+    // document's workflow-level namespace/role requirements on the read side so
+    // a sub-workflow lookup is mediated exactly like an execution. A standalone
+    // backend may be booted without a facade engine (integration fixture boot);
+    // in that case there is no validator to mediate the read, so the store's
+    // ownership check remains the only gate and the direct read path is kept.
+    if (this.engine) {
+      this.engine.assertWorkflowReadAccess(document, callerAuthOf(args));
+    }
+    return document;
   }
 
   /**

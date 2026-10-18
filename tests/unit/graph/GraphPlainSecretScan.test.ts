@@ -232,3 +232,70 @@ describe("GraphPlainSecretScan (SAA-595 F7 recursive scan)", () => {
     expect(cleanIssues).toHaveLength(0);
   });
 });
+
+describe("plain-secret HTTP header carriers (SAA-958 C3)", () => {
+  const manifest = {
+    kind: "core.io.httpRequest",
+    display: { name: "core.io.httpRequest" },
+    inputs: [],
+    outputs: [],
+    parameters: [],
+  } as unknown as GraphResolvedNodeManifest;
+
+  async function plainSecretPaths(
+    parameters: Record<string, unknown>
+  ): Promise<string[]> {
+    const issues: GraphValidationIssue[] = [];
+    await new GraphCredentialReferenceValidator().validate(
+      { id: "carrier", kind: "core.io.httpRequest", parameters } as GraphNodeInstance,
+      manifest,
+      issues,
+      "nodes[carrier]"
+    );
+    return issues
+      .filter((issue) => issue.code === "credential.plain-secret")
+      .map((issue) => issue.path);
+  }
+
+  it("flags httpRequest.headers.Authorization and its case variants", async () => {
+    await expect(
+      plainSecretPaths({ headers: { Authorization: "Bearer token" } })
+    ).resolves.toEqual(["nodes[carrier].parameters.headers.Authorization"]);
+
+    await expect(
+      plainSecretPaths({ headers: { authorization: "Bearer token" } })
+    ).resolves.toEqual(["nodes[carrier].parameters.headers.authorization"]);
+
+    await expect(
+      plainSecretPaths({ headers: { "X-API-Key": "key-123" } })
+    ).resolves.toEqual(["nodes[carrier].parameters.headers.X-API-Key"]);
+  });
+
+  it("flags respondToWebhook.responseHeaders.Set-Cookie and its case variants", async () => {
+    await expect(
+      plainSecretPaths({
+        responseHeaders: { "Set-Cookie": "session=abc" },
+      })
+    ).resolves.toEqual([
+      "nodes[carrier].parameters.responseHeaders.Set-Cookie",
+    ]);
+
+    await expect(
+      plainSecretPaths({ responseHeaders: { "set-cookie": "session=abc" } })
+    ).resolves.toEqual([
+      "nodes[carrier].parameters.responseHeaders.set-cookie",
+    ]);
+
+    await expect(
+      plainSecretPaths({ headers: { "x-auth-token": "token" } })
+    ).resolves.toEqual(["nodes[carrier].parameters.headers.x-auth-token"]);
+  });
+
+  it("leaves a non-secret header untouched", async () => {
+    await expect(
+      plainSecretPaths({
+        headers: { "X-Trace-Id": "trace-1", Accept: "application/json" },
+      })
+    ).resolves.toEqual([]);
+  });
+});

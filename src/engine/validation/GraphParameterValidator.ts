@@ -177,6 +177,12 @@ export const GRAPH_PLAIN_SECRET_KEYS = [
   "api_key",
   "privateKey",
   "credentials",
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "x-auth-token",
+  "cookie",
+  "set-cookie",
 ] as const;
 
 /**

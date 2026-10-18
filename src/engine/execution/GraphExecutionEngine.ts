@@ -31,8 +31,10 @@ import type {
 
 import {
   GRAPH_DEFAULT_CONCURRENCY,
+  GRAPH_MAX_CHILD_RUNS,
   GRAPH_MAX_FOREACH_ITERATIONS,
   GRAPH_MAX_LOOP_ITERATIONS,
+  GRAPH_MAX_SUB_WORKFLOW_DEPTH,
 } from "../constants";
 import {
   GraphExecutionEventType,
@@ -98,6 +100,30 @@ const FACADE_OWNED_BACKEND_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "codeSandboxEvaluator",
   "workflowStore",
 ]);
+
+/**
+ * Resolves the authenticated principal carried by forwarded contextual args.
+ *
+ * @param args - Contextual arguments forwarded to a catalogue seam.
+ * @returns The caller's auth facts (empty when no Decaf context is present).
+ */
+function graphAuthOfContextualArgs(args: readonly unknown[]): ReturnType<
+  typeof graphAuthDataOf
+> {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const candidate = args[index];
+    if (!candidate || typeof candidate !== "object") continue;
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.get === "function" &&
+      typeof record.accumulate === "function" &&
+      record.cache !== undefined
+    ) {
+      return graphAuthDataOf(candidate as Context);
+    }
+  }
+  return {};
+}
 
 /**
  * Strips facade-owned keys from a backend's retained configuration that the facade
@@ -383,6 +409,12 @@ export class GraphExecutionEngine
   private dataTableRepository?: GraphDataTableRepository;
   /** Registry instance backing {@linkcode GraphExecutionEngine.webhookResponses}. */
   private readonly webhookResponseRegistry = new GraphWebhookResponseRegistry();
+  /** Sub-workflow depth of each in-flight run, used by the depth guard. */
+  private readonly runSubWorkflowDepth = new Map<string, number>();
+  /** Root run id of each in-flight run, used by the child-run budget. */
+  private readonly runRootId = new Map<string, string>();
+  /** Sub-workflow child-run count per root run. */
+  private readonly rootChildRunCounts = new Map<string, number>();
 
   /**
    * Cross-run data-table persistence for the `core.data.dataTable` kind.
@@ -505,6 +537,8 @@ export class GraphExecutionEngine
     // receives the authoritative run id.
     opts.runId = runId;
     const path = opts.path ?? [];
+    this.enterExecutionBudget(runId, opts);
+    try {
     const eventFactory = new GraphExecutionEventFactory();
     const valueStore = createGraphValueRepository(this.valueAdapter);
     valueStore.seedWorkflowInputs(
@@ -603,6 +637,9 @@ export class GraphExecutionEngine
       { document, plan, inputs, options: opts, events: sink },
       ...args
     );
+    } finally {
+      this.releaseExecutionBudget(runId);
+    }
   }
 
   /**
@@ -680,7 +717,32 @@ export class GraphExecutionEngine
         { backend: this.backendName, workflowId }
       );
     }
-    return await backend.getWorkflow(workflowId, ...args);
+    const document = await backend.getWorkflow(workflowId, ...args);
+    this.assertWorkflowReadAccess(document, graphAuthOfContextualArgs(args));
+    return document;
+  }
+
+  /**
+   * Applies the engine's workflow-level read authorization to a document that
+   * was resolved through the workflow catalogue seam.
+   *
+   * Ownership is enforced by the persistence store's own read path; this adds
+   * the namespace/role check for the resolved document when graph auth is
+   * enabled, so a sub-workflow lookup cannot read a namespace-scoped document
+   * the caller is not entitled to.
+   *
+   * @param document - The resolved canonical workflow document.
+   * @param auth - The caller's authenticated principal facts.
+   * @param logger - Optional run-scoped logger for the denial audit line.
+   * @throws {ForbiddenError} when the document's workflow-level namespace/role
+   *   requirements are not granted.
+   */
+  assertWorkflowReadAccess(
+    document: GraphWorkflowDocument,
+    auth: ReturnType<typeof graphAuthDataOf>,
+    logger?: Parameters<GraphAuthValidator["validateWorkflowRead"]>[2]
+  ): void {
+    this.client.authValidator.validateWorkflowRead(document, auth, logger);
   }
 
   /**
@@ -748,7 +810,9 @@ export class GraphExecutionEngine
         { backend: flavour, workflowId }
       );
     }
-    return await backend.getWorkflow(workflowId, ...args);
+    const document = await backend.getWorkflow(workflowId, ...args);
+    this.assertWorkflowReadAccess(document, graphAuthOfContextualArgs(args));
+    return document;
   }
 
   /** Human-readable name of the active backend, for diagnostics. */
@@ -885,6 +949,75 @@ export class GraphExecutionEngine
   private assertNotAborted(opts: GraphExecutionOptions): void {
     if (opts.abortSignal?.aborted === true) {
       throw new GraphRunCancelledError(opts.runId ?? "unknown");
+    }
+  }
+
+  /**
+   * Registers a run in the sub-workflow depth/child-budget bookkeeping and
+   * fails closed when either bound would be exceeded.
+   *
+   * Depth is inherited through the `parentRunId` chain and only increments when
+   * the execution itself is a `subworkflow` edge (the last path segment), so
+   * loop bodies remain governed by their iteration caps. The child-run budget
+   * is tracked per root run and increments for every sub-workflow child.
+   */
+  private enterExecutionBudget(
+    runId: string,
+    opts: GraphExecutionOptions
+  ): void {
+    const parentRunId = opts.parentRunId;
+    const path = opts.path ?? [];
+    const isSubWorkflowEdge = path[path.length - 1] === "subworkflow";
+    const pathDepth = path.filter((segment) => segment === "subworkflow").length;
+    const parentDepth = parentRunId
+      ? this.runSubWorkflowDepth.get(parentRunId) ??
+        Math.max(0, pathDepth - (isSubWorkflowEdge ? 1 : 0))
+      : 0;
+    const depth = parentRunId ? parentDepth + (isSubWorkflowEdge ? 1 : 0) : 0;
+    const maxDepth = opts.maxSubWorkflowDepth ?? GRAPH_MAX_SUB_WORKFLOW_DEPTH;
+    if (depth > maxDepth) {
+      throw new GraphExecutionError(
+        `Graph run '${runId}' exceeds the maximum sub-workflow depth of ${maxDepth}`,
+        "GRAPH_SUB_WORKFLOW_DEPTH_EXCEEDED",
+        { runId, parentRunId, depth, maxDepth }
+      );
+    }
+
+    if (!parentRunId) {
+      this.runSubWorkflowDepth.set(runId, depth);
+      this.runRootId.set(runId, runId);
+      this.rootChildRunCounts.set(runId, 0);
+      return;
+    }
+
+    const rootRunId = this.runRootId.get(parentRunId) ?? parentRunId;
+    const maxChildren = opts.maxChildRuns ?? GRAPH_MAX_CHILD_RUNS;
+    let childCount = this.rootChildRunCounts.get(rootRunId) ?? 0;
+    if (isSubWorkflowEdge) {
+      childCount += 1;
+      if (childCount > maxChildren) {
+        throw new GraphExecutionError(
+          `Graph run '${rootRunId}' exceeds the maximum of ${maxChildren} sub-workflow child runs`,
+          "GRAPH_SUB_WORKFLOW_CHILD_LIMIT_EXCEEDED",
+          { runId, rootRunId, parentRunId, childCount, maxChildren }
+        );
+      }
+      this.rootChildRunCounts.set(rootRunId, childCount);
+    }
+    this.runSubWorkflowDepth.set(runId, depth);
+    this.runRootId.set(runId, rootRunId);
+  }
+
+  /**
+   * Releases a finished run's depth/root bookkeeping. The root's child count is
+   * removed only when the root itself finishes, after all descendants.
+   */
+  private releaseExecutionBudget(runId: string): void {
+    const rootRunId = this.runRootId.get(runId);
+    this.runSubWorkflowDepth.delete(runId);
+    this.runRootId.delete(runId);
+    if (rootRunId === runId) {
+      this.rootChildRunCounts.delete(runId);
     }
   }
 

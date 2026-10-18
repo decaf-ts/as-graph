@@ -1,8 +1,9 @@
 /**
  * @module as-graph/tests/unit/graph/nodes/ReadPDFNode.test
  * @summary Unit coverage for the `core.io.readPDF` general-engine node.
- * @description Parses the real n8n `sample.pdf` fixture through the production
- * `pdf-parse` dependency and asserts the extracted text, page count, base64
+ * @description Parses the vendored `tests/fixtures/read-pdf-sample.pdf` fixture
+ * through the production `pdf-parse` dependency and asserts the extracted text,
+ * page count, base64
  * input, object-wrapper input, and the invalid-input failure code.
  *
  * `pdf-parse` delegates to `pdfjs-dist`, whose Node fake-worker path performs a
@@ -21,10 +22,7 @@ import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 import { buildNodeContext } from "./node-test-utils";
 
 const KIND = "core.io.readPDF";
-const FIXTURE = resolve(
-  __dirname,
-  "../../../../n8n/packages/nodes-base/nodes/ReadPdf/test/sample.pdf"
-);
+const FIXTURE = resolve(__dirname, "../../../fixtures/read-pdf-sample.pdf");
 
 describe("core.io.readPDF", () => {
   it("extracts the text and page count from a real PDF buffer", async () => {

@@ -118,7 +118,7 @@
     "test:integration:mastra": "jest --testPathPatterns=\"/tests/integration/mastra\" --passWithNoTests --detectOpenHandles",
     "test:integration:dagster": "bash tests/integration/dagster/run.sh",
     "test:e2e": "jest --testPathPatterns=\"/tests/(e2e)\" --passWithNoTests --detectOpenHandles",
-    "test:all": "jest --testPathPatterns=\"/tests\" --passWithNoTests --detectOpenHandles",
+    "test:all": "npm run test:unit:pdf && jest --testPathPatterns=\"/tests\" --passWithNoTests --detectOpenHandles",
     "test:evals": "jest -c jest.eval.config.cjs --passWithNoTests --detectOpenHandles",
     "test:dist": "TEST_TARGET=lib npm run test:all && TEST_TARGET=dist npm run test:all",
     "test:circular": "dpdm -T --no-warning --no-tree ./src/index.ts",

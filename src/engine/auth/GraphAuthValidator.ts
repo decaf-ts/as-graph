@@ -96,6 +96,37 @@ export class GraphAuthValidator {
     }
   }
 
+  /**
+   * Validates a workflow document's workflow-level auth requirements before it
+   * is handed to execution from a catalogue-read seam (e.g. a sub-workflow
+   * `workflowId` lookup). Owner equality is enforced by the persistence read;
+   * this closes the namespace/role side of the read path so a namespace-scoped
+   * document cannot be resolved and harvested by an unauthorized caller.
+   *
+   * @param document - The resolved canonical workflow document.
+   * @param auth - The authenticated principal facts.
+   * @param logger - Optional run-scoped logger for failed-access attempts.
+   * @throws {ForbiddenError} when a declared requirement is not granted.
+   */
+  validateWorkflowRead(
+    document: GraphWorkflowDocument,
+    auth: GraphAuthData,
+    logger?: Logger
+  ): void {
+    if (!this.enabled) return;
+    const log = logger ?? this.options.logger ?? Logging.for("GraphAuth");
+    const workflowAuth = graphAuthMetadataOf(
+      document.metadata as Record<string, unknown> | undefined
+    );
+    this.assertGranted(
+      `workflow '${document.id || document.name}'`,
+      workflowAuth?.namespaces ?? [],
+      auth,
+      workflowAuth?.roles ?? [],
+      log
+    );
+  }
+
   private assertGranted(
     scope: string,
     requiredNamespaces: string[],

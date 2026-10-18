@@ -177,7 +177,11 @@ export class GraphCredentialReferenceValidator {
     issues: GraphValidationIssue[],
     path: string
   ): void {
-    const denyList = new Set<string>(GRAPH_PLAIN_SECRET_KEYS);
+    // HTTP header names are case-insensitive, so compare keys case-insensitively
+    // as well; a persisted `Authorization`/`X-API-Key` must be caught too.
+    const denyList = new Set<string>(
+      GRAPH_PLAIN_SECRET_KEYS.map((key) => key.toLowerCase())
+    );
     for (const [key, value] of Object.entries(node.parameters ?? {})) {
       this.scanPlainSecretValue(
         value,
@@ -219,7 +223,7 @@ export class GraphCredentialReferenceValidator {
     depth = 0
   ): void {
     const key = keyPath[keyPath.length - 1];
-    if (denyList.has(key)) {
+    if (denyList.has(key.toLowerCase())) {
       issues.push({
         code: "credential.plain-secret",
         path: `${basePath}.${keyPath.join(".")}`,

@@ -10,9 +10,18 @@
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { GRAPH_HTTP_MAX_RESPONSE_BYTES } from "../../../../src/engine/constants";
 
 import { ExtractFromFileNode } from "../../../../src/node/io/extract-from-file/node";
 import { HttpRequestNode } from "../../../../src/node/io/http-request/node";
@@ -76,6 +85,26 @@ describe("core.io.httpRequest", () => {
       if (url.pathname === "/fail") {
         response.writeHead(503, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: "unavailable" }));
+        return;
+      }
+      if (url.pathname === "/redirect-file") {
+        response.writeHead(302, { location: "file:///etc/passwd" });
+        response.end();
+        return;
+      }
+      if (url.pathname.startsWith("/redirect/")) {
+        const hop = Number(url.pathname.slice("/redirect/".length));
+        response.writeHead(302, { location: `/redirect/${hop - 1}` });
+        response.end();
+        return;
+      }
+      if (url.pathname === "/large") {
+        const body = Buffer.alloc(GRAPH_HTTP_MAX_RESPONSE_BYTES + 1, 0x61);
+        response.writeHead(200, {
+          "content-type": "text/plain",
+          "content-length": String(body.byteLength),
+        });
+        response.end(body);
         return;
       }
       response.writeHead(404);
@@ -182,6 +211,29 @@ describe("core.io.httpRequest", () => {
     await expect(run(HttpRequestNode, kind, {}, {})).rejects.toMatchObject({
       graphCode: "GRAPH_HTTP_URL_REQUIRED",
     });
+  });
+
+  it("rejects a redirect that pivots to a non-http(s) protocol (C4)", async () => {
+    await expect(
+      run(HttpRequestNode, kind, { url: `${baseUrl}/redirect-file` }, {})
+    ).rejects.toMatchObject({ graphCode: "GRAPH_HTTP_PROTOCOL_NOT_ALLOWED" });
+  });
+
+  it("caps redirect hops at five (C4)", async () => {
+    await expect(
+      run(HttpRequestNode, kind, { url: `${baseUrl}/redirect/6` }, {})
+    ).rejects.toMatchObject({ graphCode: "GRAPH_HTTP_TOO_MANY_REDIRECTS" });
+  });
+
+  it("rejects a response body over the 10 MiB cap (C4)", async () => {
+    await expect(
+      run(
+        HttpRequestNode,
+        kind,
+        { url: `${baseUrl}/large`, responseFormat: "text" },
+        {}
+      )
+    ).rejects.toMatchObject({ graphCode: "GRAPH_HTTP_RESPONSE_TOO_LARGE" });
   });
 });
 
@@ -419,17 +471,24 @@ describe("core.io.extractFromFile", () => {
 describe("core.io.readWriteFile", () => {
   const kind = "core.io.readWriteFile";
   let directory: string;
+  let outside: string;
+  const previousBase = process.env["GRAPH_FILE_IO_BASE"];
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "as-graph-rw-"));
+    outside = await mkdtemp(join(tmpdir(), "as-graph-rw-outside-"));
+    process.env["GRAPH_FILE_IO_BASE"] = directory;
   });
 
   afterAll(async () => {
+    if (previousBase === undefined) delete process.env["GRAPH_FILE_IO_BASE"];
+    else process.env["GRAPH_FILE_IO_BASE"] = previousBase;
     await rm(directory, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   });
 
-  it("writes, reads back, and appends UTF-8 content", async () => {
-    const path = join(directory, "plain.txt");
+  it("writes, reads back, and appends UTF-8 content relative to the base", async () => {
+    const path = "plain.txt";
     const written = await run(
       ReadWriteFileNode,
       kind,
@@ -449,11 +508,11 @@ describe("core.io.readWriteFile", () => {
       { operation: "write", path, content: " world", append: true },
       {}
     );
-    expect(await readFile(path, "utf8")).toBe("hello world");
+    expect(await readFile(join(directory, path), "utf8")).toBe("hello world");
   });
 
   it("creates missing directories and supports base64 encoding", async () => {
-    const path = join(directory, "nested", "deep", "data.bin");
+    const path = join("nested", "deep", "data.bin");
     await run(
       ReadWriteFileNode,
       kind,
@@ -466,7 +525,7 @@ describe("core.io.readWriteFile", () => {
       },
       {}
     );
-    expect(await readFile(path, "utf8")).toBe("binary");
+    expect(await readFile(join(directory, path), "utf8")).toBe("binary");
 
     const read = await run(
       ReadWriteFileNode,
@@ -478,14 +537,14 @@ describe("core.io.readWriteFile", () => {
   });
 
   it("falls back to the routed value when content is not configured", async () => {
-    const path = join(directory, "routed.txt");
+    const path = "routed.txt";
     await run(
       ReadWriteFileNode,
       kind,
       { operation: "write", path },
       { value: "routed" }
     );
-    expect(await readFile(path, "utf8")).toBe("routed");
+    expect(await readFile(join(directory, path), "utf8")).toBe("routed");
   });
 
   it("fails with the documented codes for missing configuration", async () => {
@@ -494,23 +553,67 @@ describe("core.io.readWriteFile", () => {
     ).rejects.toMatchObject({ graphCode: "GRAPH_READ_WRITE_FILE_PATH_REQUIRED" });
 
     await expect(
-      run(
-        ReadWriteFileNode,
-        kind,
-        { operation: "read", path: `${directory}\0bad` },
-        {}
-      )
+      run(ReadWriteFileNode, kind, { operation: "read", path: "bad\0name" }, {})
     ).rejects.toMatchObject({ graphCode: "GRAPH_READ_WRITE_FILE_INVALID_PATH" });
 
     await expect(
       run(
         ReadWriteFileNode,
         kind,
-        { operation: "write", path: join(directory, "empty.txt") },
+        { operation: "write", path: "empty.txt" },
         {}
       )
     ).rejects.toMatchObject({
       graphCode: "GRAPH_READ_WRITE_FILE_CONTENT_REQUIRED",
+    });
+  });
+
+  it("rejects a relative path that escapes the base (C1)", async () => {
+    await expect(
+      run(ReadWriteFileNode, kind, { operation: "read", path: "../../.env" }, {})
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+    });
+  });
+
+  it("treats an absolute path as base-relative and refuses forbidden host directories (C1)", async () => {
+    await expect(
+      run(ReadWriteFileNode, kind, { operation: "read", path: "/etc/passwd" }, {})
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+    });
+  });
+
+  it("rejects a symlink inside the base that resolves outside it (C1)", async () => {
+    const target = join(outside, "secret.txt");
+    await writeFile(target, "outside secret", "utf8");
+    await symlink(target, join(directory, "escape-link"));
+
+    await expect(
+      run(
+        ReadWriteFileNode,
+        kind,
+        { operation: "read", path: "escape-link" },
+        {}
+      )
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+    });
+  });
+
+  it("rejects a path with a workdocs segment (C1)", async () => {
+    await mkdir(join(directory, "workdocs"), { recursive: true });
+    await writeFile(join(directory, "workdocs", "secret.md"), "docs", "utf8");
+
+    await expect(
+      run(
+        ReadWriteFileNode,
+        kind,
+        { operation: "read", path: "workdocs/secret.md" },
+        {}
+      )
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
     });
   });
 });

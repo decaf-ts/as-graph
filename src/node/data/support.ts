@@ -84,15 +84,47 @@ export function splitGraphDataPath(path: string): string[] {
 export function assertGraphDataPath(path: string): string[] {
   const segments = splitGraphDataPath(path);
   for (const segment of segments) {
-    if (RESERVED_PATH_SEGMENTS.has(segment)) {
-      throw new GraphExecutionError(
-        `Graph data path '${path}' contains the reserved segment '${segment}'`,
-        "GRAPH_DATA_UNSAFE_PATH",
-        { path, segment }
-      );
-    }
+    assertGraphDataSegment(path, segment);
   }
   return segments;
+}
+
+/**
+ * Rejects a reserved prototype-pollution key.
+ *
+ * Literal-key mode (no dot notation) bypasses path splitting, so the same
+ * reserved-key check is applied to the whole key: a configured `__proto__`
+ * assignment must fail even when it is not split into segments.
+ *
+ * @param path - The configured path or literal key, for the error message.
+ * @param segment - The single key being accessed.
+ * @throws {GraphExecutionError} with code `GRAPH_DATA_UNSAFE_PATH` when the key
+ *   is `__proto__`, `constructor`, or `prototype`.
+ */
+function assertGraphDataSegment(path: string, segment: string): void {
+  if (RESERVED_PATH_SEGMENTS.has(segment)) {
+    throw new GraphExecutionError(
+      `Graph data path '${path}' contains the reserved segment '${segment}'`,
+      "GRAPH_DATA_UNSAFE_PATH",
+      { path, segment }
+    );
+  }
+}
+
+/**
+ * Validates a path in either dotted or literal-key mode.
+ *
+ * @param path - The configured path or literal key.
+ * @param dotNotation - When false (default true), the whole path is a single
+ *   literal key.
+ * @returns The segments to traverse.
+ * @throws {GraphExecutionError} with code `GRAPH_DATA_UNSAFE_PATH` when the
+ *   dotted path or literal key contains a reserved segment.
+ */
+function graphDataSegments(path: string, dotNotation: boolean): string[] {
+  if (dotNotation) return assertGraphDataPath(path);
+  assertGraphDataSegment(path, path);
+  return [path];
 }
 
 /**
@@ -114,9 +146,7 @@ export function getGraphDataValue(
   dotNotation = true
 ): unknown {
   if (!path) return source;
-  const segments = dotNotation
-    ? assertGraphDataPath(path)
-    : [path];
+  const segments = graphDataSegments(path, dotNotation);
   let current: unknown = source;
   for (const segment of segments) {
     if (!isGraphDataRecord(current)) return undefined;
@@ -146,7 +176,7 @@ export function setGraphDataValue(
   value: unknown,
   dotNotation = true
 ): void {
-  const segments = dotNotation ? assertGraphDataPath(path) : [path];
+  const segments = graphDataSegments(path, dotNotation);
   if (segments.length === 0) return;
   let current: Record<string, unknown> = target;
   for (let index = 0; index < segments.length - 1; index++) {
@@ -181,7 +211,7 @@ export function deleteGraphDataValue(
   path: string,
   dotNotation = true
 ): void {
-  const segments = dotNotation ? assertGraphDataPath(path) : [path];
+  const segments = graphDataSegments(path, dotNotation);
   if (segments.length === 0) return;
   let current: Record<string, unknown> = target;
   for (let index = 0; index < segments.length - 1; index++) {

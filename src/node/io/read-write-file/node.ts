@@ -12,8 +12,16 @@
  * file per `append`. The write path and byte length are reported on both
  * `result` and `bytes`.
  */
-import { dirname } from "node:path";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { realpathSync } from "node:fs";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
@@ -23,6 +31,144 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+
+/** Environment variable selecting the directory file operations are rooted at. */
+const FILE_IO_BASE_ENV = "GRAPH_FILE_IO_BASE";
+
+/** Directory names that are never readable or writable through the node. */
+const FORBIDDEN_PATH_SEGMENTS = new Set(["workdocs"]);
+
+/** Absolute system directories that are never readable or writable. */
+function forbiddenAbsoluteDirectories(): string[] {
+  return ["/etc", "/proc", "/root", resolve(homedir(), ".ssh")];
+}
+
+/**
+ * Resolves the configured file-IO root, defaulting to the process cwd.
+ */
+function fileIoBase(): string {
+  const configured = process.env[FILE_IO_BASE_ENV]?.trim();
+  const lexical = resolve(
+    configured && configured.length > 0 ? configured : process.cwd()
+  );
+  try {
+    // Canonicalize the root so a symlinked workspace does not make every
+    // legitimate real path look like an escape.
+    return realpathSync(lexical);
+  } catch {
+    return lexical;
+  }
+}
+
+/**
+ * Returns whether `candidate` is the base itself or lives beneath it.
+ */
+function isWithinBase(base: string, candidate: string): boolean {
+  const rel = relative(base, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Rejects a resolved path that escapes the file-IO root or hits a forbidden
+ * system/workdocs directory.
+ */
+function assertContainedPath(
+  base: string,
+  candidate: string,
+  configuredPath: string
+): void {
+  if (!isWithinBase(base, candidate)) {
+    throw new GraphExecutionError(
+      `Read/Write Files from Disk node path '${configuredPath}' resolves outside the configured file IO base`,
+      "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+      { path: configuredPath, base }
+    );
+  }
+  for (const forbidden of forbiddenAbsoluteDirectories()) {
+    if (isWithinBase(forbidden, candidate)) {
+      throw new GraphExecutionError(
+        `Read/Write Files from Disk node path '${configuredPath}' targets a forbidden directory`,
+        "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+        { path: configuredPath }
+      );
+    }
+  }
+  const segments = relative(base, candidate).split(sep).filter(Boolean);
+  for (const segment of segments) {
+    if (FORBIDDEN_PATH_SEGMENTS.has(segment.toLowerCase())) {
+      throw new GraphExecutionError(
+        `Read/Write Files from Disk node path '${configuredPath}' targets a forbidden directory`,
+        "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+        { path: configuredPath, segment }
+      );
+    }
+  }
+}
+
+/**
+ * Rejects an absolute configured path that lexically names a forbidden host
+ * directory.
+ *
+ * Absolute paths are interpreted relative to the file-IO root, but a path such
+ * as `/etc/passwd` must still fail with the FORBIDDEN code: mapping it below the
+ * root would only fail later as a missing file and report the wrong reason.
+ * The check runs against the configured absolute path before the leading
+ * separators are stripped.
+ */
+function assertNotForbiddenAbsolutePath(configuredPath: string): void {
+  if (!isAbsolute(configuredPath)) return;
+  const lexical = resolve(configuredPath);
+  for (const forbidden of forbiddenAbsoluteDirectories()) {
+    if (isWithinBase(forbidden, lexical)) {
+      throw new GraphExecutionError(
+        `Read/Write Files from Disk node path '${configuredPath}' targets a forbidden directory`,
+        "GRAPH_READ_WRITE_FILE_PATH_FORBIDDEN",
+        { path: configuredPath }
+      );
+    }
+  }
+}
+
+/**
+ * Resolves a configured path against the file-IO root.
+ *
+ * Absolute paths are interpreted relative to the root (their leading
+ * separators are stripped), so `/etc/passwd` can never escape to the system
+ * file. Relative paths are resolved lexically and must stay beneath the root.
+ * An absolute path that names a forbidden host directory fails closed with the
+ * FORBIDDEN code before being mapped below the root.
+ */
+function resolveFileIoPath(configuredPath: string): {
+  base: string;
+  candidate: string;
+} {
+  const base = fileIoBase();
+  assertNotForbiddenAbsolutePath(configuredPath);
+  const normalized = configuredPath.replace(/^[/\\]+/, "");
+  const candidate = resolve(base, normalized);
+  assertContainedPath(base, candidate, configuredPath);
+  return { base, candidate };
+}
+
+/**
+ * Resolves the real path of the nearest existing ancestor (or the target
+ * itself when it exists), so a symlink cannot redirect an operation outside the
+ * base after the lexical check.
+ */
+async function realPathOfNearestExisting(
+  candidate: string
+): Promise<string | undefined> {
+  let current = candidate;
+  while (true) {
+    try {
+      return await realpath(current);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return undefined;
+      current = parent;
+    }
+  }
+}
 
 /** What the node does at the configured path. */
 export type ReadWriteFileOperation = "read" | "write";
@@ -90,8 +236,21 @@ export class ReadWriteFileNode extends GraphNode<
       );
     }
 
+    const { base, candidate } = resolveFileIoPath(this.path);
+
     if (this.operation === "read") {
-      const content = await readFile(this.path);
+      let existing: string;
+      try {
+        existing = await realpath(candidate);
+      } catch {
+        throw new GraphExecutionError(
+          `Read/Write Files from Disk node path '${this.path}' does not exist`,
+          "GRAPH_READ_WRITE_FILE_INVALID_PATH",
+          { path: this.path }
+        );
+      }
+      assertContainedPath(base, existing, this.path);
+      const content = await readFile(existing);
       return {
         result:
           this.encoding === "base64"
@@ -119,13 +278,20 @@ export class ReadWriteFileNode extends GraphNode<
             ? Buffer.from(content)
             : Buffer.from(String(content), "utf8");
 
+    const existing = await realPathOfNearestExisting(candidate);
+    if (existing) assertContainedPath(base, existing, this.path);
     if (this.createDirectories) {
-      await mkdir(dirname(this.path), { recursive: true });
+      await mkdir(dirname(candidate), { recursive: true });
     }
+    const parentRealPath = await realpath(dirname(candidate));
+    assertContainedPath(base, parentRealPath, this.path);
+    const targetRealPath = await realPathOfNearestExisting(candidate);
+    if (targetRealPath) assertContainedPath(base, targetRealPath, this.path);
+
     if (this.append) {
-      await appendFile(this.path, data);
+      await appendFile(candidate, data);
     } else {
-      await writeFile(this.path, data);
+      await writeFile(candidate, data);
     }
 
     return {

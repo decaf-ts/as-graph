@@ -11,6 +11,8 @@
  * calls so caller-provided contexts (transactions, locks) are honoured.
  */
 import {
+  Condition,
+  OrderDirection,
   Repository,
   repository,
   type Adapter,
@@ -19,10 +21,25 @@ import {
 } from "@decaf-ts/core";
 import { DefaultFlavour } from "@decaf-ts/decoration";
 import { GraphExecutionError } from "../errors/GraphExecutionError";
+import {
+  GRAPH_DATA_TABLE_MAX_LIST_ROWS,
+  GRAPH_DATA_TABLE_MAX_ROWS,
+  GRAPH_DATA_TABLE_MAX_ROW_BYTES,
+} from "../constants";
 import { GraphDataTableModel } from "./GraphDataTableModel";
 
-/** Character allowlist a table name must satisfy (letters, digits, `_.:-`). */
-const TABLE_NAME_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+/**
+ * Character allowlist a table name must satisfy (letters, digits, `_.-`).
+ * `:` is intentionally excluded: it is the composite-id separator, so allowing
+ * it in a table name would let `t:x`/`y` collide with `t`/`x:y`.
+ */
+const TABLE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
+
+/** Maximum accepted table-name length. */
+const MAX_TABLE_NAME_LENGTH = 128;
+
+/** Maximum accepted row-id length. */
+const MAX_ROW_ID_LENGTH = 256;
 
 /**
  * Builds the composite persistence id for a table row.
@@ -43,11 +60,67 @@ function tableRowId(tableName: string, rowId: string): string {
  *   the name is empty or contains characters outside the allowlist.
  */
 function assertTableName(tableName: string): void {
-  if (!tableName || !TABLE_NAME_PATTERN.test(tableName)) {
+  if (
+    !tableName ||
+    tableName.length > MAX_TABLE_NAME_LENGTH ||
+    !TABLE_NAME_PATTERN.test(tableName)
+  ) {
     throw new GraphExecutionError(
       `Data table name '${tableName}' is invalid`,
       "GRAPH_DATA_TABLE_INVALID_NAME",
       { tableName }
+    );
+  }
+}
+
+/**
+ * Validates a caller-supplied row id.
+ *
+ * @param rowId - The row id to validate.
+ * @throws {GraphExecutionError} with code `GRAPH_DATA_TABLE_INVALID_ROW_ID`
+ *   when the id is empty or too long.
+ */
+function assertRowId(rowId: string): void {
+  if (!rowId || rowId.length > MAX_ROW_ID_LENGTH) {
+    throw new GraphExecutionError(
+      `Data table row id '${rowId}' is invalid`,
+      "GRAPH_DATA_TABLE_INVALID_ROW_ID",
+      { rowId }
+    );
+  }
+}
+
+/**
+ * Rejects a row payload whose serialized form exceeds the per-row byte cap.
+ *
+ * @param data - The row payload.
+ * @throws {GraphExecutionError} with code `GRAPH_DATA_TABLE_ROW_TOO_LARGE`
+ *   when the payload is not JSON-serializable or exceeds the cap.
+ */
+function assertRowSize(data: Record<string, unknown>): void {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(data);
+  } catch {
+    throw new GraphExecutionError(
+      "Data table row payload is not JSON-serializable",
+      "GRAPH_DATA_TABLE_ROW_TOO_LARGE",
+      { limitBytes: GRAPH_DATA_TABLE_MAX_ROW_BYTES }
+    );
+  }
+  if (serialized === undefined) {
+    throw new GraphExecutionError(
+      "Data table row payload is not JSON-serializable",
+      "GRAPH_DATA_TABLE_ROW_TOO_LARGE",
+      { limitBytes: GRAPH_DATA_TABLE_MAX_ROW_BYTES }
+    );
+  }
+  const bytes = Buffer.byteLength(serialized, "utf8");
+  if (bytes > GRAPH_DATA_TABLE_MAX_ROW_BYTES) {
+    throw new GraphExecutionError(
+      `Data table row payload exceeds the ${GRAPH_DATA_TABLE_MAX_ROW_BYTES}-byte limit`,
+      "GRAPH_DATA_TABLE_ROW_TOO_LARGE",
+      { bytes, limitBytes: GRAPH_DATA_TABLE_MAX_ROW_BYTES }
     );
   }
 }
@@ -60,7 +133,9 @@ function assertTableName(tableName: string): void {
  * @returns The plain row record.
  */
 function toRecord(model: GraphDataTableModel): Record<string, unknown> {
-  return { id: model.rowId, ...model.data };
+  // The row identity always wins over a payload member named `id`, so a stored
+  // row cannot masquerade as a different row on read.
+  return { ...model.data, id: model.rowId };
 }
 
 /**
@@ -104,6 +179,9 @@ export class GraphDataTableRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<Record<string, unknown>> {
     assertTableName(tableName);
+    assertRowId(rowId);
+    assertRowSize(data);
+    await this.assertRowCapacity(tableName, ...args);
     const now = new Date();
     const model = new GraphDataTableModel({
       id: tableRowId(tableName, rowId),
@@ -135,6 +213,8 @@ export class GraphDataTableRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<Record<string, unknown>> {
     assertTableName(tableName);
+    assertRowId(rowId);
+    assertRowSize(data);
     const existing = await this.readRow(tableName, rowId, ...args);
     if (!existing) return this.insertRow(tableName, rowId, data, ...args);
     const model = (await this.read(
@@ -167,6 +247,7 @@ export class GraphDataTableRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<Record<string, unknown> | undefined> {
     assertTableName(tableName);
+    assertRowId(rowId);
     try {
       const model = (await this.read(
         tableRowId(tableName, rowId),
@@ -199,17 +280,43 @@ export class GraphDataTableRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<Record<string, unknown>[]> {
     assertTableName(tableName);
-    const models = (await this.select().execute(
-      ...args
-    )) as GraphDataTableModel[];
-    const rows = models
-      .filter((model) => model.tableName === tableName)
-      .sort((left, right) => left.rowId.localeCompare(right.rowId))
-      .map(toRecord);
-    if (limit !== undefined && Number.isFinite(limit) && limit >= 0) {
-      return rows.slice(0, Math.floor(limit));
+    const requested =
+      limit !== undefined && Number.isFinite(limit) && limit >= 0
+        ? Math.floor(limit)
+        : GRAPH_DATA_TABLE_MAX_LIST_ROWS;
+    if (requested === 0) return [];
+    const effective = Math.min(requested, GRAPH_DATA_TABLE_MAX_LIST_ROWS);
+    const models = (await this.select()
+      .where(Condition.attr<GraphDataTableModel>("tableName").eq(tableName))
+      .orderBy("rowId", OrderDirection.ASC)
+      .limit(effective)
+      .execute(...args)) as GraphDataTableModel[];
+    return models.map(toRecord);
+  }
+
+  /**
+   * Enforces the per-table row cap before inserting a new row.
+   *
+   * Tables are partitioned by the query-side `tableName` filter; this probe
+   * uses the same bounded list query, so it never scans the whole adapter.
+   *
+   * @param tableName - The validated table name.
+   * @param args - Optional contextual arguments.
+   * @throws {GraphExecutionError} with code `GRAPH_DATA_TABLE_ROW_LIMIT_EXCEEDED`
+   *   when the table already holds the maximum number of rows.
+   */
+  private async assertRowCapacity(
+    tableName: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<void> {
+    const rows = await this.listRows(tableName, GRAPH_DATA_TABLE_MAX_ROWS, ...args);
+    if (rows.length >= GRAPH_DATA_TABLE_MAX_ROWS) {
+      throw new GraphExecutionError(
+        `Data table '${tableName}' reached the ${GRAPH_DATA_TABLE_MAX_ROWS}-row limit`,
+        "GRAPH_DATA_TABLE_ROW_LIMIT_EXCEEDED",
+        { tableName, limit: GRAPH_DATA_TABLE_MAX_ROWS }
+      );
     }
-    return rows;
   }
 
   /**
@@ -229,6 +336,7 @@ export class GraphDataTableRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<boolean> {
     assertTableName(tableName);
+    assertRowId(rowId);
     try {
       await this.delete(tableRowId(tableName, rowId), ...args);
       return true;

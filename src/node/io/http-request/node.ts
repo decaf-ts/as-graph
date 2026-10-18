@@ -26,6 +26,11 @@ import type {
 } from "../../../engine/types";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import {
+  GRAPH_HTTP_MAX_REDIRECTS,
+  GRAPH_HTTP_MAX_RESPONSE_BYTES,
+  GRAPH_HTTP_MAX_TIMEOUT_MS,
+} from "../../../engine/constants";
 
 /** HTTP methods the node can send. */
 export type HttpRequestMethod =
@@ -138,10 +143,7 @@ export class HttpRequestNode extends GraphNode<
       headers["content-type"] = "application/json";
     }
 
-    const timeoutMs =
-      Number.isFinite(this.timeoutMs) && Number(this.timeoutMs) > 0
-        ? Number(this.timeoutMs)
-        : DEFAULT_TIMEOUT_MS;
+    const timeoutMs = this.resolveTimeoutMs();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
@@ -149,13 +151,11 @@ export class HttpRequestNode extends GraphNode<
     context.abortSignal?.addEventListener("abort", abort, { once: true });
 
     try {
-      const response = await fetch(url, {
-        method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
-      const text = await response.text();
+      const { response, url: finalUrl } = await this.fetchFollowingRedirects(
+        url,
+        { method, headers, body, signal: controller.signal }
+      );
+      const text = await this.readCappedResponseText(response);
       const responseHeaders = Object.fromEntries(
         response.headers.entries()
       ) as Record<string, string>;
@@ -166,7 +166,7 @@ export class HttpRequestNode extends GraphNode<
         throw new GraphExecutionError(
           `HTTP Request node received status ${response.status}`,
           "GRAPH_HTTP_REQUEST_FAILED",
-          { status: response.status, url: url.toString() }
+          { status: response.status, url: finalUrl.toString() }
         );
       }
 
@@ -191,6 +191,145 @@ export class HttpRequestNode extends GraphNode<
       clearTimeout(timer);
       context.abortSignal?.removeEventListener("abort", abort);
     }
+  }
+
+  /**
+   * Resolves the effective request timeout, clamped to the hard ceiling.
+   *
+   * A missing, non-finite, or non-positive value falls back to the default; a
+   * larger configured value is clamped to {@link GRAPH_HTTP_MAX_TIMEOUT_MS} so
+   * a workflow cannot keep a run open indefinitely.
+   */
+  private resolveTimeoutMs(): number {
+    const configured = Number(this.timeoutMs);
+    if (!Number.isFinite(configured) || configured <= 0) {
+      return DEFAULT_TIMEOUT_MS;
+    }
+    return Math.min(configured, GRAPH_HTTP_MAX_TIMEOUT_MS);
+  }
+
+  /**
+   * Performs the request with `redirect: "manual"` and follows each redirect
+   * explicitly, revalidating the http/https allowlist on every hop.
+   *
+   * This closes the redirect-pivot SSRF gap: the configured URL is validated
+   * before the first hop, and every `Location` target is validated before it is
+   * requested. The hop count is bounded by {@link GRAPH_HTTP_MAX_REDIRECTS}.
+   */
+  private async fetchFollowingRedirects(
+    initialUrl: URL,
+    init: RequestInit
+  ): Promise<{ response: Response; url: URL }> {
+    let current = initialUrl;
+    let request = init;
+    for (let hop = 0; hop <= GRAPH_HTTP_MAX_REDIRECTS; hop++) {
+      const response = await fetch(current, {
+        ...request,
+        redirect: "manual",
+      });
+      if (!this.isRedirectStatus(response.status)) {
+        return { response, url: current };
+      }
+      const location = response.headers.get("location");
+      if (!location) return { response, url: current };
+      if (hop === GRAPH_HTTP_MAX_REDIRECTS) {
+        await this.discardResponseBody(response);
+        throw new GraphExecutionError(
+          `HTTP Request node exceeded the maximum of ${GRAPH_HTTP_MAX_REDIRECTS} redirects`,
+          "GRAPH_HTTP_TOO_MANY_REDIRECTS",
+          { url: current.toString(), maxRedirects: GRAPH_HTTP_MAX_REDIRECTS }
+        );
+      }
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        await this.discardResponseBody(response);
+        throw new GraphExecutionError(
+          `HTTP Request node redirect target '${location}' is invalid`,
+          "GRAPH_HTTP_INVALID_URL",
+          { location }
+        );
+      }
+      if (!ALLOWED_PROTOCOLS.has(next.protocol)) {
+        await this.discardResponseBody(response);
+        throw new GraphExecutionError(
+          `HTTP Request node redirect protocol '${next.protocol}' is not allowed`,
+          "GRAPH_HTTP_PROTOCOL_NOT_ALLOWED",
+          { protocol: next.protocol, url: next.toString() }
+        );
+      }
+      await this.discardResponseBody(response);
+      if (response.status === 303) {
+        request = { ...request, method: "GET", body: undefined };
+        const headers = { ...(request.headers as Record<string, string>) };
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === "content-type") delete headers[key];
+        }
+        request = { ...request, headers };
+      }
+      current = next;
+    }
+    return { response: undefined as never, url: current };
+  }
+
+  private isRedirectStatus(status: number): boolean {
+    return (
+      status === 301 ||
+      status === 302 ||
+      status === 303 ||
+      status === 307 ||
+      status === 308
+    );
+  }
+
+  private async discardResponseBody(response: Response): Promise<void> {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // a redirect body that cannot be cancelled is not a run failure
+    }
+  }
+
+  /**
+   * Reads the response body with a hard byte cap.
+   *
+   * @param response - The response to read.
+   * @returns The decoded UTF-8 body.
+   * @throws {GraphExecutionError} with code `GRAPH_HTTP_RESPONSE_TOO_LARGE`
+   *   when the body exceeds {@link GRAPH_HTTP_MAX_RESPONSE_BYTES}.
+   */
+  private async readCappedResponseText(response: Response): Promise<string> {
+    if (!response.body) return "";
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > GRAPH_HTTP_MAX_RESPONSE_BYTES) {
+          try {
+            await reader.cancel();
+          } catch {
+            // the size failure below is authoritative
+          }
+          throw new GraphExecutionError(
+            `HTTP Request node response body exceeds the ${GRAPH_HTTP_MAX_RESPONSE_BYTES}-byte limit`,
+            "GRAPH_HTTP_RESPONSE_TOO_LARGE",
+            { limitBytes: GRAPH_HTTP_MAX_RESPONSE_BYTES }
+          );
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+      "utf8"
+    );
   }
 
   /**

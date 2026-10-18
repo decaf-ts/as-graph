@@ -66,6 +66,55 @@ export const GRAPH_MAX_FOREACH_ITERATIONS = 10_000;
 export const GRAPH_CODE_MAX_TIMEOUT_MS = 30_000;
 
 /**
+ * Hard ceiling, in milliseconds, for the HTTP Request node's user-controllable
+ * `timeoutMs`. Larger values are clamped (never trusted), bounding how long a
+ * single workflow node can hold an execution open.
+ */
+export const GRAPH_HTTP_MAX_TIMEOUT_MS = 300_000;
+
+/**
+ * Maximum response body size, in bytes, that the HTTP Request node will read.
+ * A larger body is rejected with `GRAPH_HTTP_RESPONSE_TOO_LARGE` instead of
+ * buffering it in memory.
+ */
+export const GRAPH_HTTP_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Maximum number of redirect hops the HTTP Request node follows. Every hop is
+ * re-validated against the http/https allowlist so a redirect cannot pivot the
+ * request to another protocol.
+ */
+export const GRAPH_HTTP_MAX_REDIRECTS = 5;
+
+/**
+ * Default maximum nesting depth of sub-workflow executions in one run. Depth is
+ * tracked through the `parentRunId` chain and only `executeSubWorkflow`-style
+ * edges increment it, so loop bodies stay governed by their own iteration caps.
+ */
+export const GRAPH_MAX_SUB_WORKFLOW_DEPTH = 10;
+
+/**
+ * Default maximum number of sub-workflow child runs a single root run may
+ * spawn. Bounds unbounded `perItem` fan-out across the whole run tree.
+ */
+export const GRAPH_MAX_CHILD_RUNS = 1000;
+
+/**
+ * Maximum number of rows a data table may hold by default.
+ */
+export const GRAPH_DATA_TABLE_MAX_ROWS = 10_000;
+
+/**
+ * Maximum serialized size, in bytes, of a single data-table row payload.
+ */
+export const GRAPH_DATA_TABLE_MAX_ROW_BYTES = 1024 * 1024;
+
+/**
+ * Maximum number of rows a single data-table list operation returns.
+ */
+export const GRAPH_DATA_TABLE_MAX_LIST_ROWS = 10_000;
+
+/**
  * Metadata key under which pinning information is stored on a graph node.
  */
 export const GRAPH_PINNING_METADATA_KEY = "graph.pinnable";

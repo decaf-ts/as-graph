@@ -64,6 +64,18 @@ export interface GraphExecutionOptions {
   validateOutputs?: boolean;
   maxLoopIterations?: number;
   maxForeachIterations?: number;
+  /**
+   * Maximum nesting depth of sub-workflow executions in this run tree. Older
+   * `parentRunId` chains count through the engine's own run bookkeeping (or the
+   * `path`'s `subworkflow` segments). Defaults to
+   * `GRAPH_MAX_SUB_WORKFLOW_DEPTH`.
+   */
+  maxSubWorkflowDepth?: number;
+  /**
+   * Maximum number of sub-workflow child runs a single root run may spawn
+   * across its whole tree. Defaults to `GRAPH_MAX_CHILD_RUNS`.
+   */
+  maxChildRuns?: number;
   usePinnedValues?: boolean;
   writeThroughCache?: boolean;
   metadata?: Record<string, unknown>;
