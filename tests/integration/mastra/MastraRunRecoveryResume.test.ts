@@ -5,8 +5,8 @@
  * from the storage workflows domain (`getWorkflowRunById` →
  * `getWorkflowById` → `createRun({ runId })`).
  * @description Real: the production compiler, a real `@mastra/core` workflow
- * whose `core.flow.humanApproval` step suspends, a real `InMemoryStore`
- * persistence boundary, and the production `MastraGraphExecutionBackend`
+ * whose `core.flow.humanApproval` step suspends, a real Postgres persistence
+ * boundary, and the production `MastraGraphExecutionBackend`
  * resume path. **Host-injected**: only the `MastraSuspendStateReader` port
  * (Mastra owns the suspended snapshot) and the frame-bound event sink.
  *
@@ -17,15 +17,15 @@
  * storage-recovery fallback under test.
  */
 import {
-  describe,
   it,
   expect,
   beforeAll,
   afterAll,
   afterEach,
+  beforeEach,
 } from "@jest/globals";
 import { Mastra } from "@mastra/core/mastra";
-import { InMemoryStore } from "@mastra/core/storage";
+import type { PostgresStore } from "@mastra/pg";
 import { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { graphRunDocumentFingerprint } from "../../../src/engine/runs/GraphRunFingerprint";
@@ -37,6 +37,14 @@ import {
   frameSinkHarness,
   integrationHumanApprovalDocument,
 } from "./helpers";
+import {
+  closeLiveStores,
+  createLiveStorage,
+  liveCount,
+  liveDescribe,
+  purgeLiveRuns,
+  sharedLiveStorage,
+} from "./live-stack";
 
 const RUN_ID = "mastra-it-recovery-run";
 const SEED_RUN_ID = "mastra-it-recovery-seed";
@@ -71,7 +79,11 @@ interface StorageRecord {
 }
 
 /** A real Mastra runtime over the given durable boundary with the workflow registered. */
-function runtimeOver(storage: InMemoryStore, workflow: unknown, id: string): Mastra {
+function runtimeOver(
+  storage: PostgresStore,
+  workflow: unknown,
+  id: string
+): Mastra {
   return new Mastra({ storage, workflows: { [id]: workflow as never } });
 }
 
@@ -81,7 +93,7 @@ function runtimeOver(storage: InMemoryStore, workflow: unknown, id: string): Mas
  */
 async function suspendAndDiscard(
   source: GraphWorkflowDocument,
-  storage: InMemoryStore
+  storage: PostgresStore
 ): Promise<void> {
   const { compiled } = compileDocument(source, []);
   const origin = runtimeOver(storage, compiled.workflow, source.id);
@@ -110,9 +122,11 @@ async function suspendAndDiscard(
 }
 
 /** Reads the persisted run record from the storage workflows domain. */
-async function persistedRecord(storage: InMemoryStore): Promise<StorageRecord> {
+async function persistedRecord(storage: PostgresStore): Promise<StorageRecord> {
   const workflows = (await storage.getStore("workflows")) as unknown as {
-    getWorkflowRunById: (args: { runId: string }) => Promise<StorageRecord | null>;
+    getWorkflowRunById: (args: {
+      runId: string;
+    }) => Promise<StorageRecord | null>;
   };
   const record = await workflows.getWorkflowRunById({ runId: RUN_ID });
   expect(record).not.toBeNull();
@@ -121,7 +135,7 @@ async function persistedRecord(storage: InMemoryStore): Promise<StorageRecord> {
 
 /** The host's authoritative suspend snapshot, read from real Mastra storage. */
 async function snapshotFromStorage(
-  storage: InMemoryStore,
+  storage: PostgresStore,
   source: GraphWorkflowDocument
 ): Promise<MastraRunSnapshotState> {
   const record = await persistedRecord(storage);
@@ -164,63 +178,82 @@ async function within<T>(
   }
 }
 
-describe("mastra resume without host getRun (SAA-926 §6.3)", () => {
-  it(
-    "recovers a suspended run from storage and completes it after a runtime replacement",
-    async () => {
-      const source = integrationHumanApprovalDocument();
-      const storage = new InMemoryStore();
+liveDescribe("mastra resume without host getRun (SAA-926 §6.3)", () => {
+  beforeEach(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, SEED_RUN_ID],
+      ["mastra-it-human-approval"]
+    );
+  });
 
-      await suspendAndDiscard(source, storage);
-      const snapshot = await snapshotFromStorage(storage, source);
+  afterAll(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, SEED_RUN_ID],
+      ["mastra-it-human-approval"]
+    );
+    await closeLiveStores();
+  });
 
-      // Process restart: a new runtime over the same durable storage, with no
-      // process-side run handle and no public `getRun` on @mastra/core 1.77.0.
-      const { compiled } = compileDocument(source, []);
-      const restarted = runtimeOver(storage, compiled.workflow, source.id);
-      expect(
-        (restarted as unknown as Record<string, unknown>)["getRun"]
-      ).toBeUndefined();
+  it("recovers a suspended run from storage and completes it after a runtime replacement", async () => {
+    const source = integrationHumanApprovalDocument();
+    const storage = createLiveStorage("as-graph-it-recovery");
 
-      const backend = new MastraGraphExecutionBackend();
-      await backend.initialize({
-        mastra: restarted,
-        suspendStateReader: {
-          readRunState: async (runId: string) =>
-            runId === RUN_ID ? snapshot : undefined,
-        },
-      });
-      // Registers the canonical document + binds the compiled workflow on the
-      // restarted runtime, exactly like the host boot path; it must not touch
-      // the suspended RUN_ID snapshot.
-      const seed = frameSinkHarness(SEED_RUN_ID);
-      await backend.execute({
-        document: source,
-        plan: {} as never,
-        inputs: {},
-        options: {} as never,
-        events: seed.sink,
-      });
+    await suspendAndDiscard(source, storage);
+    const snapshot = await snapshotFromStorage(storage, source);
 
-      const audit = await within(
-        backend.resume(RUN_ID, {
-          step: "approve",
-          resumeData: { approved: true },
-        }),
-        5000,
-        "backend.resume recovery path"
-      );
+    // Process restart: a new runtime over the same durable storage, with no
+    // process-side run handle and no public `getRun` on @mastra/core 1.77.0.
+    const { compiled } = compileDocument(source, []);
+    const restarted = runtimeOver(storage, compiled.workflow, source.id);
+    expect(
+      (restarted as unknown as Record<string, unknown>)["getRun"]
+    ).toBeUndefined();
 
-      expect(audit.runId).toBe(RUN_ID);
-      expect(audit.workflowId).toBe(source.id);
-      expect(audit.step).toBe("approve");
-      expect(audit).not.toHaveProperty("resumeData");
+    const backend = new MastraGraphExecutionBackend();
+    await backend.initialize({
+      mastra: restarted,
+      suspendStateReader: {
+        readRunState: async (runId: string) =>
+          runId === RUN_ID ? snapshot : undefined,
+      },
+    });
+    // Registers the canonical document + binds the compiled workflow on the
+    // restarted runtime, exactly like the host boot path; it must not touch
+    // the suspended RUN_ID snapshot.
+    const seed = frameSinkHarness(SEED_RUN_ID);
+    await backend.execute({
+      document: source,
+      plan: {} as never,
+      inputs: {},
+      options: {} as never,
+      events: seed.sink,
+    });
 
-      // The recovered run completed for real in Mastra's own storage.
-      const completed = await persistedRecord(storage);
-      expect(completed.snapshot?.status).toBe("success");
-      expect(completed.workflowName).toBe(source.id);
-    },
-    20000
-  );
+    const audit = await within(
+      backend.resume(RUN_ID, {
+        step: "approve",
+        resumeData: { approved: true },
+      }),
+      5000,
+      "backend.resume recovery path"
+    );
+
+    expect(audit.runId).toBe(RUN_ID);
+    expect(audit.workflowId).toBe(source.id);
+    expect(audit.step).toBe("approve");
+    expect(audit).not.toHaveProperty("resumeData");
+
+    // The recovered run completed for real in Mastra's own storage.
+    const completed = await persistedRecord(storage);
+    expect(completed.snapshot?.status).toBe("success");
+    expect(completed.workflowName).toBe(source.id);
+    const rows = await liveCount(
+      storage,
+      "SELECT count(*)::int AS count FROM \"mastra\".mastra_workflow_snapshot WHERE run_id = $1 AND snapshot->>'status' = $2",
+      [RUN_ID, "success"]
+    );
+    expect(rows).toBe(1);
+  }, 20000);
 });

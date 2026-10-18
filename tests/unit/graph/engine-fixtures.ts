@@ -83,7 +83,12 @@ export function relation(
  */
 export function linearWorkflow(): GraphWorkflowDefinition {
   const adderDef = nodeDef("adder", "math.add", ["a", "b"], ["sum"]);
-  const multiplierDef = nodeDef("multiplier", "math.multiply", ["x"], ["product"]);
+  const multiplierDef = nodeDef(
+    "multiplier",
+    "math.multiply",
+    ["x"],
+    ["product"]
+  );
 
   return {
     name: "linear-wf",
@@ -115,7 +120,12 @@ export function linearWorkflow(): GraphWorkflowDefinition {
  */
 export function cyclicWorkflow(): GraphWorkflowDefinition {
   const adderDef = nodeDef("adder", "math.add", ["a"], ["sum"]);
-  const multiplierDef = nodeDef("multiplier", "math.multiply", ["x"], ["product"]);
+  const multiplierDef = nodeDef(
+    "multiplier",
+    "math.multiply",
+    ["x"],
+    ["product"]
+  );
 
   return {
     name: "cyclic-wf",
@@ -163,9 +173,7 @@ import type {
   GraphResolvedEdgeInstance,
   GraphResolvedWorkflow,
 } from "../../../src/engine/validation/GraphResolvedWorkflow";
-import {
-  GraphWorkflowDocumentValidator,
-} from "../../../src/engine/validation/GraphWorkflowDocumentValidator";
+import { GraphWorkflowDocumentValidator } from "../../../src/engine/validation/GraphWorkflowDocumentValidator";
 import { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
 import type { GraphExecutionEngineConfig } from "../../../src/engine/execution/GraphExecutionEngine";
 import { createRamGraphAdapter } from "../../../src/ram";
@@ -175,10 +183,10 @@ import type { IsolatedVmCodeSandboxEvaluatorConfig } from "../../../src/engine/e
 import { Injectables } from "@decaf-ts/injectable-decorators";
 
 /**
- * Returns a fresh {@link GraphNodeCatalogue}. `GraphNodeCatalogue` is a
- * `@service()` singleton, so `new GraphNodeCatalogue()` would otherwise return
- * the same shared instance across tests; reset the injectable first so each call
- * gets an isolated catalogue.
+ * Clears the graph `@service()` singletons (node catalogue, workflow service,
+ * run service and node-model service) so repeated module bootstraps do not
+ * reuse an instance bound to a previous adapter. Call before building a fresh
+ * catalogue or booting another host module.
  */
 export function resetGraphInjectables(): void {
   const registry = Injectables.getRegistry() as unknown as {
@@ -186,8 +194,14 @@ export function resetGraphInjectables(): void {
   };
   const cache = registry.cache;
   if (!cache) return;
-  for (const key of Object.getOwnPropertySymbols(cache)) {
-    if (key.toString().includes("GraphNodeCatalogue")) {
+  const graphInjectables = [
+    "GraphNodeCatalogue",
+    "GraphWorkflowService",
+    "GraphRunService",
+    "GraphNodeModelService",
+  ];
+  for (const key of Reflect.ownKeys(cache)) {
+    if (graphInjectables.some((name) => key.toString().includes(name))) {
       const entry = cache[key];
       if (entry && typeof entry === "object") entry.instance = undefined;
     }
@@ -294,7 +308,11 @@ export function linearDocument(): GraphWorkflowDocument {
       documentEdge("e1", ["workflow", "a"], ["node", "adder", "a"]),
       documentEdge("e2", ["workflow", "b"], ["node", "adder", "b"]),
       documentEdge("e3", ["node", "adder", "sum"], ["node", "multiplier", "x"]),
-      documentEdge("e4", ["node", "multiplier", "product"], ["workflow", "result"]),
+      documentEdge(
+        "e4",
+        ["node", "multiplier", "product"],
+        ["workflow", "result"]
+      ),
     ],
   };
 }
@@ -314,7 +332,11 @@ export function cyclicDocument(): GraphWorkflowDocument {
     ],
     edges: [
       documentEdge("e1", ["node", "adder", "sum"], ["node", "multiplier", "x"]),
-      documentEdge("e2", ["node", "multiplier", "product"], ["node", "adder", "a"]),
+      documentEdge(
+        "e2",
+        ["node", "multiplier", "product"],
+        ["node", "adder", "a"]
+      ),
     ],
   };
 }
@@ -375,8 +397,7 @@ export function executeNode(
  */
 export function nodeExecutor(nodeClass: GraphNodeClass): GraphNodeExecutor {
   return {
-    execute: (request, context) =>
-      executeNode(nodeClass, request, context),
+    execute: (request, context) => executeNode(nodeClass, request, context),
   };
 }
 
@@ -478,14 +499,22 @@ export function minimalManifest(
 export function handResolvedWorkflow(
   document: GraphWorkflowDocument,
   nodes: { id: string; kind: string; inputs?: string[]; outputs?: string[] }[],
-  edges: [id: string, from: string, fromPort: string, to: string, toPort: string][]
+  edges: [
+    id: string,
+    from: string,
+    fromPort: string,
+    to: string,
+    toPort: string,
+  ][]
 ): GraphResolvedWorkflow {
   const resolvedNodes = nodes.map((node) => ({
     instance: { id: node.id, kind: node.kind, parameters: {} },
     manifest: minimalManifest(node.kind, node.inputs, node.outputs),
     executor: { execute: () => ({}) },
   }));
-  const nodeById = new Map(resolvedNodes.map((node) => [node.instance.id, node]));
+  const nodeById = new Map(
+    resolvedNodes.map((node) => [node.instance.id, node])
+  );
   const resolvedEdges: GraphResolvedEdgeInstance[] = edges.map(
     ([id, from, fromPort, to, toPort]) => ({
       id,

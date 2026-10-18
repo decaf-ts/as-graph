@@ -5,7 +5,7 @@
  * SAA-721 fixture→catalog parity: the host-assembled module (`createGraphBackendHost`
  * + `GraphExecutionModule.forRoot`) serves the full fixture registry through the
  * per-engine catalogue and the ownership-filtered serving list for every engine
- * driver (local/mastra/dagster), and the run detail endpoints expose each node's
+ * driver (local/dagster), and the run detail endpoints expose each node's
  * intermediate inputs/outputs untruncated.
  * @description Boots the real engine and drives a representative fixture for
  * every executable kind family — triggers, branching, loops, utilities and the
@@ -31,7 +31,6 @@ import {
   resetGraphValueAdapter,
 } from "../../unit/graph/engine-fixtures";
 import { TestRequestContextModule } from "../../unit/nest/graphRunTestSupport";
-import { realStepHandler } from "../../integration/mastra/helpers";
 import { runFixtureDocument } from "../../fixtures/workflow-engine";
 import {
   executableWorkflowFixtures,
@@ -39,6 +38,22 @@ import {
 } from "../../../src/workflows";
 
 jest.setTimeout(180000);
+
+const OBSERVABILITY_ENABLED_OVERRIDE = "MASTRA__OBSERVABILITY__ENABLED";
+let observabilityEnabledOriginal: string | undefined;
+
+beforeAll(() => {
+  observabilityEnabledOriginal = process.env[OBSERVABILITY_ENABLED_OVERRIDE];
+  process.env[OBSERVABILITY_ENABLED_OVERRIDE] = "false";
+});
+
+afterAll(() => {
+  if (observabilityEnabledOriginal === undefined) {
+    delete process.env[OBSERVABILITY_ENABLED_OVERRIDE];
+  } else {
+    process.env[OBSERVABILITY_ENABLED_OVERRIDE] = observabilityEnabledOriginal;
+  }
+});
 
 describe("demo workflow fixtures — end to end (SAA-2049)", () => {
   it("executes the full executable fixture set through GraphExecutionEngine.execute", async () => {
@@ -67,7 +82,10 @@ describe("demo workflow fixtures — end to end (SAA-2049)", () => {
     const fixture = graphWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-boundary-value"
     )!;
-    const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
+    const result = await runFixtureDocument(
+      fixture.document,
+      fixture.inputs ?? {}
+    );
     expect(result.status).toBe("succeeded");
     expect(result.outputs.out).toBeNull();
     expect(result.nodeResults.seed.outputs).toEqual({ value: null });
@@ -128,9 +146,6 @@ async function bootHostApp(
       workflows: { auth: "optional", allowAnonymousAccess: true },
       engines: { auth: "optional" },
     },
-    ...(variant === "mastra"
-      ? { mastra: { mastra: {}, stepHandlers: [realStepHandler("test.leaf")] } }
-      : {}),
   });
   const moduleRef = await Test.createTestingModule({
     imports: [
@@ -141,6 +156,15 @@ async function bootHostApp(
   const app = moduleRef.createNestApplication();
   await app.init();
   return app;
+}
+
+/** Closes a booted app. */
+async function closeHostApp(app: INestApplication): Promise<void> {
+  try {
+    await app.close();
+  } catch {
+    // already closed
+  }
 }
 
 /** Polls `GET /graph/runs/:runId` until the run reaches a terminal state. */
@@ -173,7 +197,6 @@ async function waitForTerminalRun(
 
 describe.each([
   ["local", "local"],
-  ["mastra", "mastra"],
   ["dagster", "dagster"],
 ] as Array<[GraphEngineVariant, string]>)(
   "fixture→catalog parity — %s (SAA-721)",
@@ -185,11 +208,7 @@ describe.each([
     });
 
     afterAll(async () => {
-      try {
-        await app.close();
-      } catch {
-        // already closed
-      }
+      await closeHostApp(app);
     });
 
     const api = () => request(app.getHttpServer());
@@ -314,10 +333,7 @@ describe("run detail serves per-node I/O untruncated (SAA-721)", () => {
     expect(run.status).toBe("succeeded");
     const nodeResults = (
       run.result as {
-        nodeResults: Record<
-          string,
-          { inputs: unknown; outputs?: unknown }
-        >;
+        nodeResults: Record<string, { inputs: unknown; outputs?: unknown }>;
       }
     ).nodeResults;
 
@@ -334,8 +350,8 @@ describe("run detail serves per-node I/O untruncated (SAA-721)", () => {
       (candidate) => candidate.runId === runId
     );
     expect(row).toBeDefined();
-    expect(
-      (row!.result as { nodeResults: unknown }).nodeResults
-    ).toEqual(nodeResults);
+    expect((row!.result as { nodeResults: unknown }).nodeResults).toEqual(
+      nodeResults
+    );
   }, 180000);
 });

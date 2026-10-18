@@ -5,16 +5,19 @@
  * audit record.
  * @description Real-vs-injected note. **Real**: the `core.flow.humanApproval`
  * step created by the production compiler, the real Mastra run that suspends against
- * a real `InMemoryStore` snapshot, the real `Run.resume` that completes the run,
+ * a real Postgres snapshot, the real `Run.resume` that completes the run,
  * and the production `MastraGraphExecutionBackend` / `MastraResumeGuard`. **Host-
  * injected**: `config.mastra.getRun` (the `Mastra` class exposes no public
  * `getRun`) and the `MastraSuspendStateReader` port (Mastra owns the snapshot).
  * The reader is a thin adapter over the real suspended run, not a fabricated state
  * machine; the fail-closed cases vary only the reader/snapshot/request.
  */
-import { describe, it, expect, afterEach } from "@jest/globals";
+import { it, expect, afterEach, afterAll, beforeEach } from "@jest/globals";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
-import { GraphExecutionEventType, GraphExecutionStatus } from "../../../src/shared/graph/constants";
+import {
+  GraphExecutionEventType,
+  GraphExecutionStatus,
+} from "../../../src/shared/graph/constants";
 import { MastraEventBridge } from "../../../src/mastra/MastraEventBridge";
 import { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
@@ -34,6 +37,13 @@ import {
   realMastraWithWorkflow,
   rejectionGraphCodeOf,
 } from "./helpers";
+import {
+  closeLiveStores,
+  liveCount,
+  liveDescribe,
+  purgeLiveRuns,
+  sharedLiveStorage,
+} from "./live-stack";
 
 const RUN_ID = "mastra-it-resume-run";
 
@@ -118,7 +128,24 @@ async function resumeWith(
   });
 }
 
-describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
+liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
+  beforeEach(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, "mastra-it-suspend-bridge", "mastra-it-seed-run"],
+      ["mastra-it-human-approval"]
+    );
+  });
+
+  afterAll(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, "mastra-it-suspend-bridge", "mastra-it-seed-run"],
+      ["mastra-it-human-approval"]
+    );
+    await closeLiveStores();
+  });
+
   afterEach(() => {
     GraphExecutionBackendRegistry.clear();
   });
@@ -128,12 +155,16 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const { rawEvents } = await suspendRealRun(source);
 
     expect(rawEvents.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["workflow-start", "workflow-step-suspended", "workflow-finish"])
+      expect.arrayContaining([
+        "workflow-start",
+        "workflow-step-suspended",
+        "workflow-finish",
+      ])
     );
     const finish = rawEvents.find((event) => event.type === "workflow-finish");
-    expect((finish?.payload as { workflowStatus?: string })?.workflowStatus).toBe(
-      "suspended"
-    );
+    expect(
+      (finish?.payload as { workflowStatus?: string })?.workflowStatus
+    ).toBe("suspended");
 
     const { compiled } = compileDocument(source, []);
     const mastra = realMastraWithWorkflow(source.id, compiled.workflow);
@@ -196,6 +227,18 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     // C18: the audit carries provenance only, never the raw resume data.
     expect(audit).not.toHaveProperty("resumeData");
     expect(JSON.stringify(audit)).not.toContain(sentinel);
+
+    const snapshots = await liveCount(
+      sharedLiveStorage(),
+      'SELECT count(*)::int AS count FROM "mastra".mastra_workflow_snapshot WHERE run_id = $1 AND workflow_name = $2',
+      [RUN_ID, source.id]
+    );
+    expect(snapshots).toBe(1);
+    const status = await sharedLiveStorage().db.one<{ status: string }>(
+      "SELECT snapshot->>'status' AS status FROM \"mastra\".mastra_workflow_snapshot WHERE run_id = $1",
+      [RUN_ID]
+    );
+    expect(status.status).toBe("success");
   });
 
   it("fails closed when no suspendStateReader is configured", async () => {
@@ -204,7 +247,10 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
 
     expect(
       await rejectionGraphCodeOf(() =>
-        backend.resume(RUN_ID, { step: "approve", resumeData: { approved: true } })
+        backend.resume(RUN_ID, {
+          step: "approve",
+          resumeData: { approved: true },
+        })
       )
     ).toBe(GRAPH_MASTRA_UNSUPPORTED_KIND);
   });
@@ -224,7 +270,11 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
 
     expect(
       await rejectionGraphCodeOf(() =>
-        resumeWith(source, run, readerOf(suspendedSnapshot(source, { status: "running" })))
+        resumeWith(
+          source,
+          run,
+          readerOf(suspendedSnapshot(source, { status: "running" }))
+        )
       )
     ).toBe(GRAPH_MASTRA_RESUME_STATE_INVALID);
 
@@ -233,7 +283,9 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
         resumeWith(
           source,
           run,
-          readerOf(suspendedSnapshot(source, { documentFingerprint: "deadbeef" }))
+          readerOf(
+            suspendedSnapshot(source, { documentFingerprint: "deadbeef" })
+          )
         )
       )
     ).toBe(GRAPH_MASTRA_RESUME_STATE_INVALID);
@@ -258,7 +310,10 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
 
     expect(
       await rejectionGraphCodeOf(() =>
-        backend.resume(RUN_ID, { step: "other", resumeData: { approved: true } })
+        backend.resume(RUN_ID, {
+          step: "other",
+          resumeData: { approved: true },
+        })
       )
     ).toBe(GRAPH_MASTRA_RESUME_STEP_UNKNOWN);
   });
@@ -290,7 +345,10 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
       await rejectionGraphCodeOf(() =>
         unsafeBackend.resume(RUN_ID, {
           step: "approve",
-          resumeData: { approved: () => true } as unknown as Record<string, unknown>,
+          resumeData: { approved: () => true } as unknown as Record<
+            string,
+            unknown
+          >,
         })
       )
     ).toBe(GRAPH_MASTRA_RESUME_INVALID);
@@ -343,7 +401,8 @@ describe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
 
     expect(resumed.status).toBe("success");
     expect(
-      (resumed.result as { approved?: { approved?: boolean } })?.approved?.approved
+      (resumed.result as { approved?: { approved?: boolean } })?.approved
+        ?.approved
     ).toBe(true);
   });
 });

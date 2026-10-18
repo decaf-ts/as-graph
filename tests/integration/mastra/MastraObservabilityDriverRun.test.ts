@@ -6,7 +6,7 @@
  * canonical nodes, and the runtime binding keeps the run under the runtime's
  * observability context.
  * @description Real-vs-injected note. **Real**: a real `Mastra` runtime backed
- * by a real `InMemoryStore`, the production `MastraGraphExecutionBackend`
+ * by the live Postgres stack, the production `MastraGraphExecutionBackend`
  * (including its `wireMastraObservability` wiring and `bindCompiledWorkflow`
  * runtime registration), the production `MastraWorkflowCompiler`, the real
  * `@mastra/langfuse` `LangfuseExporter`, the real `@mastra/observability`
@@ -19,9 +19,15 @@
  * OUR-node classification is exercised on those real exported spans through
  * a production `DecafNodeObservabilityExporter`.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "@jest/globals";
+import {
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  afterEach,
+  beforeEach,
+} from "@jest/globals";
 import { Mastra } from "@mastra/core/mastra";
-import { InMemoryStore } from "@mastra/core/storage";
 import {
   Observability,
   DefaultObservabilityInstance,
@@ -38,6 +44,14 @@ import { GraphExecutionStatus } from "../../../src/shared/graph/constants";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import { document, edge, node } from "../../../src/workflows/builders";
 import { frameSinkHarness, realStepHandler } from "./helpers";
+import {
+  closeLiveStores,
+  liveCount,
+  liveDescribe,
+  liveMastra,
+  purgeLiveRuns,
+  sharedLiveStorage,
+} from "./live-stack";
 
 const NODE_KIND = "test.leaf";
 
@@ -99,9 +113,7 @@ function recorderExporter(): {
 /** Registers the recorder on the runtime's (now real) default observability
  * instance, mirroring how the backend registers its own exporters. */
 function registerRecorder(runtime: Mastra, recorder: unknown): void {
-  (
-    runtime as unknown as Record<string, unknown>
-  )["registerExporter"](
+  (runtime as unknown as Record<string, unknown>)["registerExporter"](
     recorder,
     new DefaultObservabilityInstance({
       name: "default",
@@ -131,9 +143,34 @@ function workflowStepIdOf(span: MastraExportedSpanLike): string {
   return match![1];
 }
 
-describe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
+liveDescribe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
+  beforeEach(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [
+        "saa-891-observability-run",
+        "saa-891-isolation-run",
+        "saa-891-binding-run",
+      ],
+      ["saa-891-observability-doc"]
+    );
+  });
+
+  afterAll(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [
+        "saa-891-observability-run",
+        "saa-891-isolation-run",
+        "saa-891-binding-run",
+      ],
+      ["saa-891-observability-doc"]
+    );
+    await closeLiveStores();
+  });
+
   it("catches everything: the engine exports the workflow_run root span and every workflow step span to the runtime's default observability instance", async () => {
-    const runtime = new Mastra({ storage: new InMemoryStore() });
+    const runtime = liveMastra("as-graph-it-observability");
     const backend = new MastraGraphExecutionBackend();
     await backend.initialize({
       mastra: runtime,
@@ -155,15 +192,20 @@ describe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
 
     expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
 
+    const durable = await liveCount(
+      sharedLiveStorage(),
+      "SELECT count(*)::int AS count FROM \"mastra\".mastra_workflow_snapshot WHERE run_id = $1 AND snapshot->>'status' = $2",
+      ["saa-891-observability-run", "success"]
+    );
+    expect(durable).toBe(1);
+
     // The root span of the run: mastra names it after the bound workflow.
     const rootSpans = spansOf(
       recorder.events,
       (span) => span.name === `workflow run: '${source.id}'`
     );
     expect(rootSpans.length).toBeGreaterThanOrEqual(2);
-    expect(
-      rootSpans.every((span) => span.type === "workflow_run")
-    ).toBe(true);
+    expect(rootSpans.every((span) => span.type === "workflow_run")).toBe(true);
 
     // Every translated step's span is exported too.
     for (const nodeId of ["first", "second"]) {
@@ -172,20 +214,24 @@ describe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
         (span) => span.name === `workflow step: '${nodeId}'`
       );
       expect(stepSpans.length).toBeGreaterThanOrEqual(2);
-      expect(
-        stepSpans.every((span) => span.type === "workflow_step")
-      ).toBe(true);
+      expect(stepSpans.every((span) => span.type === "workflow_step")).toBe(
+        true
+      );
     }
 
     // Exactly one workflow_run span lifecycle for this simple run: the engine
     // caught the whole run, not fragments of it.
     expect(
-      new Set(spansOf(recorder.events, (span) => span.type === "workflow_run").map((span) => span.id)).size
+      new Set(
+        spansOf(recorder.events, (span) => span.type === "workflow_run").map(
+          (span) => span.id
+        )
+      ).size
     ).toBe(1);
   }, 30000);
 
   it("isolates OUR nodes: the production exporter attributes the workflow step spans to their canonical nodes and keeps the root span engine-scoped", async () => {
-    const runtime = new Mastra({ storage: new InMemoryStore() });
+    const runtime = liveMastra("as-graph-it-observability");
     const backend = new MastraGraphExecutionBackend();
     await backend.initialize({
       mastra: runtime,
@@ -240,7 +286,7 @@ describe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
   }, 30000);
 
   it("binds the compiled workflow to the runtime so runs execute under the runtime's observability context (regression guard)", async () => {
-    const runtime = new Mastra({ storage: new InMemoryStore() });
+    const runtime = liveMastra("as-graph-it-observability");
     const backend = new MastraGraphExecutionBackend();
     await backend.initialize({
       mastra: runtime,
@@ -275,7 +321,7 @@ describe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
     delete process.env["LANGFUSE_PUBLIC_KEY"];
     delete process.env["LANGFUSE_SECRET_KEY"];
     try {
-      const runtime = new Mastra({ storage: new InMemoryStore() });
+      const runtime = liveMastra("as-graph-it-observability");
       const backend = new MastraGraphExecutionBackend();
       let caught: unknown;
       try {

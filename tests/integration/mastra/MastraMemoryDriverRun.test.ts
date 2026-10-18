@@ -24,7 +24,14 @@
  *    history, semantic-recall option mapping, working-memory template merge),
  * 6. the `core.agent.memorySelector` decision shape.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "@jest/globals";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+} from "@jest/globals";
 import { mkdtempSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,10 +60,24 @@ import {
   GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE,
   GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED,
 } from "../../../src/mastra/MastraEnvironment";
-import type { MastraBackendConfig, MastraNodeStepHandler } from "../../../src/mastra/types";
+import type {
+  MastraBackendConfig,
+  MastraNodeStepHandler,
+} from "../../../src/mastra/types";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { document, edge, node } from "../../../src/workflows/builders";
-import { frameSinkHarness, rejectionGraphCodeOf, type FrameSinkHarness } from "./helpers";
+import {
+  frameSinkHarness,
+  rejectionGraphCodeOf,
+  type FrameSinkHarness,
+} from "./helpers";
+import {
+  closeLiveStores,
+  liveCount,
+  liveDescribe,
+  purgeLiveMemory,
+  sharedLiveStorage,
+} from "./live-stack";
 
 /** Boots the mastra host over the supplied backend config. */
 async function bootHost(config: MastraBackendConfig) {
@@ -130,7 +151,12 @@ function memoryWiredDocument(
     ],
     edges: [
       edge("e1", ["node", "chat", "message"], ["node", "agent", "prompt"]),
-      edge("e2", ["node", "mem", "memory"], ["node", "agent", "memory"], "connection"),
+      edge(
+        "e2",
+        ["node", "mem", "memory"],
+        ["node", "agent", "memory"],
+        "connection"
+      ),
     ],
   });
 }
@@ -264,7 +290,9 @@ describe("mastra memory driver run — memory port wiring (SAA-838 M2)", () => {
     // must not be consulted.
     const byProvider = recordingAgentFactory();
     const providerMemory = { tagged: "host-memory-by-provider" };
-    const byProviderHarness = frameSinkHarness("saa-838-memory-by-provider-run");
+    const byProviderHarness = frameSinkHarness(
+      "saa-838-memory-by-provider-run"
+    );
     const byProviderResult = await runDocument(
       {
         mastra: {},
@@ -349,7 +377,10 @@ describe("mastra memory driver run — R9 descriptor (SAA-838 M2)", () => {
       resourceId: "res-1",
       lastMessages: 10,
       semanticRecall: false,
-      workingMemory: { enabled: true, template: "Preferred language: {{language}}" },
+      workingMemory: {
+        enabled: true,
+        template: "Preferred language: {{language}}",
+      },
       generateTitle: false,
     });
     expect(typeof descriptor["id"]).toBe("string");
@@ -358,7 +389,9 @@ describe("mastra memory driver run — R9 descriptor (SAA-838 M2)", () => {
     const roundTripped = JSON.parse(JSON.stringify(descriptor));
     expect(roundTripped).toEqual(descriptor);
     expect(descriptor).not.toHaveProperty("connection");
-    expect(JSON.stringify(descriptor)).not.toContain("file:./secret-free-descriptor.db");
+    expect(JSON.stringify(descriptor)).not.toContain(
+      "file:./secret-free-descriptor.db"
+    );
   });
 
   it("carries the configured memoryId in the descriptor id", async () => {
@@ -402,7 +435,10 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
   it("fails closed for pg without a complete non-secret host config", async () => {
     const graphCode = await rejectionGraphCodeOf(() =>
       resolveMastraMemoryStorage(
-        { provider: "pg", connection: { host: "localhost" } } as MastraMemoryConfig,
+        {
+          provider: "pg",
+          connection: { host: "localhost" },
+        } as MastraMemoryConfig,
         "mem"
       )
     );
@@ -422,7 +458,10 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
               user: "u",
               [key]: "plaintext-secret",
             },
-            credentialRef: { credentialId: "MASTRA_PG_PASSWORD", credentialType: "pg" },
+            credentialRef: {
+              credentialId: "MASTRA_PG_PASSWORD",
+              credentialType: "pg",
+            },
           } as unknown as MastraMemoryConfig,
           "mem"
         )
@@ -436,7 +475,12 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
       resolveMastraMemoryStorage(
         {
           provider: "pg",
-          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+          connection: {
+            host: "localhost",
+            port: 5432,
+            database: "db",
+            user: "u",
+          },
         } as MastraMemoryConfig,
         "mem"
       )
@@ -449,8 +493,16 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
       resolveMastraMemoryStorage(
         {
           provider: "pg",
-          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
-          credentialRef: { credentialId: ENV_PASSWORD_OVERRIDE, credentialType: "pg" },
+          connection: {
+            host: "localhost",
+            port: 5432,
+            database: "db",
+            user: "u",
+          },
+          credentialRef: {
+            credentialId: ENV_PASSWORD_OVERRIDE,
+            credentialType: "pg",
+          },
         } as MastraMemoryConfig,
         "mem"
       )
@@ -464,8 +516,16 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
       const store = await resolveMastraMemoryStorage(
         {
           provider: "pg",
-          connection: { host: "localhost", port: 5432, database: "db", user: "u" },
-          credentialRef: { credentialId: ENV_PASSWORD_OVERRIDE, credentialType: "pg" },
+          connection: {
+            host: "localhost",
+            port: 5432,
+            database: "db",
+            user: "u",
+          },
+          credentialRef: {
+            credentialId: ENV_PASSWORD_OVERRIDE,
+            credentialType: "pg",
+          },
         } as MastraMemoryConfig,
         "mem"
       );
@@ -485,7 +545,12 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
         resolveMastraMemoryStorage(
           {
             provider: "pg",
-            connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+            connection: {
+              host: "localhost",
+              port: 5432,
+              database: "db",
+              user: "u",
+            },
             credentialRef: {
               credentialId: "LANGFUSE_SECRET_KEY",
               credentialType: "pg",
@@ -559,7 +624,9 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
         stepHandlers: createMastraDefaultStepHandlers(),
         createAgent: fake.createAgent,
       },
-      memoryWiredDocument("saa-838-memory-no-thread-run", { provider: "memory" }),
+      memoryWiredDocument("saa-838-memory-no-thread-run", {
+        provider: "memory",
+      }),
       harness,
       { message: "hello" }
     );
@@ -636,58 +703,84 @@ describe("mastra memory driver run — mastra memory semantics (SAA-838 M2)", ()
     GraphExecutionBackendRegistry.clear();
   });
 
-  it("recalls conversation history recorded on a thread on a later read of the same thread", async () => {
-    const { memory } = await resolveMastraMemory({ provider: "memory" });
-    const threadId = "history-thread";
-    const resourceId = "history-resource";
+  liveDescribe("live Postgres memory persistence", () => {
+    afterAll(async () => {
+      await purgeLiveMemory(
+        sharedLiveStorage(),
+        ["history-thread"],
+        ["history-resource"]
+      );
+      await closeLiveStores();
+    });
 
-    await memory.saveThread({
-      thread: {
-        id: threadId,
-        resourceId,
-        title: "history",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    } as never);
-    await memory.saveMessages({
-      messages: [
-        {
-          id: "history-message-1",
-          role: "user",
-          content: {
-            format: 2,
-            parts: [{ type: "text", text: "the launch code is morning-star" }],
-            content: "the launch code is morning-star",
-          },
-          threadId,
+    it("recalls conversation history recorded on a thread on a later read of the same thread", async () => {
+      const storage = sharedLiveStorage();
+      const threadId = "history-thread";
+      const resourceId = "history-resource";
+      await purgeLiveMemory(storage, [threadId], [resourceId]);
+      const { memory } = await resolveMastraMemory(
+        { provider: "memory" },
+        { storage }
+      );
+
+      await memory.saveThread({
+        thread: {
+          id: threadId,
           resourceId,
-          createdAt: new Date(Date.now() - 1_000),
-          type: "message",
-        },
-        {
-          id: "history-message-2",
-          role: "assistant",
-          content: {
-            format: 2,
-            parts: [{ type: "text", text: "noted, I will remember that" }],
-            content: "noted, I will remember that",
-          },
-          threadId,
-          resourceId,
+          title: "history",
           createdAt: new Date(),
-          type: "message",
+          updatedAt: new Date(),
         },
-      ],
-    } as never);
+      } as never);
+      await memory.saveMessages({
+        messages: [
+          {
+            id: "history-message-1",
+            role: "user",
+            content: {
+              format: 2,
+              parts: [
+                { type: "text", text: "the launch code is morning-star" },
+              ],
+              content: "the launch code is morning-star",
+            },
+            threadId,
+            resourceId,
+            createdAt: new Date(Date.now() - 1_000),
+            type: "message",
+          },
+          {
+            id: "history-message-2",
+            role: "assistant",
+            content: {
+              format: 2,
+              parts: [{ type: "text", text: "noted, I will remember that" }],
+              content: "noted, I will remember that",
+            },
+            threadId,
+            resourceId,
+            createdAt: new Date(),
+            type: "message",
+          },
+        ],
+      } as never);
 
-    const recalled = (await memory.recall({ threadId, resourceId })) as {
-      messages: Array<{ role: string; content: { content?: string } }>;
-    };
-    expect(recalled.messages).toHaveLength(2);
-    expect(recalled.messages[0].role).toBe("user");
-    expect(recalled.messages[0].content.content).toContain("morning-star");
-    expect(recalled.messages[1].role).toBe("assistant");
+      const recalled = (await memory.recall({ threadId, resourceId })) as {
+        messages: Array<{ role: string; content: { content?: string } }>;
+      };
+      expect(recalled.messages).toHaveLength(2);
+      expect(recalled.messages[0].role).toBe("user");
+      expect(recalled.messages[0].content.content).toContain("morning-star");
+      expect(recalled.messages[1].role).toBe("assistant");
+
+      const persisted = await liveCount(
+        storage,
+        'SELECT count(*)::int AS count FROM "mastra".mastra_messages WHERE thread_id = $1',
+        [threadId]
+      );
+      expect(persisted).toBe(2);
+      await purgeLiveMemory(storage, [threadId], [resourceId]);
+    });
   });
 
   it("maps semanticRecall and the lastMessages override into the resolved memory options", async () => {
@@ -709,7 +802,10 @@ describe("mastra memory driver run — mastra memory semantics (SAA-838 M2)", ()
       })
     ).toMatchObject({ semanticRecall: true, lastMessages: 4 });
     // A real resolved Memory applies the mapped lastMessages window.
-    const { memory } = await resolveMastraMemory({ provider: "memory", lastMessages: 4 });
+    const { memory } = await resolveMastraMemory({
+      provider: "memory",
+      lastMessages: 4,
+    });
     expect(memory).toBeInstanceOf(Memory);
   });
 
@@ -813,7 +909,10 @@ describe("mastra memory driver run — memory selector decision (SAA-838 M2)", (
     expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
     const outputs = completedOutputs(harness, "selector");
     expect(outputs?.["selected"]).toBe("beta");
-    expect(outputs?.["resource"]).toEqual({ type: "mastra.memory", id: "beta" });
+    expect(outputs?.["resource"]).toEqual({
+      type: "mastra.memory",
+      id: "beta",
+    });
   });
 
   it("selects the first declared candidate without a decision and null with no candidates", async () => {
@@ -833,7 +932,10 @@ describe("mastra memory driver run — memory selector decision (SAA-838 M2)", (
     );
     const firstOutputs = completedOutputs(firstHarness, "selector");
     expect(firstOutputs?.["selected"]).toBe("alpha");
-    expect(firstOutputs?.["resource"]).toEqual({ type: "mastra.memory", id: "alpha" });
+    expect(firstOutputs?.["resource"]).toEqual({
+      type: "mastra.memory",
+      id: "alpha",
+    });
 
     const emptyHarness = frameSinkHarness("saa-838-memory-selector-empty-run");
     await runDocument(

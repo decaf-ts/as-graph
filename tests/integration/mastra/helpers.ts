@@ -5,14 +5,14 @@
  * @description Keeps the integration tests declarative and honest about the
  * seam. The document/engine side reuses the canonical as-graph builders and the
  * existing engine fixtures; the Mastra side builds **real** `@mastra/core`
- * workflows, steps, and runs backed by a real `InMemoryStore`. Only the two
+ * workflows, steps, and runs backed by the live SAA-920 `PostgresStore`. Only the two
  * things the production backend deliberately delegates to a host are injected here:
  * the frame-bound event sink and the `MastraSuspendStateReader` port.
  */
 import { z } from "zod";
 import { createStep } from "@mastra/core/workflows";
 import { Mastra } from "@mastra/core/mastra";
-import { InMemoryStore } from "@mastra/core/storage";
+import { liveMastra } from "./live-stack";
 import { Context } from "@decaf-ts/core";
 import type { GraphExecutionEvent } from "../../../src/shared/graph";
 import type { GraphFrameAwareEventSink } from "../../../src/engine/execution/GraphExecutionBackend";
@@ -20,11 +20,7 @@ import type { GraphExecutionFrame } from "../../../src/engine/execution/GraphExe
 import type { GraphExecutionObserver } from "../../../src/engine/events/GraphExecutionObserver";
 import { MastraWorkflowCompiler } from "../../../src/mastra/MastraWorkflowCompiler";
 import type { MastraNodeStepHandler } from "../../../src/mastra/types";
-import {
-  document,
-  edge,
-  node,
-} from "../../../src/workflows/builders";
+import { document, edge, node } from "../../../src/workflows/builders";
 
 /** A recorded step invocation, proving a real Mastra step executed. */
 export interface StepCall {
@@ -137,7 +133,7 @@ export function frameSinkHarness(runId = "mastra-it-run"): FrameSinkHarness {
 }
 
 /**
- * Builds a real `@mastra/core` runtime backed by a real `InMemoryStore`, with
+ * Builds a real `@mastra/core` runtime backed by the live SAA-920 `PostgresStore`, with
  * the given workflow registered. Registration + storage are required for a
  * suspended run to be resumable: the run snapshot is persisted by Mastra.
  *
@@ -149,10 +145,7 @@ export function realMastraWithWorkflow(
   workflowId: string,
   workflow: unknown
 ): Mastra {
-  return new Mastra({
-    storage: new InMemoryStore(),
-    workflows: { [workflowId]: workflow as never },
-  });
+  return liveMastra("as-graph-it-helpers", { [workflowId]: workflow });
 }
 
 /**
@@ -166,7 +159,10 @@ export function realMastraWithWorkflow(
 export function compileDocument(
   source: Parameters<MastraWorkflowCompiler["compile"]>[0],
   stepHandlers: MastraNodeStepHandler[]
-): { compiler: MastraWorkflowCompiler; compiled: ReturnType<MastraWorkflowCompiler["compile"]> } {
+): {
+  compiler: MastraWorkflowCompiler;
+  compiled: ReturnType<MastraWorkflowCompiler["compile"]>;
+} {
   const compiler = new MastraWorkflowCompiler({ stepHandlers });
   return { compiler, compiled: compiler.compile(source) };
 }

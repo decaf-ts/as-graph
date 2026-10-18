@@ -5,14 +5,21 @@
  * through the backend resume path; the run service's owner-equality gate
  * denies a foreign owner.
  * @description Real: the production HITL step handler, the real mastra run
- * suspending against a real `InMemoryStore`, the production
+ * suspending against the live Postgres stack, the production
  * `MastraGraphExecutionBackend` resume path, and the production
  * `GraphRunService.resumeRun` owner-equality gate. Host-injected: the backend's
  * `getRun` handle and the `MastraSuspendStateReader` snapshot (mastra owns the
  * suspended-run state), and the fake run/event stores backing the service-level
  * gate probe.
  */
-import { describe, it, expect, afterEach } from "@jest/globals";
+import {
+  describe,
+  it,
+  expect,
+  afterEach,
+  afterAll,
+  beforeEach,
+} from "@jest/globals";
 import { ForbiddenError } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import {
@@ -21,9 +28,7 @@ import {
 } from "../../../src/shared/graph/constants";
 import { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { createMastraHitlStepHandler } from "../../../src/mastra/MastraHitlStepHandler";
-import {
-  type MastraRunSnapshotState,
-} from "../../../src/mastra/types";
+import { type MastraRunSnapshotState } from "../../../src/mastra/types";
 import { GraphRunService } from "../../../src/engine/runs/GraphRunService";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { graphRunDocumentFingerprint } from "../../../src/engine/runs/GraphRunFingerprint";
@@ -35,6 +40,13 @@ import {
   realMastraWithWorkflow,
   rejectionGraphCodeOf,
 } from "./helpers";
+import {
+  closeLiveStores,
+  liveCount,
+  liveDescribe,
+  purgeLiveRuns,
+  sharedLiveStorage,
+} from "./live-stack";
 
 const RUN_ID = "mastra-it-hitl-run";
 
@@ -68,9 +80,11 @@ function hitlDocument(): GraphWorkflowDocument {
 }
 
 /** Compiles, registers, and runs the document until it suspends. */
-async function suspendHitlRun(
-  source: GraphWorkflowDocument
-): Promise<{ mastra: unknown; run: RealRun; rawEvents: Record<string, unknown>[] }> {
+async function suspendHitlRun(source: GraphWorkflowDocument): Promise<{
+  mastra: unknown;
+  run: RealRun;
+  rawEvents: Record<string, unknown>[];
+}> {
   const { compiled } = compileDocument(source, [createMastraHitlStepHandler()]);
   const mastra = realMastraWithWorkflow(source.id, compiled.workflow);
   const run = (await (
@@ -84,9 +98,7 @@ async function suspendHitlRun(
 }
 
 /** The real suspended-run snapshot for the HITL document. */
-function hitlSnapshot(
-  source: GraphWorkflowDocument
-): MastraRunSnapshotState {
+function hitlSnapshot(source: GraphWorkflowDocument): MastraRunSnapshotState {
   return {
     runId: RUN_ID,
     workflowId: source.id,
@@ -115,7 +127,24 @@ function recordingRun(run: RealRun): {
   };
 }
 
-describe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
+liveDescribe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
+  beforeEach(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, "mastra-it-hitl-seed", "mastra-it-hitl-seed-decline"],
+      ["mastra-it-hitl"]
+    );
+  });
+
+  afterAll(async () => {
+    await purgeLiveRuns(
+      sharedLiveStorage(),
+      [RUN_ID, "mastra-it-hitl-seed", "mastra-it-hitl-seed-decline"],
+      ["mastra-it-hitl"]
+    );
+    await closeLiveStores();
+  });
+
   afterEach(() => {
     GraphExecutionBackendRegistry.clear();
   });
@@ -176,6 +205,18 @@ describe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
     };
     expect(resumed.status).toBe("success");
     expect(resumed.result).toEqual({ approved: "yes-do-it" });
+
+    const snapshots = await liveCount(
+      sharedLiveStorage(),
+      'SELECT count(*)::int AS count FROM "mastra".mastra_workflow_snapshot WHERE run_id = $1 AND workflow_name = $2',
+      [RUN_ID, source.id]
+    );
+    expect(snapshots).toBe(1);
+    const status = await sharedLiveStorage().db.one<{ status: string }>(
+      "SELECT snapshot->>'status' AS status FROM \"mastra\".mastra_workflow_snapshot WHERE run_id = $1",
+      [RUN_ID]
+    );
+    expect(status.status).toBe("success");
   });
 
   it("routes an explicit decline onto the rejected output", async () => {
@@ -248,7 +289,11 @@ describe("GraphRunService resume owner-equality gate (SAA-836 M5 HITL)", () => {
     const service = serviceWithRun("alice");
     let error: unknown;
     try {
-      await service.resumeRun(RUN_ID, { step: "hitl", resumeData: { approved: true } }, "mallory");
+      await service.resumeRun(
+        RUN_ID,
+        { step: "hitl", resumeData: { approved: true } },
+        "mallory"
+      );
     } catch (e) {
       error = e;
     }
@@ -259,7 +304,11 @@ describe("GraphRunService resume owner-equality gate (SAA-836 M5 HITL)", () => {
     const service = serviceWithRun(null);
     let error: unknown;
     try {
-      await service.resumeRun(RUN_ID, { step: "hitl", resumeData: { approved: true } }, "mallory");
+      await service.resumeRun(
+        RUN_ID,
+        { step: "hitl", resumeData: { approved: true } },
+        "mallory"
+      );
     } catch (e) {
       error = e;
     }
