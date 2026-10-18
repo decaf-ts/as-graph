@@ -26,6 +26,18 @@ import type { MastraAgentRuntime } from "./MastraAgentStepHandler";
 import type { MastraModelAdapterConfig } from "./MastraAgentModelAdapter";
 import type { MastraMemoryConfig } from "./MastraMemory";
 import type { MastraPersistence } from "./MastraPersistence";
+import type {
+  MastraEmbeddingConfig,
+  MastraRagEmbedder,
+  MastraRagTextGenerator,
+  MastraSandboxRunner,
+} from "./MastraRagStepHandlers";
+import type {
+  MastraVectorStoreBindings,
+  MastraVectorStoreConfig,
+  MastraVectorStoreDrivers,
+  ResolvedMastraVectorStore,
+} from "./MastraVectorStore";
 
 /** The flavour id the Mastra backend registers under in the backend registry. */
 export const MASTRA_BACKEND_FLAVOUR = "mastra";
@@ -75,6 +87,31 @@ export const GRAPH_MASTRA_VECTOR_UNAVAILABLE =
 /** A RAG vector store declared an unknown provider (SAA-836 M4). */
 export const GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN =
   "GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN";
+/**
+ * A RAG kind could not execute because the configured model/embedding or the
+ * wired store could not be resolved for the required operation (SAA-747 Stage
+ * 2). The step fails closed instead of fabricating an answer or vectors.
+ */
+export const GRAPH_MASTRA_RAG_UNAVAILABLE = "GRAPH_MASTRA_RAG_UNAVAILABLE";
+/**
+ * An embedding request was required but the node declared no embedding config
+ * or the embedding port returned an invalid batch (SAA-747 Stage 2).
+ */
+export const GRAPH_MASTRA_EMBEDDING_UNAVAILABLE =
+  "GRAPH_MASTRA_EMBEDDING_UNAVAILABLE";
+/**
+ * A sandboxed code kind has code to run but no host sandbox runner is wired
+ * (SAA-747 Stage 2). The kind fails closed rather than executing code outside a
+ * sandbox.
+ */
+export const GRAPH_MASTRA_SANDBOX_UNAVAILABLE =
+  "GRAPH_MASTRA_SANDBOX_UNAVAILABLE";
+/**
+ * Sandboxed code exceeded its ceiling-clamped timeout. The code string matches
+ * the verified `CodeNode` guard (`GRAPH_CODE_SANDBOX_TIMEOUT`) so callers can
+ * classify both surfaces identically (SAA-747 Stage 2).
+ */
+export const GRAPH_MASTRA_SANDBOX_TIMEOUT = "GRAPH_CODE_SANDBOX_TIMEOUT";
 /**
  * A configured agent memory could not be resolved (SAA-836 M2): the mastra
  * memory package a provider needs is absent, the connection options are
@@ -352,6 +389,43 @@ export interface MastraBackendConfig extends Record<string, unknown> {
    * on-demand).
    */
   persistence?: MastraPersistence;
+  /**
+   * Optional host embedding port used by the real RAG steps (SAA-747 Stage 2).
+   * Receives the node's embedding config (R1) and the texts to embed. When
+   * omitted, the vector-store/retriever steps use mastra's own
+   * `ModelRouterEmbeddingModel` over the configured provider/model.
+   */
+  embedText?: MastraRagEmbedder;
+  /**
+   * Optional host text-generation port used by the chain/extractor steps
+   * (SAA-747 Stage 2). When omitted, the steps build a mastra `Agent` from the
+   * node's `modelAdapter` config and call `generate`.
+   */
+  generateText?: MastraRagTextGenerator;
+  /**
+   * Optional host sandbox runner for `core.agent.sandbox` and
+   * `core.agent.langchainCode` (SAA-747 Stage 2). The runner receives the
+   * ceiling-clamped timeout and must not execute outside a sandbox; when
+   * omitted, a node that actually carries code fails closed.
+   */
+  runSandboxedCode?: MastraSandboxRunner;
+  /**
+   * Backend-wide embedding config used when a RAG document does not carry one
+   * (SAA-747 Stage 2). Lets a host author vector-store/retriever documents
+   * without a dedicated embedding node.
+   */
+  embedding?: MastraEmbeddingConfig;
+  /** Mastra-native vector-store bindings (`pgvector`, `redis`). */
+  vectorStoreBindings?: MastraVectorStoreBindings;
+  /** Custom vector-store drivers (`age`, `graph`). */
+  vectorStoreDrivers?: MastraVectorStoreDrivers;
+  /**
+   * Optional override of the live vector-store resolution. Defaults to
+   * {@link resolveMastraVectorStore} over the bindings/drivers above.
+   */
+  resolveVectorStore?: (
+    config: MastraVectorStoreConfig
+  ) => ResolvedMastraVectorStore | Promise<ResolvedMastraVectorStore>;
 }
 
 /**

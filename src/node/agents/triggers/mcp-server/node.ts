@@ -105,6 +105,45 @@ export class McpServerTriggerNode extends GraphNode<
   @input({ handle: "transport", userControlled: true })
   transport?: "http" | "stdio";
 
+  /**
+   * The C6 delivery-authentication scheme clients must use (`token` or
+   * `hmac`). Defaults to `token`.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.mcp_trigger.fields.authMode.label",
+    type: "select",
+  })
+  @input({ handle: "authMode", userControlled: true })
+  authMode?: "token" | "hmac";
+
+  /**
+   * Credential reference naming the `MASTRA_*` environment variable that
+   * carries the delivery secret (never a plain secret). Omit to let the run
+   * generate a scoped secret the host publishes to clients.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.mcp_trigger.fields.authCredentialRef.label",
+    type: "object",
+  })
+  @input({ handle: "authCredentialRef", userControlled: true, type: "object" })
+  authCredentialRef?: Record<string, unknown>;
+
+  /** Ceiling on concurrent pending deliveries (default 256). */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.mcp_trigger.fields.pendingCap.label",
+    type: "number",
+  })
+  @input({ handle: "pendingCap", userControlled: true })
+  pendingCap?: number;
+
+  /** Ceiling (ms) a pending delivery may stay open (default 60000). */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.mcp_trigger.fields.pendingTimeoutMs.label",
+    type: "number",
+  })
+  @input({ handle: "pendingTimeoutMs", userControlled: true })
+  pendingTimeoutMs?: number;
+
   /** Output carrying the resolved MCP server descriptor (R9). */
   @required()
   @output({ handle: "resource" })

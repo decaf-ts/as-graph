@@ -150,7 +150,7 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/nest` | NestJS HTTP/SSE wiring: catalogue, workflow persistence and run-lifecycle controllers |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `GraphNodeRepository` node-kind rows, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
 | `@decaf-ts/as-graph/typeorm` | Durable production persistence: `createTypeormGraphAdapter({ dataSource })` — a `@decaf-ts/for-typeorm` Postgres adapter factory for the five as-graph decaf tables plus the mastra-layer decaf models (flavoured for the durable lane, `jsonb`-pinned structured columns, `synchronize: false`, bootstrap-owned DDL). See [Durable Postgres lane](#durable-postgres-lane-decaf-tsas-graphtypeorm) |
-| `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract) |
+| `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract), executing the RAG/sandbox kinds for real through `MastraRagStepHandlers` (fail-closed `GRAPH_MASTRA_RAG_UNAVAILABLE`/`GRAPH_MASTRA_EMBEDDING_UNAVAILABLE`/`GRAPH_MASTRA_SANDBOX_UNAVAILABLE`) and serving MCP deliveries behind the run-scoped C6 `MastraMcpDeliveryGuard` |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
 The `exports` map in `package.json` is:
@@ -504,9 +504,12 @@ await backend.initialize({
   stepHandlers,           // optional MastraNodeStepHandler[] for custom node kinds
   resolveProcessorModel,  // optional model resolver for input/output processors and guardrails
   resolveStructuredOutputModel, // optional model resolver for structured-output parsing
-  createMcpServer,        // optional MCP server factory — omitting it makes `core.agent.trigger.mcp` fail closed (`GRAPH_MASTRA_MCP_UNAVAILABLE`)
+  createMcpServer,        // optional MCP server factory — receives `(descriptor, guard)` where `guard` is the run-scoped C6 delivery guard; omitting the factory makes `core.agent.trigger.mcp` fail closed (`GRAPH_MASTRA_MCP_UNAVAILABLE`)
   resolveChannelAdapter, sendChannelResponse, // optional channel wiring — omitting them makes `core.agent.trigger.*`/`response.*` fail closed (`GRAPH_MASTRA_CHANNEL_UNAVAILABLE`)
   resolveVoice,           // optional voice wiring — omitting it makes `core.agent.voice` fail closed (`GRAPH_MASTRA_VOICE_UNAVAILABLE`)
+  embedText, generateText, runSandboxedCode, // optional RAG/sandbox host ports — see "Real RAG & sandbox execution (SAA-747 Stage 2)" below
+  embedding,              // optional backend-wide embedding config used when a RAG document carries none
+  vectorStoreBindings, vectorStoreDrivers, resolveVectorStore, // optional mastra-native vector-store wiring for the RAG steps
   persistence,            // optional per-layer persistence surface (replays/cache/pins), overriding the `MASTRA__PERSISTENCE__*` env defaults
   storage,                // optional Mastra storage for the runtime — applied and verified back; see storage wiring below
   suspendStateReader,     // optional, for suspend/resume runs
@@ -548,7 +551,8 @@ step handler from an explicit `agentRuntime`, or from `createAgent`/`agents` (co
 order), invokes the resolved agent with the node's `prompt` input, and projects the result onto the
 node's `response`/`actions` outputs. When none of the three is configured the step fails closed with
 `GRAPH_MASTRA_AGENT_UNAVAILABLE` instead of returning a fabricated result; the `core.agent.*` family
-kinds resolve their configuration into resource descriptors through the default handler set. The
+kinds resolve their configuration into resource descriptors through the default handler set,
+overridden for the RAG and sandbox kinds by the real execution handlers below. The
 general (local) engine never runs the mastra AI family: any `core.agent[.*]` node reaching it fails
 closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND`.
 
@@ -591,6 +595,58 @@ const structuredOutput = mastraStructuredOutputOf(node, (name) => models[name]);
 // → { schema, instructions?, jsonPromptInjection?, providerOptions? } | undefined
 ```
 
+**Real RAG & sandbox execution (SAA-747 Stage 2).** The RAG/sandbox data-flow
+family is no longer config-only in the mastra engine:
+`createMastraRagStepHandlers` registers real steps **after** the host default
+set for `core.agent.embedding`, `core.agent.vectorStore`,
+`core.agent.retriever`, `core.agent.chain.basic|qa|summarization`,
+`core.agent.structuredOutputParser`, `core.agent.informationExtractor`,
+`core.agent.sandbox`, and `core.agent.langchainCode`
+(`MASTRA_RAG_EXECUTION_KINDS` / `MASTRA_SANDBOX_EXECUTION_KINDS`). Insert
+steps embed the input documents — the node's embedding config, falling back
+to the backend-wide `embedding` config when the document carries none, run
+through the host `embedText` port or mastra's `ModelRouterEmbeddingModel` by
+default — create the index, and upsert into the mastra-native `MastraVector`
+resolved through `MastraVectorStore` (a shared store cache, so the retriever
+reads the same in-memory instance the insert wrote); retriever steps embed the
+query and read the store wired on the `store` data edge, with a `queryVector`
+bypass; chain/extractor steps generate through the host `generateText` port or
+a mastra `Agent` built from the node's `modelAdapter` config and emit
+`text`/`sourceDocuments`/`data`; the parser parses JSON on the real `text`
+input. Vector-store wiring is mastra-native: `vectorStoreBindings`
+(`pgvector`, `redis`), custom `vectorStoreDrivers` (`age`, `graph`), and an
+optional `resolveVectorStore` override. Every step selects real execution only
+when the document wires the work the kind needs (documents, query, model
+config, or code); otherwise it emits the same JSON-safe descriptor fallback
+(R9) the default set emits, so a config-only node never makes a model or
+database call by accident. Missing embedding config, an invalid vector batch,
+or a failed generation fails closed with
+`GRAPH_MASTRA_EMBEDDING_UNAVAILABLE` / `GRAPH_MASTRA_RAG_UNAVAILABLE` — no
+vector, answer, or extraction is ever fabricated. The `core.agent.sandbox`
+node stays config-only when no host `runSandboxedCode` runner is wired, while
+`core.agent.langchainCode` carrying code without a runner fails closed with
+`GRAPH_MASTRA_SANDBOX_UNAVAILABLE` — never executing code outside a sandbox —
+and both reuse `GRAPH_CODE_SANDBOX_TIMEOUT` (exported as
+`GRAPH_MASTRA_SANDBOX_TIMEOUT`) when the runner exceeds the ceiling-clamped
+`timeoutMs`.
+
+```typescript
+import { createMastraRagStepHandlers } from "@decaf-ts/as-graph/mastra";
+
+// The backend registers these handlers automatically; hosts pass the backend
+// config members above to override the mastra-native defaults
+// (ModelRouterEmbeddingModel embeddings / Agent.generate text).
+const ragHandlers = createMastraRagStepHandlers({
+  vectorStoreBindings: myPgVectorBindings, // pgvector / redis
+  embedText: async ({ values, config }) => myEmbedder(values, config),
+  generateText: async ({ prompt, instructions }) => ({
+    text: await myLlm(prompt, instructions),
+  }),
+  runSandboxedCode: async ({ code, timeoutMs }) =>
+    mySandbox.run(code, timeoutMs),
+});
+```
+
 ##### Mastra compatibility surface (SAA-836)
 
 Beyond the backend itself, the `@decaf-ts/as-graph/mastra` entrypoint exports
@@ -613,6 +669,14 @@ the full compatibility surface built across the SAA-836 slices:
   whose `credentialId` names the `.env.secret` variable carrying it (see the
   Mastra engine environment section below); the value is resolved from the
   host environment only at backend-construction time.
+- **Real RAG/sandbox execution (SAA-747 Stage 2)** — `MastraRagStepHandlers`
+  (`createMastraRagStepHandlers`, the `MASTRA_RAG_EXECUTION_KINDS` /
+  `MASTRA_SANDBOX_EXECUTION_KINDS` kind tables, the host
+  `MastraRagEmbedder`/`MastraRagTextGenerator`/`MastraSandboxRunner` ports,
+  and `mastraEmbeddingConfigOf`) — see "Real RAG & sandbox execution
+  (SAA-747 Stage 2)" above for the execution contract and the fail-closed
+  `GRAPH_MASTRA_RAG_UNAVAILABLE` / `GRAPH_MASTRA_EMBEDDING_UNAVAILABLE` /
+  `GRAPH_MASTRA_SANDBOX_UNAVAILABLE` / `GRAPH_CODE_SANDBOX_TIMEOUT` codes.
 - **Processors** — `MastraAgentProcessors` (input/output processor and
   guardrail wiring, with the host-supplied `resolveProcessorModel` model hook).
 - **Human-in-the-loop and voice** — `MastraHitlStepHandler` (the
@@ -620,7 +684,18 @@ the full compatibility surface built across the SAA-836 slices:
   (`core.agent.voice`, failing closed with `GRAPH_MASTRA_VOICE_UNAVAILABLE`
   when no voice wiring is supplied).
 - **Triggers and channel responses** — `MastraMcpTrigger` (MCP server trigger,
-  fail-closed `GRAPH_MASTRA_MCP_UNAVAILABLE`), `MastraScheduleTrigger`,
+  fail-closed `GRAPH_MASTRA_MCP_UNAVAILABLE`, with the run-scoped
+  `MastraMcpDeliveryGuard` (C6, SAA-747 Stage 2) handed to
+  `createMcpServer(descriptor, guard)`: timing-safe token or HMAC-SHA256
+  delivery auth (`MastraMcpAuthMode`, read by `mastraMcpAuthConfigOf` from the
+  node's `authMode`/`authCredentialRef` fields — the credential reference
+  names a `MASTRA_*` environment variable and never carries the secret; when
+  the node names no credential the run generates a scoped secret the host
+  publishes to its clients), a concurrent pending-delivery cap (`pendingCap`,
+  default 256) with age pruning (`pendingTimeoutMs`, default 60000) — excess
+  refusals fail closed with `GRAPH_MASTRA_MCP_UNAVAILABLE` — and an exposed
+  run-scoped server id that is never the document-carried `serverId`),
+  `MastraScheduleTrigger`,
   `MastraChannelTrigger`/`MastraChannelResponse` (Slack/Discord/Telegram/Teams,
   fail-closed `GRAPH_MASTRA_CHANNEL_UNAVAILABLE` without channel wiring). A
   channel response delivers to the node's **configured** conversation

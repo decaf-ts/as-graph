@@ -16,6 +16,7 @@ import {
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import { createGraphBackendHost } from "../../../src/nest/graph/GraphBackendHost";
 import { createMastraDefaultStepHandlers } from "../../../src/mastra/MastraDefaultStepHandlers";
+import { MastraMcpDeliveryGuard } from "../../../src/mastra/MastraMcpTrigger";
 import type { MastraBackendConfig, MastraMcpServerDescriptor } from "../../../src/mastra/types";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { document, node } from "../../../src/workflows/builders";
@@ -75,12 +76,14 @@ describe("mastra MCP trigger driver run (SAA-836 M5)", () => {
   it("resolves the descriptor and serves through the host factory", async () => {
     const servers: unknown[] = [];
     const received: MastraMcpServerDescriptor[] = [];
+    const guards: MastraMcpDeliveryGuard[] = [];
     const serverSurface = { kind: "fake-mcp-server", tools: [] };
     const host = await bootHost({
       mastra: {},
       stepHandlers: createMastraDefaultStepHandlers(),
-      createMcpServer: (descriptor) => {
+      createMcpServer: (descriptor, guard) => {
         received.push(descriptor);
+        guards.push(guard);
         const server = { ...serverSurface, id: `srv-${received.length}` };
         servers.push(server);
         return server;
@@ -108,6 +111,12 @@ describe("mastra MCP trigger driver run (SAA-836 M5)", () => {
         nodeId: "mcp",
       },
     ]);
+    // The host factory receives the resolved descriptor plus a run-scoped C6
+    // delivery guard whose exposed id is never the document serverId.
+    expect(guards).toHaveLength(1);
+    expect(guards[0]).toBeInstanceOf(MastraMcpDeliveryGuard);
+    expect(guards[0].exposedServerId).not.toBe("as-graph-gateway");
+    expect(guards[0].pendingCap).toBe(256);
     // The host server surface is the step's `resource` output.
     expect(completedOutputs(harness, "mcp")).toEqual({
       resource: servers[0],

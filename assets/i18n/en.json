@@ -1574,6 +1574,18 @@
             },
             "transport": {
               "label": "Transport"
+            },
+            "authMode": {
+              "label": "Delivery auth mode"
+            },
+            "authCredentialRef": {
+              "label": "Delivery credential reference"
+            },
+            "pendingCap": {
+              "label": "Pending delivery cap"
+            },
+            "pendingTimeoutMs": {
+              "label": "Pending delivery timeout (ms)"
             }
           }
         },

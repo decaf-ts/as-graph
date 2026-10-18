@@ -59,6 +59,7 @@ import { createMastraMcpTriggerStepHandler } from "./MastraMcpTrigger";
 import { createMastraChannelTriggerStepHandlers } from "./MastraChannelTrigger";
 import { createMastraChannelResponseStepHandlers } from "./MastraChannelResponse";
 import { createMastraVoiceStepHandler } from "./MastraVoiceStepHandler";
+import { createMastraRagStepHandlers } from "./MastraRagStepHandlers";
 import {
   wireMastraObservability,
   type MastraObservabilityHandle,
@@ -369,6 +370,30 @@ export class MastraGraphExecutionBackend
     stepHandlers.push(
       createMastraVoiceStepHandler({
         ...(config.resolveVoice ? { resolveVoice: config.resolveVoice } : {}),
+      })
+    );
+    // SAA-747 Stage 2: register the real RAG/sandbox steps after the host
+    // default set, so the config-only pass-through handlers are overridden for
+    // the kinds that can execute against mastra-native vector/embedding/model
+    // bindings. A document that carries no work for a kind keeps the exact
+    // JSON-safe descriptor fallback (R9) the default handlers emit.
+    stepHandlers.push(
+      ...createMastraRagStepHandlers({
+        ...(config.embedText ? { embedText: config.embedText } : {}),
+        ...(config.generateText ? { generateText: config.generateText } : {}),
+        ...(config.runSandboxedCode
+          ? { runSandboxedCode: config.runSandboxedCode }
+          : {}),
+        ...(config.embedding ? { embedding: config.embedding } : {}),
+        ...(config.vectorStoreBindings
+          ? { vectorStoreBindings: config.vectorStoreBindings }
+          : {}),
+        ...(config.vectorStoreDrivers
+          ? { vectorStoreDrivers: config.vectorStoreDrivers }
+          : {}),
+        ...(config.resolveVectorStore
+          ? { resolveVectorStore: config.resolveVectorStore }
+          : {}),
       })
     );
     this.compiler = new MastraWorkflowCompiler({ stepHandlers });
