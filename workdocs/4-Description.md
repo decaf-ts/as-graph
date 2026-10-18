@@ -65,7 +65,8 @@ compiled into a canonical `GraphWorkflowDocument` (`GraphDecoratedWorkflowCompil
 
 The document topology **is** the concurrency model: multiple `data` connections out of one output port
 fan out and execute concurrently, and multiple connections into one input port fan in and are joined
-before the target node runs. There are no dedicated `parallel` or `merge` node kinds. Node classes
+before the target node runs. There is no dedicated `parallel` node kind (`core.data.merge` is a data-transform node, not an
+execution branch merge). Node classes
 carry their behaviour on the **instance** `execute` method (parameters are hydrated onto the instance
 before it runs), and each kind is described by a `GraphNodeManifest` compiled from `@node`/`@input`/
 `@output` metadata.

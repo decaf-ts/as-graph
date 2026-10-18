@@ -40,6 +40,7 @@ export * from "./execution/LocalGraphExecutionBackend";
 export * from "./execution/GraphExecutionEngine";
 export * from "./execution/CodeSandboxEvaluator";
 export * from "./execution/IsolatedVmCodeSandboxEvaluator";
+export * from "./execution/GraphWebhookResponseRegistry";
 
 export * from "./registry/GraphNodeExecutorRegistry";
 export * from "./registry/GraphNodeExecutorResolver";
@@ -50,6 +51,8 @@ export * from "./store/GraphValueKey";
 export * from "./store/GraphCachedValue";
 export * from "./store/GraphValueModel";
 export * from "./store/GraphValueRepository";
+export * from "./store/GraphDataTableModel";
+export * from "./store/GraphDataTableRepository";
 
 export * from "./planning/GraphExecutionPlanNode";
 export * from "./planning/GraphExecutionPlanEdge";

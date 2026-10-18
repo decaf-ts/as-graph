@@ -63,6 +63,11 @@ import { GraphPinningService } from "../pinning/GraphPinningService";
 import { GraphPinningPolicy } from "../pinning/GraphPinningPolicy";
 import { GraphPinningDependencyResolver } from "../pinning/GraphPinningDependencyResolver";
 import { GraphExecutionFrame } from "./GraphExecutionFrame";
+import { GraphWebhookResponseRegistry } from "./GraphWebhookResponseRegistry";
+import {
+  createGraphDataTableRepository,
+  type GraphDataTableRepository,
+} from "../store/GraphDataTableRepository";
 import type { CodeSandboxEvaluator } from "./CodeSandboxEvaluator";
 import {
   GraphEngineEventSink,
@@ -372,6 +377,46 @@ export class GraphExecutionEngine
   /** Pluggable code sandbox evaluator (§22.4); may be undefined. */
   get codeSandboxEvaluator(): CodeSandboxEvaluator | undefined {
     return this.client.codeSandboxEvaluator;
+  }
+
+  /** Lazily-bound data-table repository backing {@linkcode GraphExecutionEngine.dataTableStore}. */
+  private dataTableRepository?: GraphDataTableRepository;
+  /** Registry instance backing {@linkcode GraphExecutionEngine.webhookResponses}. */
+  private readonly webhookResponseRegistry = new GraphWebhookResponseRegistry();
+
+  /**
+   * Cross-run data-table persistence for the `core.data.dataTable` kind.
+   *
+   * The repository is created lazily on first access and bound to the
+   * engine's value adapter via `createGraphDataTableRepository`, so data-table
+   * rows live in the same adapter (and flavour behaviour) as workflow values
+   * but survive their originating run. Data-table nodes resolve the store
+   * through `context.engine?.dataTableStore` and fail closed with
+   * `GRAPH_ENGINE_NOT_AVAILABLE` when the engine is absent.
+   *
+   * @returns The data-table repository for this engine.
+   */
+  get dataTableStore(): GraphDataTableRepository {
+    if (!this.dataTableRepository) {
+      this.dataTableRepository = createGraphDataTableRepository(this.valueAdapter);
+    }
+    return this.dataTableRepository;
+  }
+
+  /**
+   * Run-keyed webhook response correlation for the `core.io.respondToWebhook`
+   * kind.
+   *
+   * One registry instance is owned per engine for its lifetime: a
+   * webhook-triggered run awaits `register(runId, timeoutMs)` while the
+   * Respond to Webhook node resolves it through
+   * `deliver(context.runId, response)`. Consumers treat `webhookResponses` as
+   * the engine-owned correlation point rather than building their own.
+   *
+   * @returns The engine's webhook response registry.
+   */
+  get webhookResponses(): GraphWebhookResponseRegistry {
+    return this.webhookResponseRegistry;
   }
 
   private get emitter(): GraphExecutionEventEmitter {

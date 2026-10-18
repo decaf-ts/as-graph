@@ -7,7 +7,9 @@
         "utility": "Utility",
         "loop": "Loop",
         "agent": "Agent",
-        "boundary": "Boundary"
+        "boundary": "Boundary",
+        "data": "Data",
+        "io": "IO"
       },
       "connectionCategories": {
         "model": "Model",
@@ -126,6 +128,28 @@
               "userId": {
                 "label": "User id"
               }
+            }
+          }
+        },
+        "execute_workflow": {
+          "name": "Execute Workflow Trigger",
+          "description": "Entry point for a workflow invoked as a sub-workflow.",
+          "ports": {
+            "input": {
+              "payload": {
+                "label": "Parent payload"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              }
+            }
+          },
+          "fields": {
+            "schema": {
+              "label": "Payload schema",
+              "placeholder": "Declared payload shape"
             }
           }
         }
@@ -284,6 +308,48 @@
             "value": {
               "label": "Value",
               "placeholder": "Value to forward (collected as the last partial result)"
+            }
+          }
+        },
+        "execute_sub_workflow": {
+          "name": "Execute Sub-workflow",
+          "description": "Run a child workflow and await its result boundary.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Child result"
+              },
+              "outputs": {
+                "label": "Child outputs"
+              },
+              "childRunId": {
+                "label": "Child run ID"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value"
+            },
+            "workflowId": {
+              "label": "Workflow ID",
+              "placeholder": "Saved workflow identifier"
+            },
+            "workflow": {
+              "label": "Inline workflow",
+              "placeholder": "Inline workflow document"
+            },
+            "mode": {
+              "label": "Mode"
+            },
+            "inputPort": {
+              "label": "Input port",
+              "placeholder": "value"
             }
           }
         }
@@ -1762,6 +1828,527 @@
               "value": {
                 "label": "Value"
               }
+            }
+          }
+        }
+      },
+      "data": {
+        "date_time": {
+          "name": "Date & Time",
+          "description": "Create, parse, format, add to, or subtract from a date.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value",
+                "placeholder": "Date value to use"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "iso": {
+                "label": "ISO date"
+              },
+              "timestamp": {
+                "label": "Timestamp"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value",
+              "placeholder": "Date value to use"
+            },
+            "operation": {
+              "label": "Operation"
+            },
+            "format": {
+              "label": "Format",
+              "placeholder": "iso or a token pattern such as yyyy-MM-dd HH:mm:ss"
+            },
+            "amount": {
+              "label": "Amount"
+            },
+            "unit": {
+              "label": "Unit"
+            }
+          }
+        },
+        "data_table": {
+          "name": "Data Table",
+          "description": "Persist and query rows in a named cross-run data table.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Rows",
+                "placeholder": "Row or array of rows"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "count": {
+                "label": "Count"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Rows",
+              "placeholder": "Row or array of rows"
+            },
+            "operation": {
+              "label": "Operation"
+            },
+            "tableName": {
+              "label": "Table name",
+              "placeholder": "default"
+            },
+            "rowId": {
+              "label": "Row ID",
+              "placeholder": "Fixed row identifier (optional)"
+            },
+            "rowIdField": {
+              "label": "Row ID field",
+              "placeholder": "id"
+            },
+            "row": {
+              "label": "Row",
+              "placeholder": "Single row object"
+            },
+            "limit": {
+              "label": "Limit"
+            }
+          }
+        },
+        "filter": {
+          "name": "Filter",
+          "description": "Keep or remove items that match the configured condition.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Items",
+                "placeholder": "Items to filter"
+              },
+              "condition": {
+                "label": "Condition"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Filtered items"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Items",
+              "placeholder": "Items to filter"
+            },
+            "condition": {
+              "label": "Condition",
+              "placeholder": "Condition expression to evaluate per item"
+            },
+            "negate": {
+              "label": "Negate condition"
+            }
+          }
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Restrict the number of items passed downstream.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Items"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Limited items"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Items"
+            },
+            "maxItems": {
+              "label": "Max items"
+            },
+            "keep": {
+              "label": "Keep"
+            }
+          }
+        },
+        "merge": {
+          "name": "Merge",
+          "description": "Append or combine the values arriving on two inputs.",
+          "ports": {
+            "input": {
+              "input": {
+                "label": "Input 1"
+              },
+              "input2": {
+                "label": "Input 2"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Merged items"
+              }
+            }
+          },
+          "fields": {
+            "input": {
+              "label": "Input 1"
+            },
+            "input2": {
+              "label": "Input 2"
+            },
+            "mode": {
+              "label": "Mode"
+            },
+            "combineBy": {
+              "label": "Combine by"
+            },
+            "joinMode": {
+              "label": "Join mode"
+            },
+            "joinField": {
+              "label": "Join field",
+              "placeholder": "Field used to match rows"
+            },
+            "clashHandling": {
+              "label": "Field clash handling"
+            }
+          }
+        },
+        "rename_keys": {
+          "name": "Rename Keys",
+          "description": "Rename fields on each object using ordered rename rules.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Renamed value"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value"
+            },
+            "renames": {
+              "label": "Rename rules",
+              "placeholder": "Add from/to pairs"
+            },
+            "dotNotation": {
+              "label": "Use dot notation"
+            }
+          }
+        },
+        "set": {
+          "name": "Set",
+          "description": "Assign fields on the current value, keeping or dropping the other fields.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value"
+            },
+            "assignments": {
+              "label": "Assignments",
+              "placeholder": "Add name/value pairs"
+            },
+            "includeOtherFields": {
+              "label": "Include other fields"
+            },
+            "dotNotation": {
+              "label": "Use dot notation"
+            }
+          }
+        },
+        "sort": {
+          "name": "Sort",
+          "description": "Sort items by one or more fields.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Items"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Sorted items"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Items"
+            },
+            "sortFields": {
+              "label": "Sort fields",
+              "placeholder": "Add field/direction pairs"
+            },
+            "valueType": {
+              "label": "Value type"
+            },
+            "dotNotation": {
+              "label": "Use dot notation"
+            }
+          }
+        },
+        "split_out": {
+          "name": "Split Out",
+          "description": "Turn a list inside the input into separate output items.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input value"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Split items"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Input value"
+            },
+            "field": {
+              "label": "Field to split out",
+              "placeholder": "Field name or dotted path"
+            },
+            "include": {
+              "label": "Include"
+            },
+            "destinationField": {
+              "label": "Destination field",
+              "placeholder": "Defaults to the field name"
+            }
+          }
+        }
+      },
+      "io": {
+        "extract_from_file": {
+          "name": "Extract from File",
+          "description": "Extract structured data from a file payload.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "File payload"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Extracted data"
+              },
+              "rows": {
+                "label": "Row count"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "File payload"
+            },
+            "format": {
+              "label": "Format"
+            },
+            "encoding": {
+              "label": "Encoding"
+            },
+            "delimiter": {
+              "label": "Delimiter"
+            },
+            "headerRow": {
+              "label": "First row is a header"
+            }
+          }
+        },
+        "http_request": {
+          "name": "HTTP Request",
+          "description": "Perform a synchronous HTTP request and return the response.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Request body"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Response body"
+              },
+              "status": {
+                "label": "Status code"
+              },
+              "headers": {
+                "label": "Response headers"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Request body"
+            },
+            "url": {
+              "label": "URL",
+              "placeholder": "https://example.com/api"
+            },
+            "method": {
+              "label": "Method"
+            },
+            "headers": {
+              "label": "Headers",
+              "placeholder": "Request header map"
+            },
+            "query": {
+              "label": "Query parameters",
+              "placeholder": "Query parameter map"
+            },
+            "body": {
+              "label": "Body",
+              "placeholder": "Request body override"
+            },
+            "responseFormat": {
+              "label": "Response format"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            },
+            "failOnError": {
+              "label": "Fail on non-2xx status"
+            }
+          }
+        },
+        "read_pdf": {
+          "name": "Read PDF",
+          "description": "Extract text from a PDF file using a maintained PDF parser.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "PDF payload"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Extracted text"
+              },
+              "pages": {
+                "label": "Pages"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "PDF payload"
+            },
+            "encoding": {
+              "label": "Encoding"
+            },
+            "password": {
+              "label": "Password",
+              "placeholder": "PDF password when required"
+            }
+          }
+        },
+        "read_write_file": {
+          "name": "Read/Write Files from Disk",
+          "description": "Read a file from disk or write content to a file.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Content to write"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "bytes": {
+                "label": "Byte count"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Content to write"
+            },
+            "operation": {
+              "label": "Operation"
+            },
+            "path": {
+              "label": "Path",
+              "placeholder": "/path/to/file"
+            },
+            "encoding": {
+              "label": "Encoding"
+            },
+            "content": {
+              "label": "Content",
+              "placeholder": "Content override"
+            },
+            "append": {
+              "label": "Append"
+            },
+            "createDirectories": {
+              "label": "Create directories"
+            }
+          }
+        },
+        "respond_to_webhook": {
+          "name": "Respond to Webhook",
+          "description": "Produce the HTTP response correlated with the current run.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Response data"
+              }
+            },
+            "output": {
+              "response": {
+                "label": "Response"
+              },
+              "delivered": {
+                "label": "Delivered"
+              }
+            }
+          },
+          "fields": {
+            "value": {
+              "label": "Response data"
+            },
+            "respondWith": {
+              "label": "Respond with"
+            },
+            "responseCode": {
+              "label": "Response code"
+            },
+            "responseHeaders": {
+              "label": "Response headers"
+            },
+            "responseBody": {
+              "label": "Response body"
             }
           }
         }

@@ -68,6 +68,22 @@ import { SwitchFlowNode } from "./flow/switch/node";
 import { CodeNode } from "./utility/code/node";
 import { GraphInputValueNode } from "./boundary/input/node";
 import { GraphOutputValueNode } from "./boundary/output/node";
+import { DateTimeNode } from "./data/date-time/node";
+import { DataTableNode } from "./data/data-table/node";
+import { FilterNode } from "./data/filter/node";
+import { LimitNode } from "./data/limit/node";
+import { MergeNode } from "./data/merge/node";
+import { RenameKeysNode } from "./data/rename-keys/node";
+import { SetNode } from "./data/set/node";
+import { SortNode } from "./data/sort/node";
+import { SplitOutNode } from "./data/split-out/node";
+import { ExtractFromFileNode } from "./io/extract-from-file/node";
+import { HttpRequestNode } from "./io/http-request/node";
+import { ReadPDFNode } from "./io/read-pdf/node";
+import { ReadWriteFileNode } from "./io/read-write-file/node";
+import { RespondToWebhookNode } from "./io/respond-to-webhook/node";
+import { ExecuteSubWorkflowNode } from "./flow/execute-sub-workflow/node";
+import { ExecuteWorkflowTriggerNode } from "./triggers/execute-workflow/node";
 import { DelayFlowNode } from "./utility/delay/node";
 import { LogFlowNode } from "./utility/log/node";
 import { MapNode } from "./utility/map/node";
@@ -324,6 +340,22 @@ const UNTIL_MANIFEST: GraphNodeManifest = {
 export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
   compile(GraphInputValueNode),
   compile(GraphOutputValueNode),
+  compile(DateTimeNode),
+  compile(DataTableNode),
+  compile(FilterNode),
+  compile(LimitNode),
+  compile(MergeNode),
+  compile(RenameKeysNode),
+  compile(SetNode),
+  compile(SortNode),
+  compile(SplitOutNode),
+  compile(ExtractFromFileNode),
+  compile(HttpRequestNode),
+  compile(ReadPDFNode),
+  compile(ReadWriteFileNode),
+  compile(RespondToWebhookNode),
+  compile(ExecuteSubWorkflowNode),
+  compile(ExecuteWorkflowTriggerNode),
   compile(ManualTriggerNode),
   compile(WebhookTriggerNode),
   compile(ScheduleTriggerNode),

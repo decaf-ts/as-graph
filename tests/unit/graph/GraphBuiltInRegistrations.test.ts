@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 59 built-in kinds as manifest+executor pairs,
+ * @description Validates the 75 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -70,7 +70,7 @@ async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
 describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(59);
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(75);
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
@@ -79,15 +79,15 @@ describe("GraphBuiltInRegistrations", () => {
         Function
       );
     }
-    expect(catalogue.size).toBe(59);
+    expect(catalogue.size).toBe(75);
   });
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
-    // registerBuiltInGraphNodes registers all 59 built-ins with no engine
+    // registerBuiltInGraphNodes registers all 75 built-ins with no engine
     // argument: each executor is derived from the node class's static execute.
     await registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(59);
+    expect(catalogue.size).toBe(75);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
       expect(await catalogue.has(kind)).toBe(true);
       expect((await catalogue.getManifest(kind)).kind).toBe(kind);
@@ -113,7 +113,7 @@ describe("GraphBuiltInRegistrations", () => {
     await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
     ).resolves.toBeDefined();
-    expect(catalogue.size).toBe(59);
+    expect(catalogue.size).toBe(75);
   });
 
   it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
@@ -160,6 +160,22 @@ describe("GraphBuiltInRegistrations", () => {
     expect(builtIns).toEqual([
       "value",
       "result",
+      "core.data.dateTime",
+      "core.data.dataTable",
+      "core.data.filter",
+      "core.data.limit",
+      "core.data.merge",
+      "core.data.renameKeys",
+      "core.data.set",
+      "core.data.sort",
+      "core.data.splitOut",
+      "core.io.extractFromFile",
+      "core.io.httpRequest",
+      "core.io.readPDF",
+      "core.io.readWriteFile",
+      "core.io.respondToWebhook",
+      "core.flow.executeSubWorkflow",
+      "core.trigger.executeWorkflow",
       "core.trigger.manual",
       "core.trigger.webhook",
       "core.trigger.schedule",
@@ -231,6 +247,8 @@ describe("GraphBuiltInRegistrations", () => {
       "Agent",
       "Loop",
       "Boundary",
+      "Data",
+      "IO",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(manifest.display.name).toBeTruthy();
@@ -256,7 +274,7 @@ describe("GraphBuiltInRegistrations", () => {
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
   it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(59);
+    expect(registrations.length).toBe(75);
     const catalogue = await buildBuiltInCatalogue();
     expect(() => catalogue.register(registrations[0] as never)).toThrow(
       GraphNodeRegistrationError
@@ -274,6 +292,8 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       "Agent",
       "Loop",
       "Boundary",
+      "Data",
+      "IO",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       const family = manifest.display.category;
@@ -281,15 +301,19 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       expect(manifest.display.labels?.at(0)).toBe(
         family === "Boundary"
           ? "workflow"
-          : manifest.kind.startsWith("core.trigger.")
-            ? "trigger"
-            : manifest.kind.startsWith("core.utility.")
-              ? "utility"
-              : family === "Agent"
-                ? "agent"
-                : manifest.kind.startsWith("core.loop.")
-                  ? "loop"
-                  : "flow"
+          : family === "Data"
+            ? "data"
+            : family === "IO"
+              ? "io"
+              : manifest.kind.startsWith("core.trigger.")
+                ? "trigger"
+                : manifest.kind.startsWith("core.utility.")
+                  ? "utility"
+                  : family === "Agent"
+                    ? "agent"
+                    : manifest.kind.startsWith("core.loop.")
+                      ? "loop"
+                      : "flow"
       );
       if (family === "Agent") {
         // the Agent family omits color/icon on @node(); the display is
@@ -387,6 +411,14 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       color: "#7c3aed",
       icon: "ti-robot",
     });
+    expect(graphCategoryStyleOf("Data")).toEqual({
+      color: "#8b5cf6",
+      icon: "ti-table",
+    });
+    expect(graphCategoryStyleOf("IO")).toEqual({
+      color: "#0ea5e9",
+      icon: "ti-world-www",
+    });
     expect(graphCategoryStyleOf("model")).toEqual({
       color: "#3b82f6",
       icon: "ti-cpu",
@@ -439,11 +471,13 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 59 built-ins present exactly these six families
+    // the 75 built-ins present exactly these eight families
     expect([...families].sort()).toEqual([
       "Agent",
       "Boundary",
+      "Data",
       "Flow Control",
+      "IO",
       "Loop",
       "Trigger",
       "Utility",

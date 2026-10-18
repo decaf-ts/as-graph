@@ -166,19 +166,28 @@ The built-in kinds are declared one folder per node under
 
 | Group | Kinds |
 | --- | --- |
-| Triggers | `core.trigger.manual`, `core.trigger.webhook`, `core.trigger.schedule`, `core.trigger.event`, `core.trigger.form`, `core.trigger.chat` |
-| Flow | `core.flow.if`, `core.flow.switch`, `core.flow.delay`, `core.flow.errorBoundary`, `core.flow.humanApproval`, `core.flow.log`, `core.flow.break` |
+| Triggers | `core.trigger.manual`, `core.trigger.webhook`, `core.trigger.schedule`, `core.trigger.event`, `core.trigger.form`, `core.trigger.chat`, `core.trigger.executeWorkflow` |
+| Flow | `core.flow.if`, `core.flow.switch`, `core.flow.delay`, `core.flow.errorBoundary`, `core.flow.humanApproval`, `core.flow.log`, `core.flow.break`, `core.flow.executeSubWorkflow` |
+| Data | `core.data.set`, `core.data.merge`, `core.data.filter`, `core.data.splitOut`, `core.data.dateTime`, `core.data.dataTable`, `core.data.limit`, `core.data.sort`, `core.data.renameKeys` |
+| IO | `core.io.httpRequest`, `core.io.respondToWebhook`, `core.io.extractFromFile`, `core.io.readPDF`, `core.io.readWriteFile` |
 | Utility | `core.utility.code`, `core.utility.map`, `core.utility.log` |
 | Loops | `core.loop.foreach`, `core.loop.while`, `core.loop.until` |
 | Agent | `core.agent` (the agent node) and its `core.agent.*` family kinds: `core.agent.tool|toolSelector` (tools), `core.agent.hook|toolDeny|delegationHook` (hooks), `core.agent.skill|skillSelector` (skills), `core.agent.sandbox` (sandbox), `core.agent.scorer|scorerSelector` (scorers), `core.agent.memory|memorySelector` (memory), `core.agent.embedding|vectorStore|retriever|rerank|chunking` (RAG), `core.agent.chain.basic|qa|summarization` (RAG chains), `core.agent.inputProcessor|outputProcessor|guardrail|structuredOutputParser|informationExtractor|langchainCode` (processors), `core.agent.hitl` (human-in-the-loop), `core.agent.voice` (voice), `core.agent.trigger.mcp|slack|discord|telegram|teams` (triggers), `core.agent.response.slack|discord|telegram|teams` (channel responses). Every `core.agent[.*]` kind requires the mastra engine — the general (local) engine fails closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` |
 | Boundary | `graph-input-value-node` (`GraphNode<void, …>` — reusable value node whose single `value` output may feed multiple targets), `graph-output-value-node` (`GraphNode<…, void>` — terminal sink whose `value` input receives the workflow result; it has **no output port** — the engine captures workflow outputs from the `$workflow` boundary edges into it) |
 
-There are no `parallel` or `merge` node kinds: the graph itself parallelizes on multiple connections
+There is no structural `parallel` node kind: the graph itself parallelizes on multiple connections
 to an output port (native fan-out) and syncs on multiple connections into an input port (native
-fan-in). Notable per-node properties:
+fan-in). `core.data.merge` is a data-transform node for joining value arrays, not an execution
+branch merge. Data nodes use array-in/array-out values (no n8n item model); `core.data.dataTable`
+persists cross-run rows through the engine's data-table repository, and
+`core.io.respondToWebhook` correlates responses by `runId`. Notable per-node properties:
 
 - `core.utility.code` — `timeoutMs` (node property forwarded to the code sandbox evaluator) and the
   `code` editor field (`@uielement("code-editor", …)`).
+- `core.flow.executeSubWorkflow` — `workflowId` or an inline `workflow` document; child runs inherit
+  `parentRunId` and return the child `result`, `outputs`, and `childRunId`.
+- `core.io.readPDF` — requires the `pdf-parse` dependency; returns extracted text plus per-page text.
+- `core.data.dataTable` — operations `insert|upsert|get|list|delete|clear` over a named table.
 - `core.trigger.schedule` — `cron`, mapped to the for-angular Cron input
   (`@uielement("app-cron-selector-field", …)`), with timezone support.
 - `core.trigger.form` / `core.trigger.webhook` — `schema`, a `ModelBuilder`-produced model rendered
@@ -967,6 +976,7 @@ is absent.
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
 | `npm run prepare-it-tests` / `teardown-it-tests` | Provision / stop the pinned Dagster gateway fixture |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
+| `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so this test file is excluded from the main Jest config (and thus from `test:unit`/`test:all`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
 | `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) |
 | `npm run test:dist` | Re-run the full suite against the compiled `lib` and `dist` outputs |

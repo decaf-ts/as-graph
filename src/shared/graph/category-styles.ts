@@ -25,6 +25,8 @@ export function registerBuiltinCategoryStyles(): void {
   registerGraphCategoryStyle("Pipeline", { color: "#0ea5e9", icon: "ti-git-merge" });
   registerGraphCategoryStyle("Node", { color: "#8b5cf6", icon: "ti-point-filled" });
   registerGraphCategoryStyle("Agent", { color: "#7c3aed", icon: "ti-robot" });
+  registerGraphCategoryStyle("Data", { color: "#8b5cf6", icon: "ti-table" });
+  registerGraphCategoryStyle("IO", { color: "#0ea5e9", icon: "ti-world-www" });
 
   // Connection categories (for @connection() ports)
   registerGraphCategoryStyle("model", { color: "#3b82f6", icon: "ti-cpu" });

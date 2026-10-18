@@ -111,6 +111,7 @@
     "start:backend:dagster": "GRAPH_BACKEND_ENGINE=dagster node ./lib/cjs/nest/graph/main.cjs",
     "test": "npm run test:all",
     "test:unit": "jest --testPathPatterns=\"/tests/unit\" --passWithNoTests --detectOpenHandles",
+    "test:unit:pdf": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.pdf.config.cjs --runInBand --passWithNoTests",
     "test:integration": "jest --testPathPatterns=\"/tests/(integration)\" --passWithNoTests --detectOpenHandles",
     "test:integration:standard": "jest --testPathPatterns=\"/tests/integration/graph\" --passWithNoTests --detectOpenHandles",
     "test:integration:backend": "jest --testPathPatterns=\"/tests/integration/nest\" --passWithNoTests --detectOpenHandles",
@@ -208,6 +209,7 @@
     "acorn-walk": "^8.3.5",
     "elkjs": "^0.12.0",
     "isolated-vm": "^6.2.0",
+    "pdf-parse": "^2.4.5",
     "rxjs": "^7.8.2",
     "typeorm": "^0.3.27"
   },

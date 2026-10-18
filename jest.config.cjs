@@ -19,7 +19,14 @@ const config = {
   },
   testEnvironment: "node",
   testRegex: "/tests/.*\\.(test|spec|e2e)\\.(ts|tsx)$",
-  testPathIgnorePatterns: ["/node_modules/", "/n8n/"],
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "/n8n/",
+    // `pdfjs-dist` (via `pdf-parse`) needs the Node VM-modules runtime for its
+    // fake-worker dynamic import. Run ReadPDFNode.test.ts through
+    // `jest.pdf.config.cjs` with `npm run test:unit:pdf` instead.
+    "/tests/unit/graph/nodes/ReadPDFNode.test.ts",
+  ],
   transformIgnorePatterns: [
     "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow)/)",
   ],

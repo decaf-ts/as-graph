@@ -8,3 +8,5 @@ export * from "./GraphValueKey";
 export * from "./GraphCachedValue";
 export * from "./GraphValueModel";
 export * from "./GraphValueRepository";
+export * from "./GraphDataTableModel";
+export * from "./GraphDataTableRepository";

@@ -23,6 +23,22 @@ export * from "./utility/delay/node";
 export * from "./utility/log/node";
 export * from "./utility/map/node";
 export * from "./utility/utility-log/node";
+export * from "./data/date-time/node";
+export * from "./data/data-table/node";
+export * from "./data/filter/node";
+export * from "./data/limit/node";
+export * from "./data/merge/node";
+export * from "./data/rename-keys/node";
+export * from "./data/set/node";
+export * from "./data/sort/node";
+export * from "./data/split-out/node";
+export * from "./io/extract-from-file/node";
+export * from "./io/http-request/node";
+export * from "./io/read-pdf/node";
+export * from "./io/read-write-file/node";
+export * from "./io/respond-to-webhook/node";
+export * from "./flow/execute-sub-workflow/node";
+export * from "./triggers/execute-workflow/node";
 export * from "./triggers/chat/node";
 export * from "./triggers/event/node";
 export * from "./triggers/form/node";
@@ -136,6 +152,22 @@ import { GraphUntilLoopNode } from "./flow/loop/until/node";
 import { GraphWhileLoopNode } from "./flow/loop/while/node";
 import { GraphInputValueNode } from "./boundary/input/node";
 import { GraphOutputValueNode } from "./boundary/output/node";
+import { DateTimeNode } from "./data/date-time/node";
+import { DataTableNode } from "./data/data-table/node";
+import { FilterNode } from "./data/filter/node";
+import { LimitNode } from "./data/limit/node";
+import { MergeNode } from "./data/merge/node";
+import { RenameKeysNode } from "./data/rename-keys/node";
+import { SetNode } from "./data/set/node";
+import { SortNode } from "./data/sort/node";
+import { SplitOutNode } from "./data/split-out/node";
+import { ExtractFromFileNode } from "./io/extract-from-file/node";
+import { HttpRequestNode } from "./io/http-request/node";
+import { ReadPDFNode } from "./io/read-pdf/node";
+import { ReadWriteFileNode } from "./io/read-write-file/node";
+import { RespondToWebhookNode } from "./io/respond-to-webhook/node";
+import { ExecuteSubWorkflowNode } from "./flow/execute-sub-workflow/node";
+import { ExecuteWorkflowTriggerNode } from "./triggers/execute-workflow/node";
 
 /**
  * All built-in trigger node constructors.
@@ -277,6 +309,32 @@ export const GRAPH_AGENT_M6_NODES = [
 ] as const;
 
 /**
+ * All built-in data-transformation node constructors (SAA-746 Stage 1).
+ */
+export const GRAPH_DATA_NODES = [
+  SetNode,
+  MergeNode,
+  FilterNode,
+  SplitOutNode,
+  DateTimeNode,
+  DataTableNode,
+  LimitNode,
+  SortNode,
+  RenameKeysNode,
+] as const;
+
+/**
+ * All built-in IO node constructors (SAA-746 Stage 1).
+ */
+export const GRAPH_IO_NODES = [
+  HttpRequestNode,
+  RespondToWebhookNode,
+  ExtractFromFileNode,
+  ReadPDFNode,
+  ReadWriteFileNode,
+] as const;
+
+/**
  * Kind→class map for every built-in node kind the backend executes
  * (DECAF-50 §4.26 R2-1). The catalogue derives each registration's
  * manifest and executor from the class, so this is the single authority for
@@ -339,6 +397,22 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.agent.response.telegram": TelegramChannelResponseNode,
   "core.agent.response.teams": TeamsChannelResponseNode,
   "core.agent.voice": AgentVoiceNode,
+  "core.data.set": SetNode,
+  "core.data.merge": MergeNode,
+  "core.data.filter": FilterNode,
+  "core.data.splitOut": SplitOutNode,
+  "core.data.dateTime": DateTimeNode,
+  "core.data.dataTable": DataTableNode,
+  "core.data.limit": LimitNode,
+  "core.data.sort": SortNode,
+  "core.data.renameKeys": RenameKeysNode,
+  "core.io.httpRequest": HttpRequestNode,
+  "core.io.respondToWebhook": RespondToWebhookNode,
+  "core.io.extractFromFile": ExtractFromFileNode,
+  "core.io.readPDF": ReadPDFNode,
+  "core.io.readWriteFile": ReadWriteFileNode,
+  "core.flow.executeSubWorkflow": ExecuteSubWorkflowNode,
+  "core.trigger.executeWorkflow": ExecuteWorkflowTriggerNode,
   "core.loop.foreach": GraphForeachLoopNode,
   "core.loop.while": GraphWhileLoopNode,
   "core.loop.until": GraphUntilLoopNode,
