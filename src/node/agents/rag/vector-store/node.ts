@@ -6,11 +6,14 @@
  * metric, credential reference) and, per R9, resolves that config into the
  * mastra store resource on a real output port; the config-only fallback (the
  * descriptor alone) remains valid. Providers are `memory` (built-in in-memory
- * baseline), `pgvector` and `redis` (mastra-native bindings), and `age`/`graph`
- * (custom `MastraVector` stores over a host driver).
+ * baseline), the mastra-native bindings (`pgvector`, `redis`, `upstash`,
+ * `qdrant`, `pinecone`, `supabase`, `mongodb`, `libsql`, `chroma`), and
+ * `age`/`graph` (custom `MastraVector` stores over a host driver), so the
+ * remainder of mastra's supported stores uses the same config pattern.
  */
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
+import { assertNoMastraPlainConnectionCredentials } from "../../../../mastra/MastraEnvironment";
 import { input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../base";
 import type {
@@ -70,6 +73,14 @@ export class AgentVectorStoreNode extends GraphNode<
     if (this.indexName !== undefined) resource["indexName"] = this.indexName;
     if (this.dimension !== undefined) resource["dimension"] = this.dimension;
     if (this.metric !== undefined) resource["metric"] = this.metric;
+    if (this.embedding !== undefined) {
+      assertNoMastraPlainConnectionCredentials(this.embedding, {
+        provider,
+        id: this.storeId ?? this.indexName ?? provider,
+        surface: "vector store embedding",
+      });
+      resource["embedding"] = this.embedding;
+    }
     if (this.credentialRef !== undefined) {
       resource["credentialRef"] = this.credentialRef;
     }
@@ -88,7 +99,19 @@ export class AgentVectorStoreNode extends GraphNode<
     type: "select",
   })
   @input({ handle: "provider", userControlled: true })
-  provider?: "memory" | "pgvector" | "redis" | "age" | "graph";
+  provider?:
+    | "memory"
+    | "pgvector"
+    | "redis"
+    | "upstash"
+    | "age"
+    | "graph"
+    | "qdrant"
+    | "pinecone"
+    | "supabase"
+    | "mongodb"
+    | "libsql"
+    | "chroma";
 
   /** Optional store id (defaults to the index name / provider). */
   @uielement("ngx-decaf-crud-field", {
@@ -122,6 +145,17 @@ export class AgentVectorStoreNode extends GraphNode<
   @input({ handle: "metric", userControlled: true })
   metric?: "cosine" | "euclidean" | "dotproduct";
 
+  /**
+   * The embedding adapter carried in the store's own config (R1): the insert
+   * path resolves it without requiring a separate embedding node.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.embedding.fields.modelAdapter.label",
+    type: "object",
+  })
+  @input({ handle: "embedding", userControlled: true, type: "object" })
+  embedding?: Record<string, unknown>;
+
   /** Provider connection options (never a plain secret; use `credentialRef`). */
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.vector_store.fields.connection.label",
@@ -129,6 +163,18 @@ export class AgentVectorStoreNode extends GraphNode<
   })
   @input({ handle: "connection", userControlled: true, type: "object" })
   connection?: Record<string, unknown>;
+
+  /**
+   * The `connection` member the resolved credential populates. Defaults to the
+   * provider's native option name (`password` for pgvector/redis, `apiKey` for
+   * the hosted stores); only used with `credentialRef`.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.vector_store.fields.credentialRef.label",
+    type: "text",
+  })
+  @input({ handle: "credentialKey", userControlled: true })
+  credentialKey?: string;
 
   /** Credential reference resolved by document validation stage 8 (never a secret). */
   @uielement("ngx-decaf-crud-field", {

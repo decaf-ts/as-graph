@@ -23,6 +23,7 @@ import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstan
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import {
   GRAPH_MASTRA_AGENT_UNAVAILABLE,
+  GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
   type MastraNodeStepHandler,
 } from "./types";
@@ -450,8 +451,18 @@ function executorFor(
       // value is read by the wiring edge's source output port (Mastra steps
       // receive prior-step outputs keyed by source handles).
       return (inputData, node) => {
-        const config: MastraMemoryConfig =
-          mastraMemoryConfigOf(node) ?? { provider: "memory" };
+        const config: MastraMemoryConfig | undefined =
+          mastraMemoryConfigOf(node);
+        if (!config) {
+          throw new GraphExecutionError(
+            `Memory provider node '${node.id}' declares an unknown or malformed memory provider`,
+            GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
+            {
+              nodeId: node.id,
+              provider: String(node.parameters?.["provider"]),
+            }
+          );
+        }
         const wiredTemplate =
           (wiredTemplateSource !== undefined
             ? inputData[wiredTemplateSource]

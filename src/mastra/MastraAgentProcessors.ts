@@ -19,7 +19,10 @@
  * without one the composed `<provider>/<modelId>` id is used, and a
  * model-carrying type with no resolvable model fails closed with
  * {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE} instead of fabricating a
- * processor. Unknown processor/guardrail types fail closed the same way.
+ * processor. `modelSelection` is stricter: mastra's `Classifier` validates a
+ * structural decision model, so it requires the host `resolveProcessorModel`
+ * hook and fails closed with the same code rather than forwarding a language
+ * model id. Unknown processor/guardrail types fail closed the same way.
  *
  * Regex-filter rules are normalized before construction: node parameters
  * arrive JSON-serialized, so a rule `pattern` given as a string is compiled
@@ -30,22 +33,31 @@
  * with {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE}.
  */
 import {
+  BatchPartsProcessor,
+  CyberRefusalHandler,
   LanguageDetector,
+  ModelSelectionProcessor,
   ModerationProcessor,
   PIIDetector,
+  PrefillErrorHandler,
   PromptInjectionDetector,
+  ProviderHistoryCompat,
   RegexFilterProcessor,
   ResponseCache,
+  StreamErrorRetryProcessor,
   SystemPromptScrubber,
+  TokenCostControl,
   TokenLimiterProcessor,
   ToolCallFilter,
   UnicodeNormalizer,
+  UnsupportedFileHandler,
 } from "@mastra/core/processors";
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
   graphModelAdapterOf,
+  isMastraModelAdapterConfig,
   mastraModelConfigOf,
   type MastraModelAdapterConfig,
 } from "./MastraAgentModelAdapter";
@@ -166,6 +178,133 @@ async function processorModelOf(
 }
 
 /**
+ * Resolves the **decision** model a `modelSelection` classifier runs on.
+ *
+ * Mastra's `Classifier` validates its model structurally (it reads
+ * `supportedQuestionTypes` and calls `doDecide`/`doEvaluate`), so the composed
+ * `<provider>/<modelId>` language-model id is not a usable classifier model.
+ * Only a host `resolveProcessorModel` can produce one; without it the node
+ * fails closed with {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE} instead of
+ * letting mastra throw a raw `TypeError`.
+ *
+ * @param adapter - The wired node's model-adapter config (R1), when present.
+ * @param resolveModel - The host resolver, when supplied.
+ * @param nodeId - The wired node id (error details).
+ * @returns The resolved mastra decision model.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE} when
+ *   no host resolver yields a decision model.
+ */
+async function classifierModelOf(
+  adapter: MastraModelAdapterConfig | undefined,
+  resolveModel: MastraProcessorModelResolver | undefined,
+  nodeId: string
+): Promise<unknown> {
+  if (resolveModel) {
+    const resolved = await resolveModel(adapter);
+    if (resolved !== undefined && resolved !== null) return resolved;
+  }
+  throw new GraphExecutionError(
+    `Model-selection processor node '${nodeId}' requires a classifier decision model from the host 'resolveProcessorModel' hook; a language-model id cannot serve as a mastra classifier model`,
+    GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+    { nodeId, processorType: "modelSelection" }
+  );
+}
+
+/**
+ * Refuses options for a mastra processor variant whose constructor takes none:
+ * the node vocabulary is JSON config only, so an options object on a
+ * no-options variant is a configuration mistake rather than something to
+ * silently ignore.
+ *
+ * @param options - The node's processor options.
+ * @param nodeId - The wired node id (error details).
+ * @param processorType - The variant discriminator (error details).
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE} when
+ *   options are present.
+ */
+function assertNoProcessorOptions(
+  options: Record<string, unknown>,
+  nodeId: string,
+  processorType: string
+): void {
+  if (Object.keys(options).length > 0) {
+    throw new GraphExecutionError(
+      `Processor node '${nodeId}' declares options for '${processorType}', which takes no configuration`,
+      GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+      { nodeId, processorType }
+    );
+  }
+}
+
+/**
+ * Resolves the `modelSelection` processor's per-choice model adapters (R1) into
+ * the mastra selectable model values. Every choice must name its criteria and a
+ * model adapter; the host resolver, when supplied, maps the adapter to a live
+ * model, otherwise the composed `<provider>/<modelId>` id is used. The
+ * classifier's own **decision** model must come from the host resolver (see
+ * {@link classifierModelOf}) because mastra validates its structure.
+ *
+ * @param options - The node's processor options (`choices` is required).
+ * @param node - The wired processor node (id and error details).
+ * @param adapter - The node's classifier model adapter (R1).
+ * @param resolveModel - The host model resolver, when supplied.
+ * @returns The options with `choices[].model` resolved and `modelAdapter` removed.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PROCESSOR_UNAVAILABLE} when
+ *   a choice is malformed or its model cannot be resolved, or when the
+ *   classifier decision model is unavailable.
+ */
+async function modelSelectionOptionsOf(
+  options: Record<string, unknown>,
+  node: GraphNodeInstance,
+  adapter: MastraModelAdapterConfig | undefined,
+  resolveModel?: MastraProcessorModelResolver
+): Promise<Record<string, unknown>> {
+  const choices = options["choices"];
+  if (!Array.isArray(choices) || choices.length < 2) {
+    throw new GraphExecutionError(
+      `Model-selection processor node '${node.id}' requires at least two 'choices' to route between`,
+      GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+      { nodeId: node.id, processorType: "modelSelection" }
+    );
+  }
+  const resolvedChoices: Array<Record<string, unknown>> = [];
+  for (const [index, choice] of choices.entries()) {
+    if (!isRecord(choice)) {
+      throw new GraphExecutionError(
+        `Model-selection choice ${index} on node '${node.id}' is not an object`,
+        GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+        { nodeId: node.id, choiceIndex: index }
+      );
+    }
+    const criteria = choice["criteria"];
+    if (typeof criteria !== "string" || criteria.trim().length === 0) {
+      throw new GraphExecutionError(
+        `Model-selection choice ${index} on node '${node.id}' requires non-empty 'criteria'`,
+        GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+        { nodeId: node.id, choiceIndex: index }
+      );
+    }
+    const adapterValue = choice["modelAdapter"];
+    if (!isMastraModelAdapterConfig(adapterValue)) {
+      throw new GraphExecutionError(
+        `Model-selection choice ${index} on node '${node.id}' requires a valid 'modelAdapter' config (provider and modelId)`,
+        GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+        { nodeId: node.id, choiceIndex: index }
+      );
+    }
+    const model = await processorModelOf(adapterValue, resolveModel, node.id);
+    resolvedChoices.push({
+      model,
+      criteria,
+      ...(typeof choice["name"] === "string" ? { name: choice["name"] } : {}),
+    });
+  }
+  const { choices: _choices, ...rest } = options;
+  const model = await classifierModelOf(adapter, resolveModel, node.id);
+  return { ...rest, model, choices: resolvedChoices };
+}
+
+/**
  * Builds the real mastra processor instance one wired processor node resolves
  * to. The mapping is mastra-native (R3): every type names a real
  * `@mastra/core/processors` class and the node's `options` are forwarded
@@ -224,6 +363,30 @@ export async function mastraProcessorInstanceOf(
             ...options,
             model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
           } as never);
+        case "tokenCostControl": {
+          const maxCost = options["maxCost"];
+          if (
+            typeof maxCost !== "number" ||
+            !Number.isFinite(maxCost) ||
+            maxCost <= 0
+          ) {
+            throw new GraphExecutionError(
+              `Token-cost-control processor node '${node.id}' requires a positive numeric 'options.maxCost' budget`,
+              GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+              { nodeId: node.id, processorType }
+            );
+          }
+          return new TokenCostControl(options as never);
+        }
+        case "modelSelection":
+          return new ModelSelectionProcessor(
+            (await modelSelectionOptionsOf(
+              options,
+              node,
+              adapter,
+              resolveModel
+            )) as never
+          );
         default:
           throw new GraphExecutionError(
             `Input-processor node '${node.id}' declares unhandled processor type '${processorType}'`,
@@ -255,6 +418,38 @@ export async function mastraProcessorInstanceOf(
           return new RegexFilterProcessor(regexRulesOf(options, node.id) as never);
         case "responseCache":
           return new ResponseCache(options as never);
+        case "batchParts":
+          return new BatchPartsProcessor(options as never);
+        case "providerHistoryCompat": {
+          if (options["additionalRules"] !== undefined) {
+            throw new GraphExecutionError(
+              `Provider-history-compat processor node '${node.id}' cannot carry 'additionalRules': compatibility rules contain functions and regexes that are not JSON-serializable (built-in mastra rules remain active)`,
+              GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+              { nodeId: node.id, processorType }
+            );
+          }
+          assertNoProcessorOptions(options, node.id, processorType);
+          return new ProviderHistoryCompat();
+        }
+        case "cyberRefusalHandler":
+          assertNoProcessorOptions(options, node.id, processorType);
+          return new CyberRefusalHandler();
+        case "prefillErrorHandler":
+          assertNoProcessorOptions(options, node.id, processorType);
+          return new PrefillErrorHandler();
+        case "unsupportedFileHandler":
+          assertNoProcessorOptions(options, node.id, processorType);
+          return new UnsupportedFileHandler();
+        case "streamErrorRetry": {
+          if (options["matchers"] !== undefined) {
+            throw new GraphExecutionError(
+              `Stream-error-retry processor node '${node.id}' cannot carry 'matchers': matcher predicates are not JSON-serializable (only the numeric/boolean retry knobs are supported)`,
+              GRAPH_MASTRA_PROCESSOR_UNAVAILABLE,
+              { nodeId: node.id, processorType }
+            );
+          }
+          return new StreamErrorRetryProcessor(options as never);
+        }
         default:
           throw new GraphExecutionError(
             `Output-processor node '${node.id}' declares unhandled processor type '${processorType}'`,

@@ -36,6 +36,7 @@ export * from "./MastraVoiceStepHandler";
 export * from "./MastraAgentBuilder";
 export * from "./MastraToolBuilder";
 export * from "./MastraVectorStore";
+export * from "./MastraAgeVectorDriver";
 export * from "./MastraRagStepHandlers";
 export * from "./MastraCapabilities";
 export * from "./MastraSchemaConverter";

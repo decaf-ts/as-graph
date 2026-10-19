@@ -315,12 +315,27 @@ export class MastraGraphExecutionBackend
     // the host default's GRAPH_MASTRA_AGENT_UNAVAILABLE), never a fabricated echo.
     const agentRuntime =
       config.agentRuntime ??
-      (config.agents || config.createAgent || config.memories || config.createMemory
+      (config.agents ||
+        config.createAgent ||
+        config.memories ||
+        config.createMemory ||
+        config.memoryStorageBindings ||
+        config.memoryVectorStore ||
+        config.memoryEmbedder !== undefined
         ? createMastraAgentRuntimeFromConfig({
             agents: config.agents,
             createAgent: config.createAgent,
             memories: config.memories,
             createMemory: config.createMemory,
+            ...(config.memoryStorageBindings
+              ? { memoryStorageBindings: config.memoryStorageBindings }
+              : {}),
+            ...(config.memoryVectorStore
+              ? { memoryVectorStore: config.memoryVectorStore }
+              : {}),
+            ...(config.memoryEmbedder !== undefined
+              ? { memoryEmbedder: config.memoryEmbedder }
+              : {}),
           })
         : undefined);
     if (agentRuntime) {

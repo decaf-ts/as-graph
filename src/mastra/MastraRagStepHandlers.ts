@@ -57,6 +57,7 @@ import {
   GRAPH_MASTRA_RAG_UNAVAILABLE,
   GRAPH_MASTRA_SANDBOX_TIMEOUT,
   GRAPH_MASTRA_SANDBOX_UNAVAILABLE,
+  GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
   type MastraNodeStepHandler,
   type MastraNodeStepOptions,
 } from "./types";
@@ -713,8 +714,27 @@ export function createMastraRagStepHandlers(
 
   handler("core.agent.vectorStore", async (node, inputData) => {
     const parameters = asRecord(node.parameters);
-    const raw = mastraVectorStoreConfigOf(node) ?? { provider: "memory" };
+    const rawConfig = mastraVectorStoreConfigOf(node);
+    if (!rawConfig) {
+      const nested = parameters["vectorStore"];
+      const declared = isRecord(nested)
+        ? nested["provider"] ?? parameters["provider"]
+        : parameters["provider"];
+      if (nested !== undefined || declared !== undefined) {
+        throw new GraphExecutionError(
+          `Vector-store node '${node.id}' declares an unknown or malformed vector-store config`,
+          GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
+          {
+            nodeId: node.id,
+            provider:
+              declared === undefined ? undefined : String(declared),
+          }
+        );
+      }
+    }
+    const raw = rawConfig ?? { provider: "memory" };
     const embedding =
+      mastraEmbeddingConfigOfInput(raw.embedding) ??
       mastraEmbeddingConfigOf(node) ??
       mastraEmbeddingConfigOfInput(inputData["embedding"]) ??
       mastraEmbeddingConfigOfInput(inputData["modelAdapter"]) ??

@@ -308,6 +308,7 @@ export const MASTRA_CONNECTION_PLAIN_CREDENTIAL_KEYS: readonly string[] = [
   "dsn",
   "pwd",
   "passphrase",
+  "authToken",
 ];
 
 /** Context naming one mastra backend connection for the credential gate. */

@@ -3,13 +3,15 @@
  * @summary RAG vector-store layer for the mastra engine (SAA-836 M4).
  * @description The RAG vector-store node resolves its **config** into a live
  * `@mastra/core` {@link MastraVector} store, selecting a provider by config
- * (memory, pgvector, redis, age, graph). Mastra-first (R3): the pgvector and
- * redis options are mastra's **native** vector bindings (`@mastra/pg`'s
- * `PGVector` and mastra's redis vector store), injected by the host so as-graph
- * never imports an optional backend package; AGE and Graph are custom
- * {@link MastraVector} stores backed by a host driver port. Every path fails
- * closed with {@link GRAPH_MASTRA_VECTOR_UNAVAILABLE} when the bound
- * constructor/driver is absent, so no engine fabricates a store.
+ * (memory, pgvector, redis, upstash, qdrant, pinecone, supabase, mongodb,
+ * libsql, chroma, age, graph). Mastra-first (R3): every mastra-supported store
+ * is the package's **native** `MastraVector` binding, injected by the host so
+ * as-graph never imports an optional backend package (the `pgvector`/`redis`
+ * Stage 2 bindings generalize to the same map); AGE and Graph have no stock
+ * mastra binding and are custom {@link MastraVector} stores backed by a host
+ * driver port (`createMastraAgeVectorDriver` is the reference AGE driver).
+ * Every path fails closed with {@link GRAPH_MASTRA_VECTOR_UNAVAILABLE} when the
+ * bound constructor/driver is absent, so no engine fabricates a store.
  *
  * Credential gate (SAA-911 F4, gate C): backend configs never carry credential
  * values. Plaintext credential members in `connection` options are refused —
@@ -54,25 +56,135 @@ import {
   resolveMastraCredentialValue,
 } from "./MastraEnvironment";
 
-/** The vector-store providers the RAG node can be configured with. */
-export type MastraVectorProvider =
-  | "memory"
+/**
+ * The mastra-native vector-store providers the RAG node can be configured with.
+ * Every entry is backed by a package that exports a `MastraVector` subclass;
+ * the host binds the constructor (see {@link MastraVectorStoreBindings}) so
+ * as-graph never imports an optional backend package.
+ */
+export type MastraNativeVectorProvider =
   | "pgvector"
   | "redis"
+  | "upstash"
+  | "qdrant"
+  | "pinecone"
+  | "supabase"
+  | "mongodb"
+  | "libsql"
+  | "chroma";
+
+/**
+ * The vector-store providers the RAG node can be configured with: the built-in
+ * in-memory baseline, the custom AGE/Graph stores, and the mastra-native
+ * backends (bound by the host).
+ */
+export type MastraVectorProvider =
+  | "memory"
   | "age"
-  | "graph";
+  | "graph"
+  | MastraNativeVectorProvider;
 
 /** Every supported vector-store provider, in palette order. */
 export const MASTRA_VECTOR_PROVIDERS: readonly MastraVectorProvider[] = [
   "memory",
   "pgvector",
   "redis",
+  "upstash",
   "age",
   "graph",
+  "qdrant",
+  "pinecone",
+  "supabase",
+  "mongodb",
+  "libsql",
+  "chroma",
 ];
+
+/** The mastra-native vector-store providers (everything the host binds). */
+export const MASTRA_NATIVE_VECTOR_PROVIDERS: readonly MastraNativeVectorProvider[] =
+  [
+    "pgvector",
+    "redis",
+    "upstash",
+    "qdrant",
+    "pinecone",
+    "supabase",
+    "mongodb",
+    "libsql",
+    "chroma",
+  ];
+
+/**
+ * The package/class a mastra-native provider binds, used in fail-closed error
+ * messages so a missing host binding names the exact constructor to supply.
+ */
+export const MASTRA_NATIVE_VECTOR_BINDING_HINTS: Readonly<
+  Record<MastraNativeVectorProvider, string>
+> = {
+  pgvector: "@mastra/pg PGVector",
+  redis: "the mastra redis vector store binding",
+  upstash: "@mastra/upstash UpstashVector",
+  qdrant: "@mastra/qdrant QdrantVector",
+  pinecone: "@mastra/pinecone PineconeVector",
+  supabase: "a Supabase-backed MastraVector (for example @mastra/pg PGVector)",
+  mongodb: "@mastra/mongodb MongoDBVector",
+  libsql: "@mastra/libsql LibSQLVector",
+  chroma: "@mastra/chroma ChromaVector",
+};
+
+/**
+ * The default `connection` member a provider's resolved credential is injected
+ * into. Native packages disagree on the option name; a config may override the
+ * name with {@link MastraVectorStoreConfig.credentialKey}.
+ */
+export const MASTRA_VECTOR_DEFAULT_CREDENTIAL_KEYS: Readonly<
+  Record<MastraNativeVectorProvider, string>
+> = {
+  pgvector: "password",
+  redis: "password",
+  upstash: "token",
+  qdrant: "apiKey",
+  pinecone: "apiKey",
+  supabase: "serviceRoleKey",
+  mongodb: "password",
+  libsql: "authToken",
+  chroma: "apiKey",
+};
+
+/**
+ * Whether a provider names a mastra-native backend bound by the host.
+ *
+ * @param provider - The provider discriminator to test.
+ * @returns `true` when the provider requires a host-bound constructor.
+ */
+export function isMastraNativeVectorProvider(
+  provider: string
+): provider is MastraNativeVectorProvider {
+  return (MASTRA_NATIVE_VECTOR_PROVIDERS as readonly string[]).includes(
+    provider
+  );
+}
 
 /** The similarity metrics a vector index can be created with. */
 export type MastraVectorMetric = "cosine" | "euclidean" | "dotproduct";
+
+/**
+ * The embedding adapter a vector-store config carries (R1). Structurally
+ * identical to the RAG layer's embedding config so a node can carry one either
+ * on the store config or beside it; the RAG step handler resolves both shapes.
+ */
+export interface MastraVectorStoreEmbeddingConfig {
+  /** The embedding provider discriminator (e.g. `openai`, `google`). */
+  provider: string;
+  /** The provider-specific embedding model id. */
+  modelId: string;
+  /** Optional credential reference (validated by document validation stage 8). */
+  credentialRef?: GraphCredentialReference;
+  /** The vector dimension the model produces. */
+  dimension?: number;
+  /** Optional batch size for embedding requests. */
+  batchSize?: number;
+}
 
 /**
  * The vector-store configuration a `core.agent.vectorStore` node carries. It is
@@ -93,10 +205,23 @@ export interface MastraVectorStoreConfig {
   /** The similarity metric the index is created with (defaults to `cosine`). */
   metric?: MastraVectorMetric;
   /**
+   * The embedding adapter carried **in config** (R1): no embedding-provider
+   * node kind exists, so the store that inserts vectors names the embedding
+   * provider/model it consumes.
+   */
+  embedding?: MastraVectorStoreEmbeddingConfig;
+  /**
    * Provider connection options. Never carries credential material (gate C,
    * SAA-911 F4): plaintext credential members are refused at resolution time.
    */
   connection?: Record<string, unknown>;
+  /**
+   * The `connection` member the resolved credential is injected into. Defaults
+   * to the provider's native option name (see
+   * {@link MASTRA_VECTOR_DEFAULT_CREDENTIAL_KEYS}); only used when a
+   * {@link credentialRef} is configured.
+   */
+  credentialKey?: string;
   /**
    * Credential reference resolved by document validation stage 8 (SAA-911
    * F4, gate C): `credentialId` names the environment variable that carries
@@ -113,7 +238,8 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Structural guard for {@link MastraVectorStoreConfig}: requires a known
- * provider and, when present, a well-formed credential reference.
+ * provider and, when present, well-formed optional fields (credential
+ * reference, credential-key name, and embedding adapter).
  *
  * @param value - The candidate vector-store config.
  * @returns `true` when the value is a valid vector-store configuration.
@@ -131,6 +257,22 @@ export function isMastraVectorStoreConfig(
   const credentialRef = value["credentialRef"];
   if (credentialRef !== undefined && !isGraphCredentialReference(credentialRef)) {
     return false;
+  }
+  const credentialKey = value["credentialKey"];
+  if (credentialKey !== undefined && typeof credentialKey !== "string") {
+    return false;
+  }
+  const embedding = value["embedding"];
+  if (embedding !== undefined) {
+    if (!isPlainRecord(embedding)) return false;
+    if (
+      typeof embedding["provider"] !== "string" ||
+      embedding["provider"].length === 0 ||
+      typeof embedding["modelId"] !== "string" ||
+      embedding["modelId"].length === 0
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -169,6 +311,8 @@ export interface MastraVectorStoreDescriptor {
   dimension?: number;
   /** The configured similarity metric. */
   metric?: MastraVectorMetric;
+  /** The configured embedding adapter (provider/model only; never a secret). */
+  embedding?: MastraVectorStoreEmbeddingConfig;
   /** The credential reference, when one is configured (a reference, not a secret). */
   credentialRef?: GraphCredentialReference;
 }
@@ -192,6 +336,17 @@ export function mastraVectorStoreDescriptorOf(
   if (config.indexName !== undefined) descriptor.indexName = config.indexName;
   if (config.dimension !== undefined) descriptor.dimension = config.dimension;
   if (config.metric !== undefined) descriptor.metric = config.metric;
+  if (config.embedding !== undefined) {
+    assertNoMastraPlainConnectionCredentials(
+      config.embedding as unknown as Record<string, unknown>,
+      {
+        provider: config.provider,
+        id: descriptor.id,
+        surface: "vector store embedding",
+      }
+    );
+    descriptor.embedding = { ...config.embedding };
+  }
   if (config.credentialRef !== undefined) {
     descriptor.credentialRef = config.credentialRef;
   }
@@ -222,7 +377,7 @@ interface InMemoryIndex {
  * @param filter - The mastra filter.
  * @returns `true` when the metadata satisfies the filter.
  */
-function matchesFilter(
+export function mastraVectorMatchesFilter(
   metadata: Record<string, unknown> | undefined,
   filter: VectorFilter | undefined
 ): boolean {
@@ -235,7 +390,7 @@ function matchesFilter(
       if (
         !Array.isArray(condition) ||
         !condition.every((entry) =>
-          matchesFilter(record, entry as VectorFilter)
+          mastraVectorMatchesFilter(record, entry as VectorFilter)
         )
       ) {
         return false;
@@ -245,7 +400,7 @@ function matchesFilter(
     if (key === "$or") {
       if (
         !Array.isArray(condition) ||
-        !condition.some((entry) => matchesFilter(record, entry as VectorFilter))
+        !condition.some((entry) => mastraVectorMatchesFilter(record, entry as VectorFilter))
       ) {
         return false;
       }
@@ -330,7 +485,7 @@ function dotProduct(a: number[], b: number[]): number {
 }
 
 /** Scores two vectors under a metric (higher is always closer). */
-function score(
+export function mastraVectorScore(
   metric: MastraVectorMetric,
   a: number[],
   b: number[]
@@ -415,7 +570,7 @@ export class InMemoryVectorStore extends MastraVector {
     const index = this.requireIndex(params.indexName);
     if (params.deleteFilter) {
       for (const [id, record] of index.records) {
-        if (matchesFilter(record.metadata, params.deleteFilter)) {
+        if (mastraVectorMatchesFilter(record.metadata, params.deleteFilter)) {
           index.records.delete(id);
         }
       }
@@ -437,11 +592,11 @@ export class InMemoryVectorStore extends MastraVector {
   async query(params: QueryVectorParams): Promise<QueryResult[]> {
     const index = this.requireIndex(params.indexName);
     const candidates = [...index.records.values()].filter((record) =>
-      matchesFilter(record.metadata, params.filter)
+      mastraVectorMatchesFilter(record.metadata, params.filter)
     );
     const scored = candidates.map((record) => {
       const scoreValue = params.queryVector
-        ? score(index.metric, params.queryVector, record.vector)
+        ? mastraVectorScore(index.metric, params.queryVector, record.vector)
         : 1;
       const result: QueryResult = {
         id: record.id,
@@ -466,7 +621,7 @@ export class InMemoryVectorStore extends MastraVector {
       return;
     }
     for (const record of index.records.values()) {
-      if (matchesFilter(record.metadata, params.filter)) {
+      if (mastraVectorMatchesFilter(record.metadata, params.filter)) {
         if (params.update.vector) record.vector = params.update.vector;
         if (params.update.metadata) record.metadata = params.update.metadata;
       }
@@ -487,7 +642,7 @@ export class InMemoryVectorStore extends MastraVector {
       return;
     }
     for (const [id, record] of index.records) {
-      if (matchesFilter(record.metadata, params.filter)) {
+      if (mastraVectorMatchesFilter(record.metadata, params.filter)) {
         index.records.delete(id);
       }
     }
@@ -586,20 +741,42 @@ export class DriverBackedVectorStore extends MastraVector {
 }
 
 /**
- * A mastra-native vector-store constructor the host binds for a provider
- * (`@mastra/pg`'s `PGVector` for `pgvector`, mastra's redis vector store for
- * `redis`). The store is constructed with the config's connection options and id.
+ * A mastra-native vector-store constructor the host binds for a provider (for
+ * example `@mastra/pg`'s `PGVector` for `pgvector`, `@mastra/qdrant`'s
+ * `QdrantVector` for `qdrant`). The store is constructed with the config's
+ * connection options and id.
  */
 export type MastraVectorConstructor = new (
   options: Record<string, unknown>
 ) => MastraVector;
 
-/** Host-provided mastra-native vector-store bindings, keyed by provider. */
+/**
+ * Host-provided mastra-native vector-store bindings, keyed by provider. Every
+ * {@link MastraNativeVectorProvider} is optional; an absent binding for a
+ * configured provider fails closed (never a fabricated store). The index
+ * signature keeps the map open to a host extension without an as-graph change.
+ */
 export interface MastraVectorStoreBindings {
-  /** The `@mastra/pg` `PGVector` binding, bound by the host. */
+  /** The `@mastra/pg` `PGVector` binding. */
   pgvector?: MastraVectorConstructor;
-  /** Mastra's native redis vector store binding, bound by the host. */
+  /** Mastra's native redis vector store binding. */
   redis?: MastraVectorConstructor;
+  /** The `@mastra/upstash` `UpstashVector` binding. */
+  upstash?: MastraVectorConstructor;
+  /** The `@mastra/qdrant` `QdrantVector` binding. */
+  qdrant?: MastraVectorConstructor;
+  /** The `@mastra/pinecone` `PineconeVector` binding. */
+  pinecone?: MastraVectorConstructor;
+  /** A Supabase-backed `MastraVector` binding. */
+  supabase?: MastraVectorConstructor;
+  /** The `@mastra/mongodb` `MongoDBVector` binding. */
+  mongodb?: MastraVectorConstructor;
+  /** The `@mastra/libsql` `LibSQLVector` binding. */
+  libsql?: MastraVectorConstructor;
+  /** The `@mastra/chroma` `ChromaVector` binding. */
+  chroma?: MastraVectorConstructor;
+  /** Additional host-native provider bindings. */
+  [provider: string]: MastraVectorConstructor | undefined;
 }
 
 /** Host-provided custom-store drivers, keyed by provider. */
@@ -612,9 +789,9 @@ export interface MastraVectorStoreDrivers {
 
 /** Options {@link resolveMastraVectorStore} resolves a store with. */
 export interface MastraVectorStoreResolveOptions {
-  /** Mastra-native provider bindings (pgvector/redis). */
+  /** Mastra-native provider bindings (every {@link MastraNativeVectorProvider}). */
   bindings?: MastraVectorStoreBindings;
-  /** Custom-provider drivers (age/graph). */
+  /** Custom-provider drivers (`age`/`graph`). */
   drivers?: MastraVectorStoreDrivers;
 }
 
@@ -633,9 +810,11 @@ export interface ResolvedMastraVectorStore {
  * the config's `credentialRef` at construction time (the value is read from
  * the host `.env.secret` environment and only flows into the binding's own
  * options). `pgvector` always requires a credential reference (PostgreSQL
- * authenticates every connection); `redis` resolves one when configured so a
- * passwordless local instance stays usable while a configured credential
- * still arrives through the name-only reference.
+ * authenticates every connection); every other provider resolves one when
+ * configured so passwordless local instances stay usable while a configured
+ * credential still arrives through the name-only reference. The resolved value
+ * is injected into the member named by the config's `credentialKey` or the
+ * provider's default key ({@link MASTRA_VECTOR_DEFAULT_CREDENTIAL_KEYS}).
  *
  * @param config - The validated vector-store config.
  * @param provider - The provider the binding is constructed for.
@@ -648,7 +827,7 @@ export interface ResolvedMastraVectorStore {
  */
 function bindingOptions(
   config: MastraVectorStoreConfig,
-  provider: MastraVectorProvider,
+  provider: MastraNativeVectorProvider,
   id: string
 ): Record<string, unknown> {
   const context = { provider, id, surface: "vector store" };
@@ -658,13 +837,17 @@ function bindingOptions(
     ...connection,
     id,
   };
-  if (provider === "pgvector" || (provider === "redis" && config.credentialRef !== undefined)) {
+  const credentialRequired = provider === "pgvector";
+  if (credentialRequired || config.credentialRef !== undefined) {
     const credentialEnv = mastraCredentialEnvNameOf(
       config,
       context,
-      `${provider} password`
+      `${provider} credential`
     );
-    options["password"] = resolveMastraCredentialValue(credentialEnv);
+    const credentialKey =
+      config.credentialKey ??
+      MASTRA_VECTOR_DEFAULT_CREDENTIAL_KEYS[provider];
+    options[credentialKey] = resolveMastraCredentialValue(credentialEnv);
   }
   return options;
 }
@@ -672,18 +855,23 @@ function bindingOptions(
 /**
  * Resolves a RAG vector-store config into a live {@link MastraVector} store.
  *
- * Mastra-first (R3): `pgvector` and `redis` use the host-bound mastra-native
- * constructors; `memory` uses the built-in {@link InMemoryVectorStore}; `age`
- * and `graph` use the host-provided {@link MastraVectorDriver}. Every path fails
- * closed with {@link GRAPH_MASTRA_VECTOR_UNAVAILABLE} when the required binding
- * or driver is absent, and an unknown provider fails with
+ * Mastra-first (R3): every mastra-native provider (`pgvector`, `redis`,
+ * `upstash`, `qdrant`, `pinecone`, `supabase`, `mongodb`, `libsql`, `chroma`)
+ * uses the host-bound mastra-native constructor; `memory` uses the built-in
+ * {@link InMemoryVectorStore}; `age` and `graph` use the host-provided
+ * {@link MastraVectorDriver}. Every path fails closed with
+ * {@link GRAPH_MASTRA_VECTOR_UNAVAILABLE} when the required binding or driver is
+ * absent, and an unknown provider fails with
  * {@link GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN} — never a fabricated store.
  *
- * Credential gate (SAA-911 F4, gate C): `pgvector` requires a `credentialRef`
- * naming the environment variable that carries the password and `redis`
- * resolves one when configured — plaintext credential members in `connection`
- * options are refused in both cases, and the value is resolved from the host
- * `.env.secret` environment only at construction time.
+ * Credential gate (SAA-911 F4, gate C): backend configs never carry credential
+ * values. `pgvector` requires a `credentialRef` naming the environment variable
+ * that carries the credential, and any provider resolves one when configured —
+ * the value is injected into the `connection` member named by
+ * {@link MastraVectorStoreConfig.credentialKey} or the provider's default key
+ * (see {@link MASTRA_VECTOR_DEFAULT_CREDENTIAL_KEYS}). Plaintext credential
+ * members in `connection` options are refused in both cases, and the value is
+ * resolved from the host `.env.secret` environment only at construction time.
  *
  * @param config - The validated vector-store config.
  * @param options - The host bindings and drivers.
@@ -706,36 +894,6 @@ export function resolveMastraVectorStore(
         store: new InMemoryVectorStore({ id: descriptor.id }),
         descriptor,
       };
-    case "pgvector": {
-      const binding = options.bindings?.pgvector;
-      if (!binding) {
-        throw new GraphExecutionError(
-          "The pgvector vector store requires the host-bound @mastra/pg PGVector binding",
-          GRAPH_MASTRA_VECTOR_UNAVAILABLE,
-          { provider: config.provider, id: descriptor.id }
-        );
-      }
-      return {
-        store: new binding(
-          bindingOptions(config, "pgvector", descriptor.id)
-        ),
-        descriptor,
-      };
-    }
-    case "redis": {
-      const binding = options.bindings?.redis;
-      if (!binding) {
-        throw new GraphExecutionError(
-          "The redis vector store requires the host-bound mastra redis vector store",
-          GRAPH_MASTRA_VECTOR_UNAVAILABLE,
-          { provider: config.provider, id: descriptor.id }
-        );
-      }
-      return {
-        store: new binding(bindingOptions(config, "redis", descriptor.id)),
-        descriptor,
-      };
-    }
     case "age":
     case "graph": {
       const driver = options.drivers?.[config.provider];
@@ -754,11 +912,28 @@ export function resolveMastraVectorStore(
         descriptor,
       };
     }
-    default:
-      throw new GraphExecutionError(
-        `Unknown RAG vector-store provider '${String(config.provider)}'`,
-        GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
-        { provider: String(config.provider) }
-      );
+    default: {
+      if (!isMastraNativeVectorProvider(config.provider)) {
+        throw new GraphExecutionError(
+          `Unknown RAG vector-store provider '${String(config.provider)}'`,
+          GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
+          { provider: String(config.provider) }
+        );
+      }
+      const binding = options.bindings?.[config.provider];
+      if (!binding) {
+        throw new GraphExecutionError(
+          `The ${config.provider} vector store requires the host-bound ${MASTRA_NATIVE_VECTOR_BINDING_HINTS[config.provider]} binding`,
+          GRAPH_MASTRA_VECTOR_UNAVAILABLE,
+          { provider: config.provider, id: descriptor.id }
+        );
+      }
+      return {
+        store: new binding(
+          bindingOptions(config, config.provider, descriptor.id)
+        ),
+        descriptor,
+      };
+    }
   }
 }

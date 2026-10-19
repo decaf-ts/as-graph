@@ -113,7 +113,19 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
     feature: "vectorStores",
     verdict: "SUPPORTED",
     detail:
-      "in-memory baseline native; pgvector/redis via mastra-native bindings; age/graph via custom MastraVector stores",
+      "in-memory baseline native; pgvector, redis, upstash, qdrant, pinecone, supabase, mongodb, libsql, and chroma via host-bound mastra-native constructors; age/graph via custom MastraVector stores over a host driver; an unbound provider fails closed",
+  },
+  {
+    feature: "memoryStorage",
+    verdict: "SUPPORTED",
+    detail:
+      "in-memory, libsql, and pg native; mongodb, upstash, cloud, d1, dynamodb, convex, astra, and redis via host-bound mastra-native storage constructors; an unbound provider fails closed",
+  },
+  {
+    feature: "processorVariants",
+    verdict: "SUPPORTED",
+    detail:
+      "mastra input/output variants that are JSON-config-safe: tokenCostControl and modelSelection on input; batchParts, providerHistoryCompat, cyberRefusalHandler, prefillErrorHandler, streamErrorRetry, and unsupportedFileHandler on output",
   },
   {
     feature: "ragChains",

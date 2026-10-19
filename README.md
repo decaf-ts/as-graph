@@ -517,7 +517,8 @@ await backend.initialize({
   resolveVoice,           // optional voice wiring — omitting it makes `core.agent.voice` fail closed (`GRAPH_MASTRA_VOICE_UNAVAILABLE`)
   embedText, generateText, runSandboxedCode, // optional RAG/sandbox host ports — see "Real RAG & sandbox execution (SAA-747 Stage 2)" below
   embedding,              // optional backend-wide embedding config used when a RAG document carries none
-  vectorStoreBindings, vectorStoreDrivers, resolveVectorStore, // optional mastra-native vector-store wiring for the RAG steps
+  vectorStoreBindings, vectorStoreDrivers, resolveVectorStore, // optional mastra-native vector-store wiring for the RAG steps (Stage 4 provider matrix)
+  memoryStorageBindings, memoryVectorStore, memoryEmbedder, // optional memory-matrix wiring — see "Stage 4 mastra breadth" below
   persistence,            // optional per-layer persistence surface (replays/cache/pins), overriding the `MASTRA__PERSISTENCE__*` env defaults
   storage,                // optional Mastra storage for the runtime — applied and verified back; see storage wiring below
   suspendStateReader,     // optional, for suspend/resume runs
@@ -621,9 +622,11 @@ query and read the store wired on the `store` data edge, with a `queryVector`
 bypass; chain/extractor steps generate through the host `generateText` port or
 a mastra `Agent` built from the node's `modelAdapter` config and emit
 `text`/`sourceDocuments`/`data`; the parser parses JSON on the real `text`
-input. Vector-store wiring is mastra-native: `vectorStoreBindings`
-(`pgvector`, `redis`), custom `vectorStoreDrivers` (`age`, `graph`), and an
-optional `resolveVectorStore` override. Every step selects real execution only
+input. Vector-store wiring is mastra-native: `vectorStoreBindings` (the nine
+mastra-native providers), custom `vectorStoreDrivers` (`age`, `graph`), and an
+optional `resolveVectorStore` override — see the
+[Stage 4 mastra breadth](#stage-4-mastra-breadth-saa-749-vector-store-matrix-memory-matrix-processor-variants)
+section for the full provider/credential matrix and the RAG walkthrough. Every step selects real execution only
 when the document wires the work the kind needs (documents, query, model
 config, or code); otherwise it emits the same JSON-safe descriptor fallback
 (R9) the default set emits, so a config-only node never makes a model or
@@ -645,7 +648,7 @@ import { createMastraRagStepHandlers } from "@decaf-ts/as-graph/mastra";
 // config members above to override the mastra-native defaults
 // (ModelRouterEmbeddingModel embeddings / Agent.generate text).
 const ragHandlers = createMastraRagStepHandlers({
-  vectorStoreBindings: myPgVectorBindings, // pgvector / redis
+  vectorStoreBindings: myVectorStoreBindings, // all nine mastra-native providers (Stage 4)
   embedText: async ({ values, config }) => myEmbedder(values, config),
   generateText: async ({ prompt, instructions }) => ({
     text: await myLlm(prompt, instructions),
@@ -653,6 +656,273 @@ const ragHandlers = createMastraRagStepHandlers({
   runSandboxedCode: async ({ code, timeoutMs }) =>
     mySandbox.run(code, timeoutMs),
 });
+```
+
+##### Stage 4 mastra breadth (SAA-749): vector-store matrix, memory matrix, processor variants
+
+Stage 4 completes the mastra AI breadth behind the same patterns as the
+earlier stages: every provider is selected by node **config**, every backend
+package stays host-bound (as-graph never imports an optional backend package),
+every missing binding/driver/model fails closed instead of fabricating a
+resource, and only JSON-safe, secret-free descriptors (R9) are ever persisted.
+
+###### Vector-store matrix (`core.agent.vectorStore`)
+
+The vector-store node's `vectorStore` parameter carries a
+`MastraVectorStoreConfig`; `resolveMastraVectorStore` turns it into a live
+mastra `MastraVector` at execution time. Providers, in palette order:
+
+| Provider | Backing | Host wiring |
+| --- | --- | --- |
+| `memory` | built-in `InMemoryVectorStore` (dependency-free, offline-capable) | none |
+| `pgvector`, `redis`, `upstash`, `qdrant`, `pinecone`, `supabase`, `mongodb`, `libsql`, `chroma` | mastra-native `MastraVector` constructors (e.g. `@mastra/pg`'s `PGVector`, `@mastra/libsql`'s `LibSQLVector`) | `vectorStoreBindings`, keyed by provider |
+| `age`, `graph` | custom `MastraVector` stores (`DriverBackedVectorStore`) over a host `MastraVectorDriver` | `vectorStoreDrivers`, keyed by provider |
+
+Config members:
+
+| Member | Meaning |
+| --- | --- |
+| `provider` | One of the twelve providers above; anything else fails with `GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN`. |
+| `id` | Optional store id; defaults to `indexName`, then `provider`. |
+| `indexName` / `dimension` / `metric` | The index to create; `metric` is `cosine` (default), `euclidean`, or `dotproduct`. |
+| `embedding` | The embedding adapter carried **in config** (R1): `provider`, `modelId`, optional `credentialRef`, `dimension`, `batchSize`. There is no embedding-provider node kind. |
+| `connection` | Provider connection options. **Never carries credential material** — plaintext credential members (e.g. `password`, `connectionString`) are refused outright — never stripped — with `GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED`. |
+| `credentialKey` | The `connection` member the resolved credential populates; defaults to the provider's native option name (table below). Only used with `credentialRef`. |
+| `credentialRef` | `{ credentialId, credentialType }` naming the environment variable (a `MASTRA_*` name is required) in the git-ignored `.env.secret` that carries the credential. Required for `pgvector` (PostgreSQL authenticates every connection); optional elsewhere — a passwordless local `redis` stays usable. |
+
+Default credential-injection members (the `credentialKey` when unset):
+
+| Provider | Default `credentialKey` |
+| --- | --- |
+| `pgvector`, `redis`, `mongodb` | `password` |
+| `upstash` | `token` |
+| `qdrant`, `pinecone`, `chroma` | `apiKey` |
+| `supabase` | `serviceRoleKey` |
+| `libsql` | `authToken` |
+
+Fail-closed behaviour (C6): an unbound mastra-native provider fails with
+`GRAPH_MASTRA_VECTOR_UNAVAILABLE` (the message names the exact binding to
+supply, e.g. `@mastra/qdrant QdrantVector`), an unknown provider with
+`GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN`, and an absent or unresolvable
+credential with `GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE`. A resolved store emits
+the JSON-safe descriptor `{ type: "mastra.vectorStore", provider, id, … }`
+(R9) — the live `MastraVector` is never persisted, only the descriptor is.
+
+###### The AGE custom driver (`MastraAgeVectorDriver`)
+
+Apache AGE has no stock mastra binding, so the `age` provider resolves through
+a host driver. `createMastraAgeVectorDriver({ client, graphName?, tablePrefix? })`
+is the reference driver exported from `@decaf-ts/as-graph/mastra`:
+
+- `client` is a `MastraVectorSqlClient` (`query(sql, params)`) — the host owns
+  the Postgres connection (typically `pg`'s `Pool`/`Client`) and its
+  credentials; as-graph never imports a Postgres client package.
+- On first use the driver idempotently verifies the `age` extension, creates
+  the graph (`ag_catalog.create_graph`, default `as_graph_age_vectors`) when
+  absent, and creates the `<prefix>_indexes`/`<prefix>_vectors` tables inside
+  the graph schema; a missing extension or a failed setup fails closed with
+  `GRAPH_MASTRA_VECTOR_UNAVAILABLE` — never a silent fallback to another
+  backend.
+- Vectors are stored as `double precision[]` and metadata as `jsonb`; the
+  cosine/euclidean/dotproduct scores are computed in-process, so the driver
+  works on any AGE-enabled PostgreSQL without the `pgvector` extension. Every
+  value is bound as a query parameter, and `graphName`/`tablePrefix` must be
+  plain SQL identifiers.
+- The `graph` provider is the same custom-store pattern with a host-injected
+  driver: implement `MastraVectorDriver` over your own store and pass it as
+  `vectorStoreDrivers.graph`.
+
+###### Memory matrix (`core.agent.memory`)
+
+The memory node resolves a `MastraMemoryConfig` into mastra's own `Memory`
+(`@mastra/memory`) over a config-selected storage backend:
+
+| Provider | Backing | Host wiring |
+| --- | --- | --- |
+| `memory` | mastra's `InMemoryStore` baseline | none |
+| `libsql`, `pg` | mastra-native `LibSQLStore` / `PostgresStore` | none (statically imported peer packages) |
+| `mongodb`, `upstash`, `cloud`, `d1`, `dynamodb`, `convex`, `astra`, `redis` | mastra-native storage stores (`MongoStore`, `UpstashStore`, …) | `memoryStorageBindings`, keyed by provider |
+
+Config members: `id`, `threadId`, `resourceId`, `lastMessages`,
+`semanticRecall`, `workingMemoryTemplate` (enables mastra working memory with
+that template), `generateTitle`, and the advanced `memoryOptions` passthrough
+(named fields override the same key), plus the same credential gate as vector
+stores (`connection` never carries plaintext credentials; `credentialRef`
+names a `MASTRA_*` environment variable; `credentialKey` overrides the
+injection member). Provider-specific requirements, both fail-closed with
+`GRAPH_MASTRA_MEMORY_UNAVAILABLE`: `pg` needs a complete non-secret host
+config (`host`, `port`, `database`, `user`) **plus** its `credentialRef` (a
+`connectionString` is not an accepted alternative), and `libsql` needs a
+`connection.url` (e.g. `file:./agent-memory.db`). An unknown provider fails
+with `GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN`.
+
+**Semantic-recall host seam.** A `semanticRecall` memory needs a live mastra
+vector store, which the host supplies through the backend config's
+`memoryVectorStore` (and `memoryEmbedder` when the store does not generate
+embeddings itself — mastra's `isSelfEmbedding`). A semantic-recall memory
+without the vector seam fails closed with
+`GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED`; a non-self-embedding store without an
+embedder fails with `GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED`. Memory nodes wire
+to agents through the agent node's `memory` zone; the invocation binds to the
+first wired config's `threadId` (fail-closed when no wired memory declares a
+thread). Memory nodes may also carry `memoryId`, which maps onto the config
+`id` so descriptors and host memory maps resolve by the configured id.
+
+###### Processor / guardrail variants
+
+Processor and guardrail nodes wire onto the agent node's
+`inputProcessors`/`outputProcessors` zones and resolve to real
+`@mastra/core/processors` instances; guardrails compose with the
+output-processor pipeline, and resolution follows document edge order, so the
+pipeline order is deterministic:
+
+| Zone | `processorType` / `guardrailType` values |
+| --- | --- |
+| Input | `unicodeNormalizer`, `languageDetector`*, `piiDetector`*, `promptInjectionDetector`*, `systemPromptScrubber`*, `tokenCostControl`, `modelSelection` |
+| Output | `tokenLimiter`, `toolCallFilter`, `regexFilter`, `responseCache`, `batchParts`, `providerHistoryCompat`, `cyberRefusalHandler`, `prefillErrorHandler`, `streamErrorRetry`, `unsupportedFileHandler` |
+| Guardrail | `moderation`*, `piiDetector`*, `promptInjectionDetector`*, `regexFilter` |
+
+\* Model-carrying variants take their classifier as `modelAdapter` config
+(R1): the host `resolveProcessorModel` hook resolves it to a live model,
+otherwise the composed `<provider>/<modelId>` id is used; without either, the
+node fails closed with `GRAPH_MASTRA_PROCESSOR_UNAVAILABLE`.
+
+JSON-config-only constraints (the node vocabulary carries no live objects):
+
+- `tokenCostControl` requires a positive numeric `options.maxCost`.
+- `modelSelection` requires at least two `choices`, each with non-empty
+  `criteria` and a valid `modelAdapter`; its classifier **decision model**
+  must come from the host `resolveProcessorModel` hook (mastra validates the
+  classifier structurally — a language-model id cannot serve as one),
+  otherwise the node fails closed with `GRAPH_MASTRA_PROCESSOR_UNAVAILABLE`.
+- `regexFilter` rule `pattern`s may be given as strings (documents are JSON)
+  and are compiled into `RegExp`s with the optional rule `flags`; a pattern
+  that is neither a `RegExp` nor a compiling string fails closed.
+- `providerHistoryCompat` refuses `additionalRules` and all options
+  (compatibility rules contain functions/regexes that are not
+  JSON-serializable; the built-in mastra rules stay active);
+  `cyberRefusalHandler`, `prefillErrorHandler`, and `unsupportedFileHandler`
+  take no options at all; `streamErrorRetry` refuses `matchers` (predicates
+  are not JSON-serializable — only its numeric/boolean retry knobs are
+  supported).
+
+###### Node descriptors and capability rows
+
+- `core.agent.vectorStore` gains the `embedding` (object) and `credentialKey`
+  (text) CRUD fields alongside its existing provider/index fields.
+- `core.agent.memory` gains the `credentialKey` field, its `provider` select
+  lists the full storage matrix, and an unknown provider now fails closed
+  with `GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN` instead of silently defaulting
+  to `memory`.
+- The Mastra capability table (`MASTRA_FEATURE_CAPABILITIES`) gained the
+  `memoryStorage` and `processorVariants` rows (both `SUPPORTED`), and the
+  `vectorStores` row now names all twelve providers.
+
+###### Walkthrough: a RAG graph against PGVector / Redis / AGE / Graph via config
+
+The acceptance criterion is "a RAG graph runs against PGVector, Redis, AGE and
+Graph stores via config-selected bindings". Everything below is config — the
+same document shape works for every provider; only the store wiring changes.
+
+1. **Stand up the backend fixture** (the live-test Docker precedent):
+
+```bash
+# PGVector (pgvector extension image; publishes :5432 on the Docker host)
+docker run -d --name asgraph-pgvector -p 55441:5432 \
+  -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg17
+# Apache AGE (AGE extension image; publishes :5432 on the Docker host)
+docker run -d --name asgraph-age -p 55442:5432 \
+  -e POSTGRES_PASSWORD=postgres apache/age:release_PG17_1.7.0
+# From a containerized host the endpoints are the Docker bridge gateway
+# (172.17.0.1); from a normal host they are 127.0.0.1.
+```
+
+2. **Reference credentials by name**, never in the document — put the value
+   in the git-ignored `.env.secret`:
+
+```bash
+MASTRA_PGVECTOR_PASSWORD=postgres   # or your own MASTRA_* variable name
+```
+
+3. **Author the vector-store config** on a `core.agent.vectorStore` node
+   (the same config the retriever/chain steps consume through the store's
+   `resource` port):
+
+```jsonc
+{
+  "provider": "pgvector",
+  "indexName": "docs",
+  "dimension": 1536,
+  "metric": "cosine",
+  "embedding": { "provider": "openai", "modelId": "text-embedding-3-small" },
+  "connection": { "host": "172.17.0.1", "port": 55441, "database": "test", "user": "postgres", "schemaName": "public" },
+  "credentialRef": { "credentialId": "MASTRA_PGVECTOR_PASSWORD", "credentialType": "password" }
+}
+```
+
+   Switching to `redis`, `age`, or `graph` changes `provider` and
+   `connection` only; `age` needs no `pgvector` extension — only the AGE
+   extension and its graph (see the driver section above).
+
+4. **Wire the host bindings** once at backend initialization:
+
+```typescript
+import { PgVector } from "@mastra/pg"; // the host installs backend packages
+import { createMastraAgeVectorDriver } from "@decaf-ts/as-graph/mastra";
+
+await backend.initialize({
+  // …mastra runtime, agents, RAG ports (see "Real RAG & sandbox execution")…
+  vectorStoreBindings: {
+    pgvector: PgVector,
+    // redis/upstash/qdrant/pinecone/supabase/mongodb/libsql/chroma likewise
+  },
+  vectorStoreDrivers: {
+    age: createMastraAgeVectorDriver({ client: myPgPool }),
+    graph: myGraphVectorDriver,
+  },
+  // memory matrix: non-built-in storage + the semantic-recall seam
+  memoryStorageBindings: { mongodb: MongoStore /* … */ },
+  memoryVectorStore: myMastraVector, // required by semanticRecall memories
+  memoryEmbedder: myEmbeddingModel,  // when the vector store doesn't embed itself
+});
+```
+
+5. **Run the live driver tests** (the suites skip honestly when the
+   endpoints are unset):
+
+```bash
+GRAPH_IT_PGVECTOR_HOST=172.17.0.1 GRAPH_IT_AGE_HOST=172.17.0.1 \
+  npm run test:integration:mastra
+```
+
+The resolution flow these steps exercise:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Doc as Graph document
+  participant Res as resolveMastraVectorStore
+  participant Bind as Host bindings
+  participant Store as Live MastraVector
+
+  activate Doc
+  Doc->>Res: vectorStore config (provider, embedding, credentialRef)
+  activate Res
+  Res->>Bind: binding/driver lookup
+  activate Bind
+  Bind-->>Res: constructor | driver | undefined
+  deactivate Bind
+  alt binding or driver missing
+    Res-->>Doc: fail-closed GraphExecutionError
+  else resolved
+    Res->>Store: construct (connection, resolved credential)
+    activate Store
+    Store-->>Res: live store
+    deactivate Store
+    Res-->>Doc: store + secret-free descriptor (R9)
+  end
+  deactivate Res
+  deactivate Doc
 ```
 
 ##### Mastra compatibility surface (SAA-836)
@@ -667,9 +937,15 @@ the full compatibility surface built across the SAA-836 slices:
   (the same contract for `core.agent.tool` documents), plus
   `MastraToolConfig`/`MastraToolDecorator` for tool authoring.
 - **Memory and vector layers** — `MastraMemory` (mastra memory wiring over
-  `@mastra/memory`, including the `memorySelector` decision sub-flow) and
-  `MastraVectorStore` (`DriverBackedVectorStore`/`InMemoryVectorStore` over
-  `@mastra/libsql`/`@mastra/pg` peers). Backend configs never carry
+  `@mastra/memory`, including the `memorySelector` decision sub-flow; the
+  Stage 4 storage matrix resolves every mastra-native backend, with the host
+  `memoryVectorStore`/`memoryEmbedder` seam for semantic recall) and
+  `MastraVectorStore` (the Stage 4 twelve-provider matrix: the built-in
+  `InMemoryVectorStore` baseline, host-bound mastra-native constructors, and
+  `DriverBackedVectorStore`/`MastraAgeVectorDriver` for the custom
+  `age`/`graph` stores — see the
+  [Stage 4 mastra breadth](#stage-4-mastra-breadth-saa-749-vector-store-matrix-memory-matrix-processor-variants)
+  section). Backend configs never carry
   credential values (SAA-911 F4, gate C): plaintext credential members in a
   config's `connection` options are refused outright — never stripped — with
   `GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED`, and `pg`/`pgvector` (and a
@@ -686,7 +962,11 @@ the full compatibility surface built across the SAA-836 slices:
   `GRAPH_MASTRA_RAG_UNAVAILABLE` / `GRAPH_MASTRA_EMBEDDING_UNAVAILABLE` /
   `GRAPH_MASTRA_SANDBOX_UNAVAILABLE` / `GRAPH_CODE_SANDBOX_TIMEOUT` codes.
 - **Processors** — `MastraAgentProcessors` (input/output processor and
-  guardrail wiring, with the host-supplied `resolveProcessorModel` model hook).
+  guardrail wiring, with the host-supplied `resolveProcessorModel` model hook;
+  the Stage 4 variant vocabularies add `tokenCostControl`/`modelSelection` on
+  input and the JSON-config-safe output variants — see the
+  [Stage 4 mastra breadth](#stage-4-mastra-breadth-saa-749-vector-store-matrix-memory-matrix-processor-variants)
+  section for the per-variant constraints).
 - **Human-in-the-loop and voice** — `MastraHitlStepHandler` (the
   `core.agent.hitl` suspend/resume handler) and `MastraVoiceStepHandler`
   (`core.agent.voice`, failing closed with `GRAPH_MASTRA_VOICE_UNAVAILABLE`

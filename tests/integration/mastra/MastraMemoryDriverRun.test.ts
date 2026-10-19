@@ -607,11 +607,26 @@ describe("mastra memory driver run — fail-closed paths (SAA-838 M2)", () => {
   it("fails closed with the provider-unknown code for an unsupported provider", async () => {
     const graphCode = await rejectionGraphCodeOf(() =>
       resolveMastraMemoryStorage(
-        { provider: "redis" } as unknown as MastraMemoryConfig,
+        { provider: "not-a-mastra-store" } as unknown as MastraMemoryConfig,
         "mem"
       )
     );
     expect(graphCode).toBe(GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN);
+  });
+
+  it("fails closed when a native provider has no host storage binding", async () => {
+    // Stage 4 made `redis` a supported native provider: it is no longer an
+    // unknown provider, but an unbound native backend still must not resolve.
+    const graphCode = await rejectionGraphCodeOf(() =>
+      resolveMastraMemoryStorage(
+        {
+          provider: "redis",
+          connection: { host: "localhost", port: 6379 },
+        } as MastraMemoryConfig,
+        "mem"
+      )
+    );
+    expect(graphCode).toBe(GRAPH_MASTRA_MEMORY_UNAVAILABLE);
   });
 
   it("fails closed on generate when a wired memory declares no threadId", async () => {

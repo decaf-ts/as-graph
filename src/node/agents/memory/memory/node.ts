@@ -5,9 +5,9 @@
  * only on the agent `memory` zone (its `@connection()` port carries the
  * `memory` category) and, per R9, resolves its configuration into the mastra
  * memory resource on a real output port (config-only fallback remains valid).
- * Providers are `memory` (mastra's `InMemoryStore` baseline), `libsql` and `pg`
- * (mastra's native memory storage backends, this slice's first two — the full
- * storage matrix completes in O1). The working-memory template is both a CRUD
+ * Providers are `memory` (mastra's `InMemoryStore` baseline) plus every
+ * mastra-native memory storage backend (`libsql`, `pg`, `mongodb`, `upstash`,
+ * `cloud`, `d1`, `dynamodb`, `convex`, `astra`, `redis`) bound by the host. The working-memory template is both a CRUD
  * property and a declared input port: a wired value overrides the configured
  * one at execution time.
  */
@@ -22,6 +22,8 @@ import {
   type MastraMemoryConfig,
   type MastraMemoryProvider,
 } from "../../../../mastra/MastraMemory";
+import { GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN } from "../../../../mastra/types";
+import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -84,11 +86,16 @@ export class AgentMemoryNode extends GraphNode<
     request: GraphNodeExecutionRequest<AgentMemoryInput>
   ): MastraMemoryConfig {
     const provider = this.provider ?? "memory";
+    if (!(MASTRA_MEMORY_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new GraphExecutionError(
+        `Memory provider node '${request.nodeId}' declares unknown provider '${String(provider)}'`,
+        GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
+        { nodeId: request.nodeId, provider: String(provider) }
+      );
+    }
     const wiredTemplate = request.inputs["workingMemoryTemplate"];
     const config: MastraMemoryConfig = {
-      provider: (MASTRA_MEMORY_PROVIDERS as readonly string[]).includes(provider)
-        ? (provider as MastraMemoryProvider)
-        : "memory",
+      provider: provider as MastraMemoryProvider,
     };
     if (this.memoryId !== undefined) config.id = this.memoryId;
     if (this.threadId !== undefined) config.threadId = this.threadId;
@@ -100,6 +107,7 @@ export class AgentMemoryNode extends GraphNode<
     if (this.generateTitle !== undefined) config.generateTitle = this.generateTitle;
     if (this.memoryOptions !== undefined) config.memoryOptions = this.memoryOptions;
     if (this.connection !== undefined) config.connection = this.connection;
+    if (this.credentialKey !== undefined) config.credentialKey = this.credentialKey;
     if (this.credentialRef !== undefined) config.credentialRef = this.credentialRef as never;
     const template =
       typeof wiredTemplate === "string" && wiredTemplate.trim().length > 0
@@ -118,7 +126,7 @@ export class AgentMemoryNode extends GraphNode<
     type: "select",
   })
   @input({ handle: "provider", userControlled: true })
-  provider?: "memory" | "libsql" | "pg";
+  provider?: MastraMemoryProvider;
 
   /** Optional memory id (defaults to the provider). */
   @uielement("ngx-decaf-crud-field", {
@@ -199,6 +207,17 @@ export class AgentMemoryNode extends GraphNode<
   })
   @input({ handle: "connection", userControlled: true, type: "object" })
   connection?: Record<string, unknown>;
+
+  /**
+   * The `connection` member the resolved credential populates. Defaults to the
+   * provider's native option name; only used with `credentialRef`.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.memory.fields.credentialRef.label",
+    type: "text",
+  })
+  @input({ handle: "credentialKey", userControlled: true })
+  credentialKey?: string;
 
   /** Credential reference resolved by document validation stage 8 (never a secret). */
   @uielement("ngx-decaf-crud-field", {

@@ -9,6 +9,7 @@
  * what the host injects and what resume auditing returns.
  */
 import type { Context, MaybeContextualArg } from "@decaf-ts/core";
+import type { MastraVector } from "@mastra/core/vector";
 import type { MastraDecafModelResolver } from "./MastraStructuredOutput";
 import type {
   GraphBackendWorkflowStore,
@@ -24,7 +25,11 @@ import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkfl
 import type { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
 import type { MastraAgentRuntime } from "./MastraAgentStepHandler";
 import type { MastraModelAdapterConfig } from "./MastraAgentModelAdapter";
-import type { MastraMemoryConfig } from "./MastraMemory";
+import type {
+  MastraMemoryConfig,
+  MastraMemoryEmbedder,
+  MastraMemoryStorageBindings,
+} from "./MastraMemory";
 import type { MastraPersistence } from "./MastraPersistence";
 import type {
   MastraEmbeddingConfig,
@@ -123,6 +128,22 @@ export const GRAPH_MASTRA_MEMORY_UNAVAILABLE =
 /** An agent memory declared an unknown storage provider (SAA-836 M2). */
 export const GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN =
   "GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN";
+/**
+ * An agent memory enabled mastra semantic recall but no vector store was
+ * supplied through the host seam (SAA-749 Stage 4). Mastra's `Memory` requires
+ * a `vector` for semantic recall; the resolver fails closed instead of
+ * forwarding the request and surfacing mastra's raw `Error`.
+ */
+export const GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED =
+  "GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED";
+/**
+ * An agent memory enabled mastra semantic recall with a vector store that does
+ * not generate embeddings itself, but no embedder was supplied through the host
+ * seam (SAA-749 Stage 4). Mastra requires one; the resolver fails closed instead
+ * of surfacing mastra's raw `Error`.
+ */
+export const GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED =
+  "GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED";
 /**
  * A wired input/output processor or guardrail could not be resolved into a
  * real mastra processor (SAA-836 M5): unknown type, or a model-carrying type
@@ -300,6 +321,23 @@ export interface MastraBackendConfig extends Record<string, unknown> {
    */
   memories?: Record<string, unknown>;
   /**
+   * Optional host bindings for mastra-native memory storage backends beyond the
+   * built-in in-memory/LibSQL/Postgres resolution (SAA-749 Stage 4): Mongo,
+   * Upstash, cloud, D1, DynamoDB, Convex, Astra, and Redis stores. A provider
+   * with no binding fails closed and never falls back to another backend.
+   */
+  memoryStorageBindings?: MastraMemoryStorageBindings;
+  /**
+   * Optional mastra vector store used by memories that enable semantic recall
+   * (SAA-749 Stage 4). Forwarded to the built-in memory resolution; without it
+   * a semantic-recall memory fails closed with
+   * `GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED`.
+   */
+  memoryVectorStore?: MastraVector;
+  /** Optional embedding model used by semantic recall, when the vector store
+   * does not generate embeddings itself. */
+  memoryEmbedder?: MastraMemoryEmbedder;
+  /**
    * Optional factory building a live mastra memory from a wired memory node's
    * config (SAA-836 M2). Consulted after the {@link memories} map and before
    * the built-in {@link resolveMastraMemory} wrap.
@@ -318,7 +356,9 @@ export interface MastraBackendConfig extends Record<string, unknown> {
   /**
    * Host hook resolving the classifier model a model-carrying processor or
    * guardrail runs on (SAA-836 M5, R1). Receives the wired node's model-adapter
-   * config; when omitted, the composed `<provider>/<modelId>` id is used.
+   * config; when omitted, the composed `<provider>/<modelId>` id is used for
+   * model-carrying processors that accept one. `modelSelection` requires this
+   * hook because mastra validates a structural decision model.
    */
   resolveProcessorModel?: (
     adapter: MastraModelAdapterConfig | undefined

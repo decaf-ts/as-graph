@@ -35,7 +35,11 @@
  * that can reach this module already runs on the mastra engine.
  */
 import { InMemoryStore, type MastraCompositeStore } from "@mastra/core/storage";
-import type { MastraMemory } from "@mastra/core/memory";
+import type {
+  MastraMemory,
+  SharedMemoryConfig,
+} from "@mastra/core/memory";
+import type { MastraVector } from "@mastra/core/vector";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore, type LibSQLConfig } from "@mastra/libsql";
 import {
@@ -52,6 +56,8 @@ import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
   GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
+  GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED,
+  GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED,
 } from "./types";
 import {
   assertNoMastraPlainConnectionCredentials,
@@ -60,15 +66,110 @@ import {
 } from "./MastraEnvironment";
 import { MASTRA_AGENT_ZONE } from "../node/agents/zones";
 
+/**
+ * The mastra-native memory storage providers the memory node can be
+ * configured with, beyond the in-memory baseline. Every entry is backed by a
+ * package exporting a mastra `MastraCompositeStore` subtype; the host binds
+ * the constructor (see {@link MastraMemoryStorageBindings}) so as-graph never
+ * imports an optional backend package.
+ */
+export type MastraNativeMemoryProvider =
+  | "libsql"
+  | "pg"
+  | "mongodb"
+  | "upstash"
+  | "cloud"
+  | "d1"
+  | "dynamodb"
+  | "convex"
+  | "astra"
+  | "redis";
+
 /** The memory storage providers the memory node can be configured with. */
-export type MastraMemoryProvider = "memory" | "libsql" | "pg";
+export type MastraMemoryProvider = "memory" | MastraNativeMemoryProvider;
 
 /** Every supported memory provider, in palette order. */
 export const MASTRA_MEMORY_PROVIDERS: readonly MastraMemoryProvider[] = [
   "memory",
   "libsql",
   "pg",
+  "mongodb",
+  "upstash",
+  "cloud",
+  "d1",
+  "dynamodb",
+  "convex",
+  "astra",
+  "redis",
 ];
+
+/** The mastra-native memory providers (everything the host may bind). */
+export const MASTRA_NATIVE_MEMORY_PROVIDERS: readonly MastraNativeMemoryProvider[] =
+  [
+    "libsql",
+    "pg",
+    "mongodb",
+    "upstash",
+    "cloud",
+    "d1",
+    "dynamodb",
+    "convex",
+    "astra",
+    "redis",
+  ];
+
+/**
+ * The package/class a mastra-native memory provider binds, used in fail-closed
+ * error messages so a missing host binding names the constructor to supply.
+ */
+export const MASTRA_NATIVE_MEMORY_BINDING_HINTS: Readonly<
+  Record<MastraNativeMemoryProvider, string>
+> = {
+  libsql: "@mastra/libsql LibSQLStore",
+  pg: "@mastra/pg PostgresStore",
+  mongodb: "@mastra/mongodb MongoStore",
+  upstash: "@mastra/upstash UpstashStore",
+  cloud: "@mastra/cloud MastraCloudStore",
+  d1: "@mastra/cloudflare-d1 D1Store",
+  dynamodb: "@mastra/dynamodb DynamoDBStore",
+  convex: "@mastra/convex ConvexStore",
+  astra: "@mastra/astra AstraStore",
+  redis: "@mastra/redis RedisStore",
+};
+
+/**
+ * The default `connection` member a provider's resolved credential is injected
+ * into. A config may override the name with
+ * {@link MastraMemoryConfig.credentialKey}.
+ */
+export const MASTRA_MEMORY_DEFAULT_CREDENTIAL_KEYS: Readonly<
+  Record<MastraNativeMemoryProvider, string>
+> = {
+  libsql: "authToken",
+  pg: "password",
+  mongodb: "password",
+  upstash: "token",
+  cloud: "apiKey",
+  d1: "apiToken",
+  dynamodb: "secretAccessKey",
+  convex: "deployKey",
+  astra: "token",
+  redis: "password",
+};
+
+/**
+ * Whether a provider names a mastra-native storage backend bound by the host.
+ *
+ * @param provider - The provider discriminator to test.
+ * @returns `true` when the provider requires a host-bound constructor.
+ */
+export function isMastraNativeMemoryProvider(
+  provider: string
+): provider is MastraNativeMemoryProvider {
+  return (MASTRA_NATIVE_MEMORY_PROVIDERS as readonly string[]).includes(
+    provider
+  );
+}
 
 /**
  * The memory configuration a `core.agent.memory` node carries. It is **config**,
@@ -108,6 +209,13 @@ export interface MastraMemoryConfig {
    */
   connection?: Record<string, unknown>;
   /**
+   * The `connection` member the resolved credential is injected into. Defaults
+   * to the provider's native option name (see
+   * {@link MASTRA_MEMORY_DEFAULT_CREDENTIAL_KEYS}); only used when a
+   * {@link credentialRef} is configured.
+   */
+  credentialKey?: string;
+  /**
    * Credential reference resolved by document validation stage 8 (SAA-911
    * F4, gate C): `credentialId` names the environment variable that carries
    * the provider credential; the value is resolved from the host environment
@@ -145,14 +253,19 @@ export function isMastraMemoryConfig(
   ) {
     return false;
   }
+  const credentialKey = value["credentialKey"];
+  if (credentialKey !== undefined && typeof credentialKey !== "string") {
+    return false;
+  }
   return true;
 }
 
 /**
  * Reads the memory config carried by a document node. Looks at the canonical
- * `memory` parameter first, then the flat node parameter shape; an absent or
- * malformed value returns `undefined` so the caller fails closed instead of
- * resolving a bogus memory.
+ * `memory` parameter first, then the flat node parameter shape; a node that
+ * omits `provider` defaults to the in-memory baseline. An absent or malformed
+ * value (including an unknown provider) returns `undefined` so the caller
+ * fails closed instead of resolving a bogus memory.
  *
  * @param node - The canonical node instance.
  * @returns The validated memory config, or `undefined` when none is present.
@@ -162,16 +275,24 @@ export function mastraMemoryConfigOf(
 ): MastraMemoryConfig | undefined {
   const parameters = node.parameters ?? {};
   const memoryParam = parameters["memory"];
-  if (isMastraMemoryConfig(memoryParam)) return memoryParam;
-  if (!isMastraMemoryConfig(parameters)) return undefined;
+  const candidate = memoryParam !== undefined ? memoryParam : parameters;
+  if (!isPlainRecord(candidate)) return undefined;
+  // A memory node may omit `provider`; the baseline is mastra's in-memory
+  // store. An unknown provider is never defaulted — it stays invalid so the
+  // caller fails closed instead of fabricating a memory backend.
+  const withProvider =
+    candidate["provider"] === undefined
+      ? { ...candidate, provider: "memory" }
+      : candidate;
+  if (!isMastraMemoryConfig(withProvider)) return undefined;
   // Flat node-parameter shape: the flat `memoryId` handle maps onto the
   // canonical config `id` so descriptors and the backend `memories` map
   // resolve by the configured id. A copy is returned so the node instance's
   // parameters are never mutated.
-  if (parameters.id === undefined && typeof parameters.memoryId === "string") {
-    return { ...parameters, id: parameters.memoryId };
+  if (withProvider.id === undefined && typeof withProvider.memoryId === "string") {
+    return { ...withProvider, id: withProvider.memoryId };
   }
-  return parameters;
+  return withProvider;
 }
 
 /**
@@ -297,14 +418,62 @@ function memoryUnavailable(
 }
 
 /**
+ * A mastra-native memory-storage constructor the host binds for a provider
+ * (`@mastra/mongodb`'s `MongoStore`, `@mastra/upstash`'s `UpstashStore`, …).
+ * The store is constructed with the config's connection options and id.
+ */
+export type MastraMemoryStorageConstructor = new (
+  options: Record<string, unknown>
+) => MastraCompositeStore;
+
+/**
+ * Host-provided mastra-native memory-storage bindings, keyed by provider.
+ * `memory`, `libsql`, and `pg` have built-in resolution; every other provider
+ * requires its binding here and fails closed without it. The index signature
+ * keeps the map open to a host extension.
+ */
+export interface MastraMemoryStorageBindings {
+  /** Reserved: libsql resolves through the built-in `LibSQLStore` path. */
+  libsql?: MastraMemoryStorageConstructor;
+  /** Reserved: pg resolves through the built-in `PostgresStore` path. */
+  pg?: MastraMemoryStorageConstructor;
+  /** The `@mastra/mongodb` `MongoStore` binding. */
+  mongodb?: MastraMemoryStorageConstructor;
+  /** The `@mastra/upstash` `UpstashStore` binding. */
+  upstash?: MastraMemoryStorageConstructor;
+  /** The `@mastra/cloud` cloud storage binding. */
+  cloud?: MastraMemoryStorageConstructor;
+  /** The `@mastra/cloudflare-d1` `D1Store` binding. */
+  d1?: MastraMemoryStorageConstructor;
+  /** The `@mastra/dynamodb` `DynamoDBStore` binding. */
+  dynamodb?: MastraMemoryStorageConstructor;
+  /** The `@mastra/convex` `ConvexStore` binding. */
+  convex?: MastraMemoryStorageConstructor;
+  /** The `@mastra/astra` `AstraStore` binding. */
+  astra?: MastraMemoryStorageConstructor;
+  /** The `@mastra/redis` `RedisStore` binding. */
+  redis?: MastraMemoryStorageConstructor;
+  /** Additional host-native provider bindings. */
+  [provider: string]: MastraMemoryStorageConstructor | undefined;
+}
+
+/** Options {@link resolveMastraMemoryStorage} resolves a store with. */
+export interface MastraMemoryStorageResolveOptions {
+  /** Host-provided native storage bindings for the non-built-in providers. */
+  storageBindings?: MastraMemoryStorageBindings;
+}
+
+/**
  * Resolves a memory config into a live mastra storage backend.
  *
  * Mastra-first (R3): `memory` uses mastra's own `InMemoryStore`; `libsql` and
  * `pg` construct mastra's native memory storage stores (`@mastra/libsql`'s
- * `LibSQLStore` / `@mastra/pg`'s `PostgresStore`) — the two backends this slice
- * implements first (the full storage matrix completes in O1). Both fail closed
- * with {@link GRAPH_MASTRA_MEMORY_UNAVAILABLE} when the connection options are
- * incomplete; an unknown provider fails with
+ * `LibSQLStore` / `@mastra/pg`'s `PostgresStore`); every other native backend
+ * (Mongo, Upstash, cloud, D1, DynamoDB, Convex, Astra, Redis) is constructed
+ * from the host's {@link MastraMemoryStorageBindings} entry — never imported by
+ * as-graph. Every path fails closed with
+ * {@link GRAPH_MASTRA_MEMORY_UNAVAILABLE} when the connection options or host
+ * binding are incomplete; an unknown provider fails with
  * {@link GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN} — never a fabricated store.
  *
  * Credential gate (SAA-911 F4, gate C): the `pg` connection options must carry
@@ -312,25 +481,30 @@ function memoryUnavailable(
  * `credentialRef` naming the environment variable that carries the pg
  * password — plaintext credential members in the connection are refused and
  * the credential value is host-resolved from the git-ignored `.env.secret`
- * only at construction time. `libsql` stays credential-free by configuration
- * (its `url` member is required and credential-bearing URLs are outside this
- * slice's scope — see the SAA-911 residual-risk forward item for the O1
- * storage matrix).
+ * only at construction time. A host-bound native provider resolves a
+ * credential the same way when a `credentialRef` is configured, injecting the
+ * value into the member named by {@link MastraMemoryConfig.credentialKey} or
+ * the provider's default key (see {@link MASTRA_MEMORY_DEFAULT_CREDENTIAL_KEYS}).
+ * `libsql` stays credential-free by configuration (its `url` member is
+ * required; credentials embedded in the URL are a host-owned residual risk
+ * this resolution does not validate).
  *
  * @param config - The validated memory config.
  * @param id - The resolved memory id the store is constructed with.
+ * @param options - The host-provided native storage bindings.
  * @returns The live storage instance.
  * @throws {GraphExecutionError} {@link GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED}
  *   when the connection options carry plaintext credential material.
  * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE}
- *   when the pg credential reference is absent, malformed, or its environment
- *   variable is unset or empty.
- * @throws {GraphExecutionError} when the backend options are incomplete or the
- *   provider is unknown.
+ *   when a required credential reference is absent, malformed, or its
+ *   environment variable is unset or empty.
+ * @throws {GraphExecutionError} when the backend options are incomplete, the
+ *   host binding is missing, or the provider is unknown.
  */
 export async function resolveMastraMemoryStorage(
   config: MastraMemoryConfig,
-  id: string
+  id: string,
+  options: MastraMemoryStorageResolveOptions = {}
 ): Promise<MastraCompositeStore> {
   switch (config.provider) {
     case "memory":
@@ -344,10 +518,16 @@ export async function resolveMastraMemoryStorage(
           "the connection options must carry a 'url' (for example 'file:./agent-memory.db')"
         );
       }
+      const connection = { ...(config.connection ?? {}) };
+      assertNoMastraPlainConnectionCredentials(connection, {
+        provider: "libsql",
+        id,
+        surface: "memory",
+      });
       const options: Record<string, unknown> = {
         id,
         url,
-        ...config.connection,
+        ...connection,
       };
       return new LibSQLStore(options as LibSQLConfig);
     }
@@ -380,14 +560,47 @@ export async function resolveMastraMemoryStorage(
       };
       return new PostgresStore(options as PostgresStoreConfig);
     }
-    default:
-      throw new GraphExecutionError(
-        `Unknown mastra memory provider '${String(config.provider)}'`,
-        GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
-        { provider: String(config.provider) }
-      );
+    default: {
+      if (!isMastraNativeMemoryProvider(config.provider)) {
+        throw new GraphExecutionError(
+          `Unknown mastra memory provider '${String(config.provider)}'`,
+          GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
+          { provider: String(config.provider) }
+        );
+      }
+      const binding = options.storageBindings?.[config.provider];
+      if (!binding) {
+        throw memoryUnavailable(
+          config.provider,
+          id,
+          `the host must bind the ${MASTRA_NATIVE_MEMORY_BINDING_HINTS[config.provider]} constructor for this provider`
+        );
+      }
+      const context = { provider: config.provider, id, surface: "memory" };
+      const connection = { ...(config.connection ?? {}) };
+      assertNoMastraPlainConnectionCredentials(connection, context);
+      const storeOptions: Record<string, unknown> = { ...connection, id };
+      if (config.credentialRef !== undefined) {
+        const credentialEnv = mastraCredentialEnvNameOf(
+          config,
+          context,
+          `${config.provider} credential`
+        );
+        const credentialKey =
+          config.credentialKey ??
+          MASTRA_MEMORY_DEFAULT_CREDENTIAL_KEYS[config.provider];
+        storeOptions[credentialKey] = resolveMastraCredentialValue(credentialEnv);
+      }
+      return new binding(storeOptions);
+    }
   }
 }
+
+/**
+ * The mastra embedding model semantic recall consumes: a registered model id
+ * string or a live mastra/AI-SDK embedding model.
+ */
+export type MastraMemoryEmbedder = SharedMemoryConfig["embedder"];
 
 /** Options {@link resolveMastraMemory} resolves a memory with. */
 export interface MastraMemoryResolveOptions {
@@ -397,6 +610,21 @@ export interface MastraMemoryResolveOptions {
    * storage lifecycle.
    */
   storage?: MastraCompositeStore;
+  /** Host-provided native storage bindings for non-built-in providers. */
+  storageBindings?: MastraMemoryStorageBindings;
+  /**
+   * A live mastra vector store the memory uses for semantic recall (R1
+   * adapter-in-config: the store carries its own embedding adapter). Required
+   * when the config enables {@link MastraMemoryConfig.semanticRecall}; the
+   * resolver fails closed with {@link GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED}
+   * without it instead of surfacing mastra's raw error.
+   */
+  vector?: MastraVector;
+  /**
+   * The mastra embedding model semantic recall uses. Required when the vector
+   * store does not generate embeddings itself; forwarded to mastra verbatim.
+   */
+  embedder?: MastraMemoryEmbedder;
 }
 
 /** A resolved memory: the live mastra `Memory` plus its JSON-safe descriptor. */
@@ -416,21 +644,60 @@ export interface ResolvedMastraMemory {
  * is a declared peer dependency, statically imported like `@mastra/core`
  * itself (C11).
  *
+ * Semantic recall requires a live vector store (mastra's `MemoryConstructorConfig.vector`);
+ * the host supplies it through {@link MastraMemoryResolveOptions.vector}. A
+ * config that enables semantic recall without one fails closed with
+ * {@link GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED} instead of forwarding the request
+ * and surfacing mastra's raw `Error`.
+ *
  * @param config - The validated memory config.
- * @param options - Optional pre-resolved storage override.
+ * @param options - Optional pre-resolved storage/vector overrides.
  * @returns The live memory and its JSON-safe descriptor.
- * @throws {GraphExecutionError} when the storage backend cannot be resolved.
+ * @throws {GraphExecutionError} when the storage backend cannot be resolved,
+ *   when semantic recall is enabled without a vector store
+ *   ({@link GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED}), or when the vector store does
+ *   not embed itself and no embedder is supplied
+ *   ({@link GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED}).
  */
 export async function resolveMastraMemory(
   config: MastraMemoryConfig,
   options: MastraMemoryResolveOptions = {}
 ): Promise<ResolvedMastraMemory> {
   const descriptor = mastraMemoryDescriptorOf(config);
-  const storage =
-    options.storage ?? (await resolveMastraMemoryStorage(config, descriptor.id));
   const memoryOptions = mastraMemoryOptionsOf(config);
+  // The advanced passthrough (`memoryOptions`) can also enable semantic recall;
+  // the merged options honor the named field's override, so this is the
+  // effective value mastra constructs the memory with.
+  if (memoryOptions?.["semanticRecall"] === true) {
+    if (options.vector === undefined) {
+      throw new GraphExecutionError(
+        `The '${config.provider}' memory provider enables semantic recall but no vector store is available; supply a mastra vector store through the host memory seam`,
+        GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED,
+        { provider: config.provider, id: descriptor.id }
+      );
+    }
+    const isSelfEmbedding = (
+      options.vector as { isSelfEmbedding?: boolean }
+    ).isSelfEmbedding;
+    if (options.embedder === undefined && isSelfEmbedding !== true) {
+      throw new GraphExecutionError(
+        `The '${config.provider}' memory provider enables semantic recall but its vector store does not generate embeddings and no embedder is available; supply a mastra embedding model through the host memory seam`,
+        GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED,
+        { provider: config.provider, id: descriptor.id }
+      );
+    }
+  }
+  const storage =
+    options.storage ??
+    (await resolveMastraMemoryStorage(config, descriptor.id, {
+      ...(options.storageBindings
+        ? { storageBindings: options.storageBindings }
+        : {}),
+    }));
   const memory = new Memory({
     storage,
+    ...(options.vector ? { vector: options.vector } : {}),
+    ...(options.embedder !== undefined ? { embedder: options.embedder } : {}),
     ...(memoryOptions ? { options: memoryOptions } : {}),
   });
   return { memory, descriptor };
@@ -450,13 +717,18 @@ export interface MastraAgentMemoryWiring {
 /**
  * Resolves the memory provider nodes wired to an agent node through the
  * `memory` zone: every connection edge whose target is the agent node's
- * `memory` port and whose source is a node carrying a valid memory config.
- * Connection edges are structural and never route values — this compile-time
- * walk is how the agent runtime learns which memory to resolve and bind.
+ * `memory` port and whose source is a `core.agent.memory` node carrying a
+ * valid memory config. Connection edges are structural and never route
+ * values — this compile-time walk is how the agent runtime learns which memory
+ * to resolve and bind. A wired `core.agent.memory` node whose config is absent
+ * or malformed fails closed instead of being silently dropped.
  *
  * @param document - The document being compiled.
  * @param agentNode - The agent node whose `memory` zone to resolve.
  * @returns The wired memory nodes with their validated configs.
+ * @throws {GraphExecutionError}
+ *   {@link GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN} when a wired
+ *   `core.agent.memory` node declares an unknown or malformed memory provider.
  */
 export function connectedMastraMemoryWiringOf(
   document: GraphWorkflowDocument,
@@ -474,8 +746,15 @@ export function connectedMastraMemoryWiringOf(
     if (source.scope !== "node") continue;
     const sourceNode = byId.get(source.nodeId);
     if (!sourceNode) continue;
+    if (sourceNode.kind !== "core.agent.memory") continue;
     const config = mastraMemoryConfigOf(sourceNode);
-    if (!config) continue;
+    if (!config) {
+      throw new GraphExecutionError(
+        `Memory provider node '${sourceNode.id}' wired to agent '${agentNode.id}' declares an unknown or malformed memory provider`,
+        GRAPH_MASTRA_MEMORY_PROVIDER_UNKNOWN,
+        { nodeId: sourceNode.id, provider: String(sourceNode.parameters?.["provider"]) }
+      );
+    }
     wiring.push({ node: sourceNode, config });
   }
   return wiring;

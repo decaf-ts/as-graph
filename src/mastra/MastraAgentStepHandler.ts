@@ -28,6 +28,7 @@
  */
 import { z } from "zod";
 import { createStep } from "@mastra/core/workflows";
+import type { MastraVector } from "@mastra/core/vector";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import {
@@ -46,6 +47,8 @@ import {
   resolveMastraMemory,
   type MastraAgentMemoryWiring,
   type MastraMemoryConfig,
+  type MastraMemoryEmbedder,
+  type MastraMemoryStorageBindings,
 } from "./MastraMemory";
 import {
   resolveAgentWiredProcessors,
@@ -98,7 +101,9 @@ export interface MastraAgentStepHandlerOptions {
   /**
    * Host hook resolving the classifier model a model-carrying wired processor
    * or guardrail runs on (SAA-836 M5, R1). Forwarded to the processor
-   * resolution; when omitted, the composed `<provider>/<modelId>` id is used.
+   * resolution; when omitted, the composed `<provider>/<modelId>` id is used
+   * for model-carrying processors that accept one. `modelSelection` requires
+   * this hook (mastra validates a structural decision model).
    */
   resolveProcessorModel?: MastraProcessorModelResolver;
   /**
@@ -108,6 +113,11 @@ export interface MastraAgentStepHandlerOptions {
    * When omitted, a definition that references a model by name fails closed.
    */
   resolveModel?: MastraDecafModelResolver;
+  /**
+   * Host bindings for mastra-native memory storage backends beyond the built-in
+   * in-memory/LibSQL/Postgres resolution (SAA-749 Stage 4).
+   */
+  memoryStorageBindings?: MastraMemoryStorageBindings;
 }
 
 /**
@@ -149,6 +159,20 @@ export interface MastraAgentFactoryOptions {
     config: MastraMemoryConfig,
     node: GraphNodeInstance
   ) => unknown | Promise<unknown>;
+  /**
+   * Host bindings for the mastra-native storage backends of the memory matrix
+   * (SAA-749 Stage 4); forwarded to the built-in memory resolution.
+   */
+  memoryStorageBindings?: MastraMemoryStorageBindings;
+  /**
+   * Host-supplied mastra vector store for memories that enable semantic recall
+   * (SAA-749 Stage 4); forwarded to the built-in memory resolution. Without it
+   * a semantic-recall memory fails closed with
+   * `GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED`.
+   */
+  memoryVectorStore?: MastraVector;
+  /** Host-supplied embedding model used by semantic recall, when needed. */
+  memoryEmbedder?: MastraMemoryEmbedder;
 }
 
 /**
@@ -231,7 +255,19 @@ async function resolveWiredMemories(
       memory = await options.createMemory(entry.config, entry.node);
     }
     if (memory === undefined || memory === null) {
-      memory = (await resolveMastraMemory(entry.config)).memory;
+      memory = (
+        await resolveMastraMemory(entry.config, {
+          ...(options.memoryStorageBindings
+            ? { storageBindings: options.memoryStorageBindings }
+            : {}),
+          ...(options.memoryVectorStore
+            ? { vector: options.memoryVectorStore }
+            : {}),
+          ...(options.memoryEmbedder !== undefined
+            ? { embedder: options.memoryEmbedder }
+            : {}),
+        })
+      ).memory;
     }
     if (memory === undefined || memory === null) {
       throw new GraphExecutionError(
