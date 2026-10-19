@@ -237,5 +237,10 @@
     "gray-matter": {
       "js-yaml": "^3.13.1"
     }
+  },
+  "optionalDependencies": {
+    "mysql2": "^3.14.0",
+    "mssql": "^11.0.1",
+    "pg": "^8.16.3"
   }
 }

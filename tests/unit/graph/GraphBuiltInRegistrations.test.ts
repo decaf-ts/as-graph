@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 75 built-in kinds as manifest+executor pairs,
+ * @description Validates the 98 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -9,6 +9,8 @@
  * catalogue's built-in manifests and listManifests digest stability.
  */
 import { jest, describe, it, expect } from "@jest/globals";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   graphCategoryStyleOf,
   graphDefinitionOf,
@@ -45,6 +47,18 @@ jest.setTimeout(30000);
  * voice kind carries the speaker icon, while every other Agent-family kind
  * keeps the family robot icon.
  */
+/**
+ * SAA-1027 Stage 3b: the new IO kinds carry their vendor brand colours instead
+ * of the IO category base colour, while the IO category style stays registered
+ * for palette grouping.
+ */
+const GRAPH_3B_BRAND_IO_COLORS: Record<string, string> = {
+  "core.io.googleSheets": "#0f9d58",
+  "core.io.airtable": "#fcb400",
+  "core.io.graphql": "#e10098",
+  "core.io.spreadsheetFile": "#217346",
+};
+
 const GRAPH_M6_AGENT_SUPPLIER_ICONS: Record<string, string> = {
   "core.agent.trigger.slack": "ti-brand-slack",
   "core.agent.trigger.discord": "ti-brand-discord",
@@ -70,7 +84,7 @@ async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
 describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(75);
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(98);
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
@@ -79,15 +93,15 @@ describe("GraphBuiltInRegistrations", () => {
         Function
       );
     }
-    expect(catalogue.size).toBe(75);
+    expect(catalogue.size).toBe(98);
   });
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
-    // registerBuiltInGraphNodes registers all 75 built-ins with no engine
+    // registerBuiltInGraphNodes registers all 98 built-ins with no engine
     // argument: each executor is derived from the node class's static execute.
     await registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(75);
+    expect(catalogue.size).toBe(98);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
       expect(await catalogue.has(kind)).toBe(true);
       expect((await catalogue.getManifest(kind)).kind).toBe(kind);
@@ -113,7 +127,7 @@ describe("GraphBuiltInRegistrations", () => {
     await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
     ).resolves.toBeDefined();
-    expect(catalogue.size).toBe(75);
+    expect(catalogue.size).toBe(98);
   });
 
   it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
@@ -173,6 +187,29 @@ describe("GraphBuiltInRegistrations", () => {
       "core.io.httpRequest",
       "core.io.readPDF",
       "core.io.readWriteFile",
+      "core.storage.postgres",
+      "core.storage.mySql",
+      "core.storage.microsoftSql",
+      "core.storage.redis",
+      "core.storage.s3",
+      "core.storage.awsS3",
+      "core.storage.googleCloudStorage",
+      "core.storage.azureStorage",
+      "core.devops.crypto",
+      "core.devops.jwt",
+      "core.devops.executeCommand",
+      "core.devops.ftp",
+      "core.devops.github",
+      "core.devops.gitlab",
+      "core.comms.slack",
+      "core.comms.telegram",
+      "core.comms.teams",
+      "core.comms.gmail",
+      "core.comms.emailSend",
+      "core.io.googleSheets",
+      "core.io.airtable",
+      "core.io.graphql",
+      "core.io.spreadsheetFile",
       "core.io.respondToWebhook",
       "core.flow.executeSubWorkflow",
       "core.trigger.executeWorkflow",
@@ -239,6 +276,149 @@ describe("GraphBuiltInRegistrations", () => {
     }
   });
 
+  it("publishes the SAA-1027 Stage 3b service-first kinds with their credential and i18n contract", async () => {
+    interface I18nSection {
+      name?: string;
+      description?: string;
+    }
+    const i18n = JSON.parse(
+      readFileSync(resolve(__dirname, "../../../assets/i18n/en.json"), "utf8")
+    ) as {
+      graph: {
+        node: {
+          categories: Record<string, string>;
+          [category: string]:
+            | Record<string, I18nSection>
+            | Record<string, string>;
+        };
+      };
+    };
+
+    const cases: Array<{
+      kind: string;
+      category: "Comms" | "IO" | "DevOps";
+      credentialType?: string;
+      i18n: [string, string];
+    }> = [
+      {
+        kind: "core.devops.github",
+        category: "DevOps",
+        credentialType: "github",
+        i18n: ["devops", "github"],
+      },
+      {
+        kind: "core.devops.gitlab",
+        category: "DevOps",
+        credentialType: "gitlab",
+        i18n: ["devops", "gitlab"],
+      },
+      {
+        kind: "core.comms.slack",
+        category: "Comms",
+        credentialType: "slack",
+        i18n: ["comms", "slack"],
+      },
+      {
+        kind: "core.comms.telegram",
+        category: "Comms",
+        credentialType: "telegram",
+        i18n: ["comms", "telegram"],
+      },
+      {
+        kind: "core.comms.teams",
+        category: "Comms",
+        credentialType: "teams",
+        i18n: ["comms", "teams"],
+      },
+      {
+        kind: "core.comms.gmail",
+        category: "Comms",
+        credentialType: "gmail",
+        i18n: ["comms", "gmail"],
+      },
+      {
+        kind: "core.comms.emailSend",
+        category: "Comms",
+        credentialType: "email",
+        i18n: ["comms", "email_send"],
+      },
+      {
+        kind: "core.io.googleSheets",
+        category: "IO",
+        credentialType: "google-sheets",
+        i18n: ["io", "google_sheets"],
+      },
+      {
+        kind: "core.io.airtable",
+        category: "IO",
+        credentialType: "airtable",
+        i18n: ["io", "airtable"],
+      },
+      {
+        kind: "core.io.graphql",
+        category: "IO",
+        credentialType: "graphql",
+        i18n: ["io", "graphql"],
+      },
+      {
+        kind: "core.io.spreadsheetFile",
+        category: "IO",
+        i18n: ["io", "spreadsheet_file"],
+      },
+    ];
+
+    expect(cases).toHaveLength(11);
+    expect(i18n.graph.node.categories).toMatchObject({
+      comms: "Comms",
+      io: "IO",
+      devops: "DevOps",
+    });
+
+    const catalogue = await buildBuiltInCatalogue();
+    for (const entry of cases) {
+      const manifest = GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[entry.kind];
+      expect(manifest).toBeDefined();
+      expect(manifest.display.category).toBe(entry.category);
+      expect(await catalogue.has(entry.kind)).toBe(true);
+      expect((await catalogue.getExecutor(entry.kind)).execute).toBeInstanceOf(
+        Function
+      );
+
+      if (entry.credentialType) {
+        expect(manifest.credentials).toEqual(
+          expect.arrayContaining([
+            { type: entry.credentialType, required: false },
+          ])
+        );
+        const credentialParameter = manifest.parameters.find(
+          (parameter) => parameter.id === "credentialRef"
+        );
+        expect(credentialParameter).toMatchObject({
+          type: "credential",
+          required: false,
+          credentialType: entry.credentialType,
+        });
+      } else {
+        expect(manifest.credentials ?? []).toHaveLength(0);
+        expect(
+          manifest.parameters.some(
+            (parameter) => parameter.id === "credentialRef"
+          )
+        ).toBe(false);
+      }
+
+      const [category, section] = entry.i18n;
+      const i18nSection = i18n.graph.node[category]?.[section] as
+        | I18nSection
+        | undefined;
+      expect(i18nSection).toBeDefined();
+      expect(typeof i18nSection?.name).toBe("string");
+      expect(i18nSection?.name?.length).toBeGreaterThan(0);
+      expect(typeof i18nSection?.description).toBe("string");
+      expect(i18nSection?.description?.length).toBeGreaterThan(0);
+    }
+  });
+
   it("resolves the built-in node-kind display conformance for every built-in kind", () => {
     const builtInFamilies = [
       "Trigger",
@@ -249,6 +429,9 @@ describe("GraphBuiltInRegistrations", () => {
       "Boundary",
       "Data",
       "IO",
+      "Storage",
+      "DevOps",
+      "Comms",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(manifest.display.name).toBeTruthy();
@@ -274,7 +457,7 @@ describe("GraphBuiltInRegistrations", () => {
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
   it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(75);
+    expect(registrations.length).toBe(98);
     const catalogue = await buildBuiltInCatalogue();
     expect(() => catalogue.register(registrations[0] as never)).toThrow(
       GraphNodeRegistrationError
@@ -294,6 +477,9 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       "Boundary",
       "Data",
       "IO",
+      "Storage",
+      "DevOps",
+      "Comms",
     ] as const;
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       const family = manifest.display.category;
@@ -305,7 +491,13 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
             ? "data"
             : family === "IO"
               ? "io"
-              : manifest.kind.startsWith("core.trigger.")
+              : family === "Storage"
+                ? "storage"
+                : family === "DevOps"
+                  ? "devops"
+                  : family === "Comms"
+                    ? "comms"
+                    : manifest.kind.startsWith("core.trigger.")
                 ? "trigger"
                 : manifest.kind.startsWith("core.utility.")
                   ? "utility"
@@ -336,6 +528,35 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
             "ti-circle-"
           )
         ).toBe(true);
+      } else if (
+        family === "Storage" ||
+        family === "DevOps" ||
+        family === "Comms"
+      ) {
+        // SAA-1027 Stage 3a/3b: the Storage/DevOps/Comms families carry
+        // intentional per-kind brand colours (postgres/mysql/redis/s3/azure/gcs,
+        // crypto/jwt/execute/ftp, and slack/telegram/teams/gmail/email), while
+        // the family category style stays registered for palette grouping.
+        expect(manifest.display.color).toMatch(/^#[0-9a-f]{6}$/);
+        expect(graphCategoryStyleOf(family).color).toBeTruthy();
+        expect(manifest.display.icon?.type).toBe("catalogue");
+        expect((manifest.display.icon as { name?: string }).name).toMatch(
+          /^ti-[a-z0-9-]+$/
+        );
+      } else if (
+        family === "IO" &&
+        GRAPH_3B_BRAND_IO_COLORS[manifest.kind]
+      ) {
+        // SAA-1027 Stage 3b: the new IO kinds carry their vendor brand colour
+        // while the IO category style stays registered for palette grouping.
+        expect(manifest.display.color).toBe(
+          GRAPH_3B_BRAND_IO_COLORS[manifest.kind]
+        );
+        expect(graphCategoryStyleOf(family).color).toBeTruthy();
+        expect(manifest.display.icon?.type).toBe("catalogue");
+        expect((manifest.display.icon as { name?: string }).name).toMatch(
+          /^ti-[a-z0-9-]+$/
+        );
       } else {
         // D7/G3-22: the manifest display colour is the category base
         // colour — same-category nodes never diverge.
@@ -419,6 +640,18 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       color: "#0ea5e9",
       icon: "ti-world-www",
     });
+    expect(graphCategoryStyleOf("Storage")).toEqual({
+      color: "#0f766e",
+      icon: "ti-database",
+    });
+    expect(graphCategoryStyleOf("DevOps")).toEqual({
+      color: "#475569",
+      icon: "ti-terminal-2",
+    });
+    expect(graphCategoryStyleOf("Comms")).toEqual({
+      color: "#d946ef",
+      icon: "ti-message-circle",
+    });
     expect(graphCategoryStyleOf("model")).toEqual({
       color: "#3b82f6",
       icon: "ti-cpu",
@@ -463,6 +696,30 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         });
         expect(manifest.display.color).toBe("#0f766e");
         expect(manifest.display.icon?.name).toMatch(/^ti-circle-(plus|minus)$/);
+      } else if (
+        family === "Storage" ||
+        family === "DevOps" ||
+        family === "Comms"
+      ) {
+        // SAA-1027 Stage 3a/3b: the Storage/DevOps/Comms kinds declare per-kind
+        // brand colours; the family category style remains registered for
+        // grouping and palette fallback.
+        expect(manifest.display.color).toMatch(/^#[0-9a-f]{6}$/);
+        expect(graphCategoryStyleOf(family).color).toBeTruthy();
+        expect(manifest.display.icon?.type).toBe("catalogue");
+        expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
+      } else if (
+        family === "IO" &&
+        GRAPH_3B_BRAND_IO_COLORS[manifest.kind]
+      ) {
+        // SAA-1027 Stage 3b: the new IO kinds carry their vendor brand colour
+        // while the IO category style stays registered for palette grouping.
+        expect(manifest.display.color).toBe(
+          GRAPH_3B_BRAND_IO_COLORS[manifest.kind]
+        );
+        expect(graphCategoryStyleOf(family).color).toBeTruthy();
+        expect(manifest.display.icon?.type).toBe("catalogue");
+        expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       } else {
         // D7/G3-22: the manifest display is the single authority for the
         // category base colour — every node of a category shares it.
@@ -471,14 +728,17 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 75 built-ins present exactly these eight families
+    // the 98 built-ins present exactly these eleven families
     expect([...families].sort()).toEqual([
       "Agent",
       "Boundary",
+      "Comms",
       "Data",
+      "DevOps",
       "Flow Control",
       "IO",
       "Loop",
+      "Storage",
       "Trigger",
       "Utility",
     ]);

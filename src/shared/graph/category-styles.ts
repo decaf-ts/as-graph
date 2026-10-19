@@ -27,6 +27,9 @@ export function registerBuiltinCategoryStyles(): void {
   registerGraphCategoryStyle("Agent", { color: "#7c3aed", icon: "ti-robot" });
   registerGraphCategoryStyle("Data", { color: "#8b5cf6", icon: "ti-table" });
   registerGraphCategoryStyle("IO", { color: "#0ea5e9", icon: "ti-world-www" });
+  registerGraphCategoryStyle("Storage", { color: "#0f766e", icon: "ti-database" });
+  registerGraphCategoryStyle("DevOps", { color: "#475569", icon: "ti-terminal-2" });
+  registerGraphCategoryStyle("Comms", { color: "#d946ef", icon: "ti-message-circle" });
 
   // Connection categories (for @connection() ports)
   registerGraphCategoryStyle("model", { color: "#3b82f6", icon: "ti-cpu" });

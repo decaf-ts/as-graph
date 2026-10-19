@@ -87,6 +87,21 @@ export const GRAPH_HTTP_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 export const GRAPH_HTTP_MAX_REDIRECTS = 5;
 
 /**
+ * Hard ceiling, in milliseconds, for the Execute Command node's timeout.
+ */
+export const GRAPH_EXECUTE_COMMAND_MAX_TIMEOUT_MS = 60_000;
+
+/**
+ * Default timeout, in milliseconds, for the Execute Command node.
+ */
+export const GRAPH_EXECUTE_COMMAND_DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Maximum bytes of stdout or stderr the Execute Command node retains per stream.
+ */
+export const GRAPH_EXECUTE_COMMAND_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+/**
  * Default maximum nesting depth of sub-workflow executions in one run. Depth is
  * tracked through the `parentRunId` chain and only `executeSubWorkflow`-style
  * edges increment it, so loop bodies stay governed by their own iteration caps.

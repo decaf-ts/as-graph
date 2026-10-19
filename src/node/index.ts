@@ -5,8 +5,13 @@
  * taxonomy, laid out one node per folder under
  * `node/<category>/<sub>/<node>/node.ts`: triggers (§22.2.1), flow-control and
  * utility nodes (§22.2.2–22.2.3), the Agent node (§21.3), the three loop kinds
- * (`core.loop.foreach/while/until`, §5.9), and the workflow input/output value
- * boundary nodes. Shared non-node support (the base class and manifests) lives in
+ * (`core.loop.foreach/while/until`, §5.9), the workflow input/output value
+ * boundary nodes, and the Stage 2/3 service families — Storage
+ * (`core.storage.*`: SQL databases, Redis, and S3/GCS/Azure blob), DevOps
+ * (`core.devops.*`: crypto, JWT, shell command, FTP, GitHub/GitLab), Comms
+ * (`core.comms.*`: Slack, Telegram, Teams, Gmail, Email), and the newer IO
+ * kinds (`core.io.*`: Airtable, Google Sheets, GraphQL, Spreadsheet File).
+ * Shared non-node support (the base class and manifests) lives in
  * sibling files under the same tree; category styles remain in
  * `@decaf-ts/ui-decorators` (`graph/category-styles`). Consumers
  * (for-angular, ALFRED, etc.) import these declarations to populate node
@@ -37,6 +42,28 @@ export * from "./io/http-request/node";
 export * from "./io/read-pdf/node";
 export * from "./io/read-write-file/node";
 export * from "./io/respond-to-webhook/node";
+export * from "./storage/database/postgres/node";
+export * from "./storage/database/mysql/node";
+export * from "./storage/database/mssql/node";
+export * from "./storage/redis/node";
+export * from "./storage/blob/s3/node";
+export * from "./storage/blob/gcs/node";
+export * from "./storage/blob/azure/node";
+export * from "./comms/slack/node";
+export * from "./comms/telegram/node";
+export * from "./comms/teams/node";
+export * from "./comms/gmail/node";
+export * from "./comms/email-send/node";
+export * from "./io/google-sheets/node";
+export * from "./io/airtable/node";
+export * from "./io/spreadsheet-file/node";
+export * from "./io/graphql/node";
+export * from "./devops/github/node";
+export * from "./devops/gitlab/node";
+export * from "./devops/crypto/node";
+export * from "./devops/jwt/node";
+export * from "./devops/execute-command/node";
+export * from "./devops/ftp/node";
 export * from "./flow/execute-sub-workflow/node";
 export * from "./triggers/execute-workflow/node";
 export * from "./triggers/chat/node";
@@ -168,6 +195,28 @@ import { ReadWriteFileNode } from "./io/read-write-file/node";
 import { RespondToWebhookNode } from "./io/respond-to-webhook/node";
 import { ExecuteSubWorkflowNode } from "./flow/execute-sub-workflow/node";
 import { ExecuteWorkflowTriggerNode } from "./triggers/execute-workflow/node";
+import { PostgresNode } from "./storage/database/postgres/node";
+import { MySqlNode } from "./storage/database/mysql/node";
+import { MicrosoftSqlNode } from "./storage/database/mssql/node";
+import { RedisNode } from "./storage/redis/node";
+import { S3StorageNode, AwsS3StorageNode } from "./storage/blob/s3/node";
+import { GoogleCloudStorageNode } from "./storage/blob/gcs/node";
+import { AzureStorageNode } from "./storage/blob/azure/node";
+import { CryptoNode } from "./devops/crypto/node";
+import { JwtNode } from "./devops/jwt/node";
+import { ExecuteCommandNode } from "./devops/execute-command/node";
+import { FtpNode } from "./devops/ftp/node";
+import { SlackNode } from "./comms/slack/node";
+import { TelegramNode } from "./comms/telegram/node";
+import { TeamsNode } from "./comms/teams/node";
+import { GmailNode } from "./comms/gmail/node";
+import { EmailSendNode } from "./comms/email-send/node";
+import { GoogleSheetsNode } from "./io/google-sheets/node";
+import { AirtableNode } from "./io/airtable/node";
+import { SpreadsheetFileNode } from "./io/spreadsheet-file/node";
+import { GraphqlNode } from "./io/graphql/node";
+import { GithubNode } from "./devops/github/node";
+import { GitlabNode } from "./devops/gitlab/node";
 
 /**
  * All built-in trigger node constructors.
@@ -411,6 +460,29 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.io.extractFromFile": ExtractFromFileNode,
   "core.io.readPDF": ReadPDFNode,
   "core.io.readWriteFile": ReadWriteFileNode,
+  "core.storage.postgres": PostgresNode,
+  "core.storage.mySql": MySqlNode,
+  "core.storage.microsoftSql": MicrosoftSqlNode,
+  "core.storage.redis": RedisNode,
+  "core.storage.s3": S3StorageNode,
+  "core.storage.awsS3": AwsS3StorageNode,
+  "core.storage.googleCloudStorage": GoogleCloudStorageNode,
+  "core.storage.azureStorage": AzureStorageNode,
+  "core.devops.crypto": CryptoNode,
+  "core.devops.jwt": JwtNode,
+  "core.devops.executeCommand": ExecuteCommandNode,
+  "core.devops.ftp": FtpNode,
+  "core.devops.github": GithubNode,
+  "core.devops.gitlab": GitlabNode,
+  "core.comms.slack": SlackNode,
+  "core.comms.telegram": TelegramNode,
+  "core.comms.teams": TeamsNode,
+  "core.comms.gmail": GmailNode,
+  "core.comms.emailSend": EmailSendNode,
+  "core.io.googleSheets": GoogleSheetsNode,
+  "core.io.airtable": AirtableNode,
+  "core.io.spreadsheetFile": SpreadsheetFileNode,
+  "core.io.graphql": GraphqlNode,
   "core.flow.executeSubWorkflow": ExecuteSubWorkflowNode,
   "core.trigger.executeWorkflow": ExecuteWorkflowTriggerNode,
   "core.loop.foreach": GraphForeachLoopNode,

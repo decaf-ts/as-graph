@@ -292,11 +292,19 @@ The built-in kinds are declared one folder per node under
 | Triggers | `core.trigger.manual`, `core.trigger.webhook`, `core.trigger.schedule`, `core.trigger.event`, `core.trigger.form`, `core.trigger.chat`, `core.trigger.executeWorkflow` |
 | Flow | `core.flow.if`, `core.flow.switch`, `core.flow.delay`, `core.flow.errorBoundary`, `core.flow.humanApproval`, `core.flow.log`, `core.flow.break`, `core.flow.executeSubWorkflow` |
 | Data | `core.data.set`, `core.data.merge`, `core.data.filter`, `core.data.splitOut`, `core.data.dateTime`, `core.data.dataTable`, `core.data.limit`, `core.data.sort`, `core.data.renameKeys` |
-| IO | `core.io.httpRequest`, `core.io.respondToWebhook`, `core.io.extractFromFile`, `core.io.readPDF`, `core.io.readWriteFile` |
+| IO | `core.io.httpRequest`, `core.io.respondToWebhook`, `core.io.extractFromFile`, `core.io.readPDF`, `core.io.readWriteFile`, `core.io.googleSheets`, `core.io.airtable`, `core.io.spreadsheetFile`, `core.io.graphql` |
+| Storage | `core.storage.postgres`, `core.storage.mySql`, `core.storage.microsoftSql`, `core.storage.redis`, `core.storage.s3`, `core.storage.awsS3`, `core.storage.googleCloudStorage`, `core.storage.azureStorage` |
+| DevOps | `core.devops.crypto`, `core.devops.jwt`, `core.devops.executeCommand`, `core.devops.ftp`, `core.devops.github`, `core.devops.gitlab` |
+| Comms | `core.comms.slack`, `core.comms.telegram`, `core.comms.teams`, `core.comms.gmail`, `core.comms.emailSend` |
 | Utility | `core.utility.code`, `core.utility.map`, `core.utility.log` |
 | Loops | `core.loop.foreach`, `core.loop.while`, `core.loop.until` |
 | Agent | `core.agent` (the agent node) and its `core.agent.*` family kinds: `core.agent.tool|toolSelector` (tools), `core.agent.hook|toolDeny|delegationHook` (hooks), `core.agent.skill|skillSelector` (skills), `core.agent.sandbox` (sandbox), `core.agent.scorer|scorerSelector` (scorers), `core.agent.memory|memorySelector` (memory), `core.agent.embedding|vectorStore|retriever|rerank|chunking` (RAG), `core.agent.chain.basic|qa|summarization` (RAG chains), `core.agent.inputProcessor|outputProcessor|guardrail|structuredOutputParser|informationExtractor|langchainCode` (processors), `core.agent.hitl` (human-in-the-loop), `core.agent.voice` (voice), `core.agent.trigger.mcp|slack|discord|telegram|teams` (triggers), `core.agent.response.slack|discord|telegram|teams` (channel responses). Every `core.agent[.*]` kind requires the mastra engine — the general (local) engine fails closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` |
 | Boundary | `graph-input-value-node` (`GraphNode<void, …>` — reusable value node whose single `value` output may feed multiple targets), `graph-output-value-node` (`GraphNode<…, void>` — terminal sink whose `value` input receives the workflow result; it has **no output port** — the engine captures workflow outputs from the `$workflow` boundary edges into it) |
+
+Storage, DevOps, Comms, and credential-bearing IO kinds resolve their credentials at execution time from environment variables named
+`GRAPH_CREDENTIAL_*`. A node's `credentialRef` parameter holds the environment variable name (or a
+`{ credentialId, credentialType }` reference); secrets are never stored in workflow documents. The
+PostgreSQL, MySQL, and Microsoft SQL kinds require the matching TypeORM driver (`pg`, `mysql2`, `mssql`), all three declared as optional dependencies. The Comms, DevOps, and IO kinds delegate to the service classes in `@decaf-ts/integrations` where applicable (`comms/{slack,telegram,teams,gmail,email}`, `devops/{github,gitlab}`, `core.devops.ftp` via `@decaf-ts/integrations/sftp`, `io/{google-sheets,airtable,graphql}`); `core.devops.crypto` and `core.devops.jwt` use `@decaf-ts/crypto`, `core.devops.executeCommand` runs a local `child_process`, and `core.io.spreadsheetFile` is local parsing/writing with no network service.
 
 There is no structural `parallel` node kind: the graph itself parallelizes on multiple connections
 to an output port (native fan-out) and syncs on multiple connections into an input port (native

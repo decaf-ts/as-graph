@@ -9,7 +9,10 @@
         "agent": "Agent",
         "boundary": "Boundary",
         "data": "Data",
-        "io": "IO"
+        "io": "IO",
+        "storage": "Storage",
+        "devops": "DevOps",
+        "comms": "Comms"
       },
       "connectionCategories": {
         "model": "Model",
@@ -2361,6 +2364,729 @@
             },
             "responseBody": {
               "label": "Response body"
+            }
+          }
+        },
+        "common": {
+          "fields": {
+            "credentialRef": {
+              "label": "Credential reference"
+            }
+          }
+        },
+        "google_sheets": {
+          "name": "Google Sheets",
+          "description": "Read and write Google Sheets values.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "spreadsheetId": {
+              "label": "Spreadsheet ID"
+            },
+            "range": {
+              "label": "Range"
+            },
+            "values": {
+              "label": "Values"
+            },
+            "valueInputOption": {
+              "label": "Value input option"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "airtable": {
+          "name": "Airtable",
+          "description": "List, read, and write Airtable records.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "baseId": {
+              "label": "Base ID"
+            },
+            "table": {
+              "label": "Table"
+            },
+            "recordId": {
+              "label": "Record ID"
+            },
+            "recordFields": {
+              "label": "Record fields"
+            },
+            "typecast": {
+              "label": "Typecast"
+            },
+            "view": {
+              "label": "View"
+            },
+            "filterByFormula": {
+              "label": "Filter by formula"
+            },
+            "fields": {
+              "label": "Fields"
+            },
+            "sortField": {
+              "label": "Sort field"
+            },
+            "sortDirection": {
+              "label": "Sort direction"
+            },
+            "maxRecords": {
+              "label": "Max records"
+            },
+            "pageSize": {
+              "label": "Page size"
+            },
+            "offset": {
+              "label": "Offset"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "spreadsheet_file": {
+          "name": "Spreadsheet File",
+          "description": "Parse or write CSV, TSV, and JSON spreadsheet data locally.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "format": {
+              "label": "Format"
+            },
+            "delimiter": {
+              "label": "Delimiter"
+            },
+            "content": {
+              "label": "Content"
+            },
+            "rows": {
+              "label": "Rows"
+            },
+            "header": {
+              "label": "Header"
+            },
+            "hasHeader": {
+              "label": "Has header"
+            }
+          }
+        },
+        "graphql": {
+          "name": "GraphQL",
+          "description": "Run GraphQL queries and mutations against an endpoint.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "endpoint": {
+              "label": "Endpoint"
+            },
+            "query": {
+              "label": "Query"
+            },
+            "variables": {
+              "label": "Variables"
+            },
+            "operationName": {
+              "label": "Operation name"
+            }
+          }
+        }
+      },
+      "storage": {
+        "common": {
+          "fields": {
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "database": {
+              "label": "Database"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "ssl": {
+              "label": "SSL"
+            },
+            "sql": {
+              "label": "SQL statement",
+              "placeholder": "SELECT * FROM table WHERE id = $1"
+            },
+            "parameters": {
+              "label": "Query parameters"
+            },
+            "operation": {
+              "label": "Operation"
+            },
+            "key": {
+              "label": "Key"
+            },
+            "targetKey": {
+              "label": "Target key"
+            },
+            "content": {
+              "label": "Content"
+            },
+            "contentType": {
+              "label": "Content type"
+            },
+            "encoding": {
+              "label": "Encoding"
+            },
+            "metadataValues": {
+              "label": "Metadata"
+            },
+            "prefix": {
+              "label": "Prefix"
+            },
+            "cursor": {
+              "label": "Cursor"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "urlOperation": {
+              "label": "URL operation"
+            },
+            "expiresInSeconds": {
+              "label": "Expires in (seconds)"
+            },
+            "credentialRef": {
+              "label": "Credential reference"
+            },
+            "bucket": {
+              "label": "Bucket"
+            },
+            "sourceId": {
+              "label": "Source ID"
+            },
+            "region": {
+              "label": "Region"
+            },
+            "endpoint": {
+              "label": "Endpoint"
+            },
+            "forcePathStyle": {
+              "label": "Force path-style URLs"
+            },
+            "container": {
+              "label": "Container"
+            },
+            "accountName": {
+              "label": "Account name"
+            },
+            "projectId": {
+              "label": "Project ID"
+            },
+            "apiEndpoint": {
+              "label": "API endpoint"
+            }
+          }
+        },
+        "postgres": {
+          "name": "PostgreSQL",
+          "description": "Run SQL against a PostgreSQL database and return the result rows."
+        },
+        "my_sql": {
+          "name": "MySQL",
+          "description": "Run SQL against a MySQL database and return the result rows."
+        },
+        "microsoft_sql": {
+          "name": "Microsoft SQL Server",
+          "description": "Run SQL against a Microsoft SQL Server database and return the result rows."
+        },
+        "redis": {
+          "name": "Redis",
+          "description": "Run key/value, list, publish, or info commands against Redis.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "database": {
+              "label": "Database index"
+            },
+            "prefix": {
+              "label": "Key prefix"
+            },
+            "key": {
+              "label": "Key"
+            },
+            "value": {
+              "label": "Value"
+            },
+            "ttlSeconds": {
+              "label": "TTL (seconds)"
+            },
+            "pattern": {
+              "label": "Pattern"
+            },
+            "channel": {
+              "label": "Channel"
+            },
+            "section": {
+              "label": "Info section"
+            }
+          }
+        },
+        "s3": {
+          "name": "S3",
+          "description": "Read, write, list, copy, or delete objects in an S3-compatible bucket."
+        },
+        "aws_s3": {
+          "name": "AWS S3",
+          "description": "Read, write, list, copy, or delete objects in an Amazon S3 bucket."
+        },
+        "google_cloud_storage": {
+          "name": "Google Cloud Storage",
+          "description": "Read, write, list, copy, or delete objects in a Google Cloud Storage bucket."
+        },
+        "azure_storage": {
+          "name": "Azure Storage",
+          "description": "Read, write, list, copy, or delete blobs in an Azure Storage container."
+        }
+      },
+      "devops": {
+        "common": {
+          "fields": {
+            "credentialRef": {
+              "label": "Credential reference"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "body": {
+              "label": "Body"
+            },
+            "labels": {
+              "label": "Labels"
+            },
+            "state": {
+              "label": "State"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "page": {
+              "label": "Page"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "crypto": {
+          "name": "Crypto",
+          "description": "Hash, sign, encrypt, decrypt, or generate cryptographic material.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "algorithm": {
+              "label": "Algorithm"
+            },
+            "encoding": {
+              "label": "Output encoding"
+            },
+            "payload": {
+              "label": "Payload"
+            },
+            "encryptedData": {
+              "label": "Encrypted data"
+            },
+            "salt": {
+              "label": "Salt"
+            },
+            "privateKey": {
+              "label": "Private key"
+            },
+            "publicKey": {
+              "label": "Public key"
+            },
+            "signature": {
+              "label": "Signature"
+            },
+            "keyType": {
+              "label": "Key type"
+            },
+            "modulusLength": {
+              "label": "RSA modulus length"
+            },
+            "namedCurve": {
+              "label": "Named curve"
+            }
+          }
+        },
+        "jwt": {
+          "name": "JWT",
+          "description": "Sign, verify, or decode JSON Web Tokens.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "token": {
+              "label": "Token"
+            },
+            "claims": {
+              "label": "Claims"
+            },
+            "expiry": {
+              "label": "Expiry"
+            },
+            "verifyUrl": {
+              "label": "JWKS URL"
+            },
+            "clockToleranceSeconds": {
+              "label": "Clock tolerance (seconds)"
+            }
+          }
+        },
+        "execute_command": {
+          "name": "Execute Command",
+          "description": "Run a shell command on the host and capture its output.",
+          "fields": {
+            "command": {
+              "label": "Command"
+            },
+            "cwd": {
+              "label": "Working directory"
+            },
+            "shell": {
+              "label": "Shell"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            },
+            "failOnError": {
+              "label": "Fail on error"
+            }
+          }
+        },
+        "ftp": {
+          "name": "FTP",
+          "description": "List, download, or delete files over SFTP.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "sourceId": {
+              "label": "Source ID"
+            },
+            "remotePath": {
+              "label": "Remote directory"
+            },
+            "path": {
+              "label": "Remote path"
+            },
+            "encoding": {
+              "label": "Encoding"
+            }
+          }
+        },
+        "github": {
+          "name": "GitHub",
+          "description": "Read repositories, manage issues, and list pull requests.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "owner": {
+              "label": "Owner"
+            },
+            "repo": {
+              "label": "Repository"
+            },
+            "number": {
+              "label": "Issue number"
+            },
+            "assignees": {
+              "label": "Assignees"
+            }
+          }
+        },
+        "gitlab": {
+          "name": "GitLab",
+          "description": "Read projects, manage issues, and list merge requests.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "projectId": {
+              "label": "Project ID"
+            },
+            "iid": {
+              "label": "Issue IID"
+            },
+            "assigneeIds": {
+              "label": "Assignee IDs"
+            },
+            "search": {
+              "label": "Search"
+            }
+          }
+        }
+      },
+      "comms": {
+        "common": {
+          "fields": {
+            "credentialRef": {
+              "label": "Credential reference"
+            },
+            "from": {
+              "label": "From"
+            },
+            "to": {
+              "label": "To"
+            },
+            "cc": {
+              "label": "CC"
+            },
+            "bcc": {
+              "label": "BCC"
+            },
+            "subject": {
+              "label": "Subject"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "html": {
+              "label": "HTML"
+            },
+            "replyTo": {
+              "label": "Reply-to"
+            }
+          }
+        },
+        "slack": {
+          "name": "Slack",
+          "description": "Post messages to Slack or read channels and users.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "channel": {
+              "label": "Channel"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "blocks": {
+              "label": "Blocks"
+            },
+            "threadTs": {
+              "label": "Thread timestamp"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "cursor": {
+              "label": "Cursor"
+            },
+            "types": {
+              "label": "Conversation types"
+            },
+            "userId": {
+              "label": "User ID"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            },
+            "excludeArchived": {
+              "label": "Exclude archived"
+            },
+            "replyBroadcast": {
+              "label": "Reply broadcast"
+            },
+            "unfurlLinks": {
+              "label": "Unfurl links"
+            },
+            "unfurlMedia": {
+              "label": "Unfurl media"
+            }
+          }
+        },
+        "telegram": {
+          "name": "Telegram",
+          "description": "Send Telegram bot messages and read updates.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "chatId": {
+              "label": "Chat ID"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "parseMode": {
+              "label": "Parse mode"
+            },
+            "disableNotification": {
+              "label": "Disable notification"
+            },
+            "disablePreview": {
+              "label": "Disable link preview"
+            },
+            "replyToMessageId": {
+              "label": "Reply-to message ID"
+            },
+            "messageThreadId": {
+              "label": "Message thread ID"
+            },
+            "offset": {
+              "label": "Update offset"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "timeoutSeconds": {
+              "label": "Long-poll timeout (seconds)"
+            },
+            "action": {
+              "label": "Chat action"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "teams": {
+          "name": "Microsoft Teams",
+          "description": "Post to Teams webhooks or channels and list teams and channels.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "markdown": {
+              "label": "Markdown"
+            },
+            "teamId": {
+              "label": "Team ID"
+            },
+            "channelId": {
+              "label": "Channel ID"
+            },
+            "content": {
+              "label": "Content"
+            },
+            "contentType": {
+              "label": "Content type"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "gmail": {
+          "name": "Gmail",
+          "description": "Send Gmail messages and read mailbox messages and labels.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "userId": {
+              "label": "User ID"
+            },
+            "query": {
+              "label": "Search query"
+            },
+            "maxResults": {
+              "label": "Max results"
+            },
+            "pageToken": {
+              "label": "Page token"
+            },
+            "labelIds": {
+              "label": "Label IDs"
+            },
+            "messageId": {
+              "label": "Message ID"
+            },
+            "format": {
+              "label": "Message format"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "email_send": {
+          "name": "Email Send",
+          "description": "Send email over SMTP or Microsoft Graph and read the inbox.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "provider": {
+              "label": "Provider"
+            },
+            "host": {
+              "label": "SMTP host"
+            },
+            "port": {
+              "label": "SMTP port"
+            },
+            "secure": {
+              "label": "Use TLS"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "mailbox": {
+              "label": "Mailbox"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "since": {
+              "label": "Received since"
+            },
+            "subjectFilter": {
+              "label": "Subject filter"
+            },
+            "graphBaseUrl": {
+              "label": "Graph base URL"
+            },
+            "baseUrl": {
+              "label": "Base URL"
             }
           }
         }

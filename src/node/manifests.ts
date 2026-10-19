@@ -18,6 +18,7 @@
  */
 import type {
   GraphNodeManifest,
+  GraphParameterDefinition,
   GraphPortManifest,
 } from "../shared/graph";
 import { graphNodeManifest, graphNodeMetadataOf } from "../shared/graph";
@@ -94,6 +95,28 @@ import { FormTriggerNode } from "./triggers/form/node";
 import { ManualTriggerNode } from "./triggers/manual/node";
 import { ScheduleTriggerNode } from "./triggers/schedule/node";
 import { WebhookTriggerNode } from "./triggers/webhook/node";
+import { PostgresNode } from "./storage/database/postgres/node";
+import { MySqlNode } from "./storage/database/mysql/node";
+import { MicrosoftSqlNode } from "./storage/database/mssql/node";
+import { RedisNode } from "./storage/redis/node";
+import { S3StorageNode, AwsS3StorageNode } from "./storage/blob/s3/node";
+import { GoogleCloudStorageNode } from "./storage/blob/gcs/node";
+import { AzureStorageNode } from "./storage/blob/azure/node";
+import { CryptoNode } from "./devops/crypto/node";
+import { JwtNode } from "./devops/jwt/node";
+import { ExecuteCommandNode } from "./devops/execute-command/node";
+import { FtpNode } from "./devops/ftp/node";
+import { SlackNode } from "./comms/slack/node";
+import { TelegramNode } from "./comms/telegram/node";
+import { TeamsNode } from "./comms/teams/node";
+import { GmailNode } from "./comms/gmail/node";
+import { EmailSendNode } from "./comms/email-send/node";
+import { GoogleSheetsNode } from "./io/google-sheets/node";
+import { AirtableNode } from "./io/airtable/node";
+import { SpreadsheetFileNode } from "./io/spreadsheet-file/node";
+import { GraphqlNode } from "./io/graphql/node";
+import { GithubNode } from "./devops/github/node";
+import { GitlabNode } from "./devops/gitlab/node";
 
 /**
  * Builds a single {@link GraphPortManifest} from its id, label, direction,
@@ -149,6 +172,46 @@ function compileWithIcon(node: unknown, icon: string): GraphNodeManifest {
     ...(title ? { name: title } : {}),
     icon: { type: "catalogue", name: icon },
   });
+}
+
+/**
+ * Merges the credential-adapter parameter and requirement into a compiled node
+ * manifest.
+ *
+ * Appends a `credentialRef` parameter of the given `credentialType` (referenced
+ * by id, always optional at the manifest level — the node's own execution
+ * decides whether a credential is mandatory) and records the credential type in
+ * the manifest's requirement list, de-duplicating an existing requirement of
+ * the same type. Used for every Stage 2/3 node kind that resolves secrets
+ * through `GRAPH_CREDENTIAL_*` environment variables instead of inline config.
+ *
+ * @param manifest - The runtime-derived base manifest to augment.
+ * @param credentialType - Credential type id (e.g. `s3`, `github`, `sftp`).
+ * @param label - Human-facing label for the credential parameter.
+ * @returns The manifest with the credential parameter and requirement merged in.
+ */
+function withCredential(
+  manifest: GraphNodeManifest,
+  credentialType: string,
+  label: string
+): GraphNodeManifest {
+  const parameter: GraphParameterDefinition = {
+    type: "credential",
+    id: "credentialRef",
+    label,
+    required: false,
+    credentialType,
+  };
+  return {
+    ...manifest,
+    parameters: [...manifest.parameters, parameter],
+    credentials: [
+      ...(manifest.credentials ?? []).filter(
+        (requirement) => requirement.type !== credentialType
+      ),
+      { type: credentialType, required: false },
+    ],
+  };
 }
 
 /** Structural overlay for the `core.flow.switch` node: case/default dynamic output ports. */
@@ -353,6 +416,113 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
   compile(HttpRequestNode),
   compile(ReadPDFNode),
   compile(ReadWriteFileNode),
+  withCredential(
+    compile(PostgresNode),
+    "postgres",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(MySqlNode),
+    "mysql",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(MicrosoftSqlNode),
+    "mssql",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(RedisNode),
+    "redis",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(S3StorageNode),
+    "s3",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(AwsS3StorageNode),
+    "s3",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GoogleCloudStorageNode),
+    "gcs",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(AzureStorageNode),
+    "azure-blob",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(CryptoNode),
+    "crypto",
+    "graph.node.devops.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(JwtNode),
+    "jwt",
+    "graph.node.devops.common.fields.credentialRef.label"
+  ),
+  compile(ExecuteCommandNode),
+  withCredential(
+    compile(FtpNode),
+    "sftp",
+    "graph.node.devops.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GithubNode),
+    "github",
+    "graph.node.devops.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GitlabNode),
+    "gitlab",
+    "graph.node.devops.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(SlackNode),
+    "slack",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(TelegramNode),
+    "telegram",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(TeamsNode),
+    "teams",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GmailNode),
+    "gmail",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(EmailSendNode),
+    "email",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GoogleSheetsNode),
+    "google-sheets",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(AirtableNode),
+    "airtable",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GraphqlNode),
+    "graphql",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  compile(SpreadsheetFileNode),
   compile(RespondToWebhookNode),
   compile(ExecuteSubWorkflowNode),
   compile(ExecuteWorkflowTriggerNode),
