@@ -13,24 +13,35 @@
  * unscoped-build failure mode).
  *
  * SAA-1155 hardening: the credential and model-secret rows are written through
- * the real Phase A `CredentialService`/`ModelSecretService` inside each
- * tenant's own RLS-bound transaction (never raw SQL), the suite asserts the
- * Phase A write path stamps `tenant_id`/`owner_principal_id` and that each
- * tenant can read only its own rows, and one case drives the
- * `resolveNodeCredential(context, references, expectedType)` wrapper through
- * `context.engine.nodeCredentials`. The production host's ctx -> session
- * binding cannot be asserted yet; see the documented skip at the end of the
- * suite and Security Engineer decision SAA-1158.
+ * the real Phase A `CredentialService`/`ModelSecretService` (never raw SQL),
+ * the suite asserts the Phase A write path stamps `tenant_id`/
+ * `owner_principal_id` and that each tenant can read only its own rows, and one
+ * case drives the `resolveNodeCredential(context, references, expectedType)`
+ * wrapper through `context.engine.nodeCredentials`.
+ *
+ * SAA-1189: SAA-1160 made `CredentialService.getCredential` and
+ * `ModelSecretService.retrieve` open a principal-bound transaction through
+ * `resolveTransactionLock`, so a fake repository that only exposes
+ * `_adapter.logCtx` can no longer satisfy the seam. The services are now
+ * driven through the real sibling `TypeORMAdapter` (exactly as
+ * `credentialsPrincipalBinding.test.ts` does): a seed adapter writes the
+ * fixture rows through the Phase A services, and the resolver runs on a
+ * `NOSUPERUSER NOBYPASSRLS` application adapter whose contexts carry the decaf
+ * `principalId`; the adapter binds it transaction-locally to
+ * `app.principal_id`. The unscoped leak-detection control runs the same
+ * resolver over a superuser adapter, proving a context-ignoring service leaks
+ * tenant-B's marker and would be caught.
  *
  * Isolation is enforced by DB-level RLS, never by a tenant check in the
  * resolver, `CredentialService`, or the secret services. The suite applies the
  * workspace copy of `integrations/sql/002_rls.sql` (via the sibling
  * `RlsBootstrapService`) and asserts that `credentials` and `secrets` have RLS
  * `ENABLE` + `FORCE` plus their four policies. It also asserts that the
- * resolver repository runs on the same session that carries
- * `app.principal_id`, and that the session role is a non-superuser
- * `NOBYPASSRLS` role — otherwise the policies would not apply and a green
- * result would be fake-green.
+ * application session role is a non-superuser `NOBYPASSRLS` role — otherwise
+ * the policies would not apply and a green result would be fake-green. The
+ * same-tenant positive controls prove the resolver's transaction carries the
+ * context principal: RLS would deny those reads if `app.principal_id` were
+ * unbound.
  *
  * Trap: the installed `@decaf-ts/integrations@0.11.0` build has no
  * credentials/secrets RLS policies and no `sql/004_credentials.sql`. This suite
@@ -52,14 +63,13 @@
  * an explicit `DECAF_PG_URL`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
-import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { Context } from "@decaf-ts/core";
-import { NotFoundError } from "@decaf-ts/db-decorators";
+import { Adapter, Context } from "@decaf-ts/core";
+import { Metadata, uses } from "@decaf-ts/decoration";
 import {
   GraphNodeCredentialResolver,
   resolveNodeCredential,
@@ -70,6 +80,8 @@ jest.setTimeout(120_000);
 const AS_GRAPH_ROOT = resolve(__dirname, "../../../..");
 const SIBLING_ROOT = resolve(__dirname, "../../../../../integrations");
 const INTEGRATIONS_LIB = join(SIBLING_ROOT, "lib/cjs");
+const FOR_TYPEORM_ROOT = resolve(__dirname, "../../../../../for-typeorm");
+const FOR_TYPEORM_LIB = join(FOR_TYPEORM_ROOT, "lib/cjs");
 const RLS_TEMPLATE = join(INTEGRATIONS_LIB, "namespaces/rls/rls.template.cjs");
 const CREDENTIALS_MIGRATION = join(SIBLING_ROOT, "sql/004_credentials.sql");
 const RLS_FIXTURE = join(
@@ -88,8 +100,11 @@ const RLS_ACTIONS = ["select", "insert", "update", "delete"] as const;
 
 const MISSING_SIBLING = [
   join(INTEGRATIONS_LIB, "namespaces/index.cjs"),
+  join(INTEGRATIONS_LIB, "namespaces/models/index.cjs"),
+  join(INTEGRATIONS_LIB, "namespaces/services/index.cjs"),
   join(INTEGRATIONS_LIB, "secrets/index.cjs"),
   join(INTEGRATIONS_LIB, "namespaces/rls/rls-bootstrap.service.cjs"),
+  join(FOR_TYPEORM_LIB, "index.cjs"),
   RLS_TEMPLATE,
   CREDENTIALS_MIGRATION,
   join(
@@ -121,6 +136,10 @@ const BASE_PG_URL =
 const RUN_TAG = `${process.pid}_${Date.now().toString(36)}`;
 const DATABASE_NAME = `saa1151_${RUN_TAG}`;
 const APP_ROLE = `saa1151_app_${RUN_TAG}`;
+const APP_PASSWORD = `saa1151_pw_${RUN_TAG}`;
+const SEED_ALIAS = `saa1151_seed_${RUN_TAG}`;
+const APP_ALIAS = `saa1151_app_${RUN_TAG}`;
+const ADMIN_ALIAS = `saa1151_admin_${RUN_TAG}`;
 
 const T1 = "10000000-0000-4000-8000-000000000001";
 const T2 = "10000000-0000-4000-8000-000000000002";
@@ -166,8 +185,20 @@ function urlForDatabase(database: string): string {
   return url.toString();
 }
 
+function urlForRole(database: string, role: string, password: string): string {
+  const url = new URL(BASE_PG_URL);
+  url.pathname = `/${database}`;
+  url.username = role;
+  url.password = password;
+  return url.toString();
+}
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function siblingRequire(relative: string): any {
@@ -175,22 +206,24 @@ function siblingRequire(relative: string): any {
   return require(join(INTEGRATIONS_LIB, relative));
 }
 
-function findContext(args: any[]): any {
-  return args.find(
-    (arg) => arg && typeof arg.getOrUndefined === "function"
-  );
+function typeormRequire(relative: string): any {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require(join(FOR_TYPEORM_LIB, relative));
 }
 
-function contextClient(args: any[]): pg.Client | undefined {
-  return findContext(args)?.getOrUndefined("rlsClient") as
-    | pg.Client
-    | undefined;
-}
-
-function tenantContext(client: pg.Client): Context {
+/**
+ * A Decaf context carrying the principal the TypeORM transaction lock binds to
+ * `app.principal_id` for the duration of each `@transactional` operation.
+ *
+ * `TypeORMContextLock.begin` reads `principalId` (the decaf `principals.id`)
+ * from this context and issues `set_config('app.principal_id', $1, true)`, so
+ * RLS evaluates every credential/secret statement against the tenant principal
+ * exactly as in a production request.
+ */
+function principalContext(principalId: string): Context {
   return (new Context() as any).accumulate({
-    rlsClient: client,
     operation: "graph.resolve",
+    principalId,
   }) as Context;
 }
 
@@ -199,20 +232,20 @@ function tenantContext(client: pg.Client): Context {
  *
  * The real engine hands node executors a `GraphExecutionContext`, whose
  * `engine` property exposes `engine.nodeCredentials`. This harness context
- * mirrors that public shape while keeping the same RLS-bound session used by
- * the resolver's repository.
+ * mirrors that public shape while keeping the principal the resolver's
+ * adapter binds to the transaction.
  */
-function engineContext(client: pg.Client, engine: unknown): Context {
-  const context = tenantContext(client) as Context & { engine?: unknown };
+function engineContext(principalId: string, engine: unknown): Context {
+  const context = principalContext(principalId) as Context & {
+    engine?: unknown;
+  };
   context.engine = engine;
   return context;
 }
 
 function referenceId(value: unknown): string | undefined {
   if (!value) return undefined;
-  return typeof value === "string"
-    ? value
-    : (value as { id?: string }).id;
+  return typeof value === "string" ? value : (value as { id?: string }).id;
 }
 
 function secretLeaked(value: unknown, markers: string[]): boolean {
@@ -221,339 +254,239 @@ function secretLeaked(value: unknown, markers: string[]): boolean {
   return markers.some((marker) => serialized.includes(marker));
 }
 
-const CREDENTIAL_COLUMNS = [
-  "id",
-  "tenant_id",
-  "org_unit_id",
-  "owner_principal_id",
-  "name",
-  "credential_type",
-  "secret_name",
-  "provider",
-  "description",
-  "enabled",
-  "metadata",
-  "expires_at",
-  "last_used_at",
-  "created_at",
-  "updated_at",
+/* -------------------------------------------------------------------------
+ * Real TypeORM adapter harness
+ *
+ * The Phase A services now open principal-bound transactions through
+ * `resolveTransactionLock`, which requires a real `Repository`/`Adapter` with
+ * a `transactionLock()`. The harness therefore drives the sibling
+ * `@decaf-ts/for-typeorm` build (not the installed as-graph copy) against the
+ * throwaway database. Each adapter gets its own alias so the RLS application
+ * adapter and the superuser leak-control adapter can coexist.
+ * ---------------------------------------------------------------------- */
+
+function dataSourceOptions(url: string, max: number): any {
+  const { DefaultNamingStrategy } = require(join(
+    FOR_TYPEORM_ROOT,
+    "node_modules/typeorm"
+  ));
+
+  const snake = (value: string): string =>
+    value
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
+      .toLowerCase();
+
+  class CanonicalSnakeCaseNamingStrategy extends DefaultNamingStrategy {
+    columnName(
+      propertyName: string,
+      customName?: string,
+      embeddedPrefixes: string[] = []
+    ): string {
+      if (customName) return customName;
+      return snake([...embeddedPrefixes, propertyName].join("_"));
+    }
+
+    joinColumnName(relationName: string, referencedColumnName: string): string {
+      if (relationName === "owner") return "owner_principal_id";
+      if (relationName === "createdBy") return "created_by_principal_id";
+      return snake(`${relationName}_${referencedColumnName}`);
+    }
+  }
+
+  return {
+    type: "postgres",
+    url,
+    synchronize: false,
+    logging: false,
+    namingStrategy: new CanonicalSnakeCaseNamingStrategy(),
+    extra: { max },
+  };
+}
+
+/** Structured values in the canonical fixture are `jsonb`. */
+const JSONB_TABLES = new Set<string>([
+  "tenants",
+  "tenant_profiles",
+  "org_units",
+  "org_unit_profiles",
+  "org_unit_closure",
+  "users",
+  "groups",
+  "principals",
+  "tenant_memberships",
+  "org_unit_memberships",
+  "group_memberships",
+  "permissions",
+  "roles",
+  "role_permissions",
+  "role_assignments",
+  "inheritance_blocks",
+  "protected_resources",
+  "resource_grants",
+  "effective_permissions",
+  "storage_bindings",
+  "credentials",
+  "secrets",
+]);
+
+const NATIVE_COLUMN_TYPES: unknown[] = [
+  String,
+  Number,
+  Boolean,
+  Date,
+  BigInt,
+  Buffer,
 ];
 
-interface CredentialRow {
-  id: string;
-  tenant_id: string;
-  org_unit_id: string | null;
-  owner_principal_id: string | null;
-  name: string;
-  credential_type: string;
-  secret_name: string;
-  provider: string;
-  description: string | null;
-  enabled: boolean;
-  metadata: Record<string, unknown> | null;
-  expires_at: Date | null;
-  last_used_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
-}
+function alignStructuredColumnsWithFixture(): void {
+  const { getMetadataArgsStorage } = require(join(
+    FOR_TYPEORM_ROOT,
+    "node_modules/typeorm"
+  ));
+  const { tables, columns } = getMetadataArgsStorage();
+  const targets = new Set<unknown>(
+    tables
+      .filter((table: any) => JSONB_TABLES.has(table.name as string))
+      .map((table: any) => table.target)
+  );
 
-function toCredential(row: CredentialRow, Credential: any): any {
-  return new Credential({
-    id: row.id,
-    tenant: row.tenant_id,
-    orgUnit: row.org_unit_id ?? undefined,
-    owner: row.owner_principal_id ?? undefined,
-    name: row.name,
-    credentialType: row.credential_type,
-    secretName: row.secret_name,
-    provider: row.provider,
-    description: row.description ?? undefined,
-    enabled: row.enabled,
-    metadata: row.metadata ?? undefined,
-    expiresAt: row.expires_at ?? undefined,
-    lastUsedAt: row.last_used_at ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  });
-}
-
-function conditionToWhere(condition: any): {
-  clause: string;
-  values: unknown[];
-} {
-  const columns: Record<string, string> = {
-    name: "name",
-    enabled: "enabled",
-    version: "version",
-    provider: "provider",
-    tenantId: "tenant_id",
-    orgUnitId: "org_unit_id",
-    ownerPrincipalId: "owner_principal_id",
-  };
-  const parts: string[] = [];
-  const values: unknown[] = [];
-
-  const walk = (node: any): void => {
-    if (!node) return;
-    if (typeof node.attr1 === "string") {
-      if (node.operator !== "EQUAL") {
-        throw new Error(
-          `Unsupported secret query operator ${String(node.operator)}`
-        );
+  for (const args of columns as any[]) {
+    if (!targets.has(args.target)) continue;
+    const current = args.options.type;
+    if (typeof current === "function") {
+      if (!NATIVE_COLUMN_TYPES.includes(current)) {
+        args.options.type = "jsonb";
       }
-      const column = columns[node.attr1] ?? node.attr1;
-      values.push(node.comparison);
-      parts.push(`${column} = $${values.length}`);
-      return;
+      continue;
     }
-    if (node.operator === "OR") {
-      throw new Error("Unsupported secret query group operator OR");
+    if (current !== undefined) continue;
+    const designType = Reflect.getMetadata(
+      "design:type",
+      args.target.prototype,
+      args.propertyName
+    );
+    if (
+      typeof designType === "function" &&
+      !NATIVE_COLUMN_TYPES.includes(designType)
+    ) {
+      args.options.type = "jsonb";
     }
-    walk(node.attr1);
-    walk(node.comparison);
-  };
-
-  walk(condition);
-  return {
-    clause: parts.length ? `WHERE ${parts.join(" AND ")}` : "",
-    values,
-  };
-}
-
-class PgSecretStatement {
-  private condition: any;
-
-  constructor(private readonly repository: PgSecretRepository) {}
-
-  where(condition: any): this {
-    this.condition = condition;
-    return this;
-  }
-
-  orderBy(): this {
-    return this;
-  }
-
-  execute(...args: any[]): Promise<any[]> {
-    return this.repository.query(this.condition, args);
   }
 }
 
-class PgSecretRepository {
-  protected clientFor(args: any[]): pg.Client {
-    const client = contextClient(args);
-    if (!client) {
-      throw new NotFoundError(
-        "secret lookup requires an RLS-bound execution context"
+function ensureSecretTimestampColumns(): void {
+  const { Secret } = siblingRequire("secrets/index.cjs");
+  const { getMetadataArgsStorage } = require(join(
+    FOR_TYPEORM_ROOT,
+    "node_modules/typeorm"
+  ));
+  const storage = getMetadataArgsStorage();
+  const target = Metadata.constr(Secret as never) as any;
+  for (const [propertyName, mode] of [
+    ["createdAt", "createDate"],
+    ["updatedAt", "updateDate"],
+  ] as const) {
+    if (
+      !storage.columns.some(
+        (column: any) =>
+          column.target === target && column.propertyName === propertyName
+      )
+    ) {
+      storage.columns.push({
+        target,
+        propertyName,
+        mode,
+        options: {},
+      } as any);
+    }
+  }
+}
+
+function flavourModelsForTypeorm(): void {
+  // Load and initialize the sibling TypeORM adapter BEFORE the integrations
+  // models, so the models are decorated under the `type-orm` flavour from the
+  // start. Re-flavouring an already default-flavoured `@pk` leaves the old
+  // `pkOnCreate` handler registered without its handler arguments.
+  const { TypeORMFlavour } = typeormRequire("index.cjs");
+  const models = siblingRequire("namespaces/models/index.cjs");
+  const { Secret } = siblingRequire("secrets/index.cjs");
+  const list = [
+    "Tenant",
+    "TenantProfile",
+    "OrgUnit",
+    "OrgUnitProfile",
+    "OrgUnitClosure",
+    "User",
+    "Group",
+    "Principal",
+    "TenantMembership",
+    "OrgUnitMembership",
+    "GroupMembership",
+    "Permission",
+    "Role",
+    "RolePermission",
+    "RoleAssignment",
+    "InheritanceBlock",
+    "ProtectedResource",
+    "ResourceGrant",
+    "EffectivePermission",
+    "StorageBinding",
+    "Credential",
+  ].map((name) => models[name]);
+
+  for (const model of [...list, Secret]) {
+    uses(TypeORMFlavour)(model as never);
+  }
+}
+
+async function createAdapter(
+  url: string,
+  max: number,
+  alias: string
+): Promise<any> {
+  const { TypeORMAdapter, TypeORMFlavour } = typeormRequire("index.cjs");
+  const { DataSource } = require(join(
+    FOR_TYPEORM_ROOT,
+    "node_modules/typeorm"
+  ));
+
+  class Saa1151TypeormAdapter extends TypeORMAdapter {
+    protected override isReserved(attr: string): boolean {
+      return !attr;
+    }
+
+    // Custom aliases let the RLS and superuser adapters coexist; the entities
+    // are still the models flavoured for the TypeORM adapter.
+    override getClient(): any {
+      const models = Adapter.models(this.flavour);
+      const entities = models.map((model: any) => Metadata.constr(model));
+      return new DataSource(
+        Object.assign({}, this.config, { entities: entities })
       );
     }
-    return client;
   }
 
-  select(): PgSecretStatement {
-    return new PgSecretStatement(this);
-  }
-
-  /**
-   * Phase A write seam: `ModelSecretService.store` persists through the
-   * repository's `create`. The insert runs on the RLS-bound client carried by
-   * the execution context, so the `secrets` insert policy (`CREDENTIAL_WRITE`
-   * for the row's tenant/org-unit) is enforced exactly as in production.
-   */
-  async create(secret: any, ...args: any[]): Promise<any> {
-    const client = this.clientFor(args);
-    const id = secret.id ?? randomUUID();
-    await client.query(
-      `INSERT INTO secrets
-         (id, name, provider, encrypted_payload, encryption, content_type,
-          tags, enabled, version, external_id, uri, tenant_id, org_unit_id,
-          owner_principal_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [
-        id,
-        secret.name,
-        secret.provider,
-        secret.encryptedPayload,
-        JSON.stringify(secret.encryption),
-        secret.contentType ?? null,
-        secret.tags ? JSON.stringify(secret.tags) : null,
-        secret.enabled ?? true,
-        secret.version ?? null,
-        secret.externalId ?? null,
-        secret.uri ?? null,
-        secret.tenantId ?? null,
-        secret.orgUnitId ?? null,
-        secret.ownerPrincipalId ?? null,
-      ]
-    );
-    secret.id = id;
-    return secret;
-  }
-
-  async query(condition: any, args: any[]): Promise<any[]> {
-    const client = this.clientFor(args);
-    const { clause, values } = conditionToWhere(condition);
-    const result = await client.query(
-      `SELECT * FROM secrets ${clause} ORDER BY name`,
-      values
-    );
-    return result.rows.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      provider: row.provider,
-      version: row.version ?? undefined,
-      enabled: row.enabled,
-      encryptedPayload: row.encrypted_payload,
-      encryption:
-        typeof row.encryption === "string"
-          ? JSON.parse(row.encryption)
-          : row.encryption,
-      tags: row.tags ?? undefined,
-      tenantId: row.tenant_id ?? undefined,
-      orgUnitId: row.org_unit_id ?? undefined,
-      ownerPrincipalId: row.owner_principal_id ?? undefined,
-    }));
-  }
+  const adapter = new Saa1151TypeormAdapter(
+    dataSourceOptions(url, max),
+    alias
+  );
+  Adapter.setCurrent(TypeORMFlavour);
+  await adapter.initialize();
+  return adapter;
 }
 
-class UnscopedSecretRepository extends PgSecretRepository {
-  constructor(private readonly admin: pg.Client) {
-    super();
-  }
-
-  protected override clientFor(): pg.Client {
-    return this.admin;
-  }
-}
-
-const noopLogger = (): any => {
-  const logger: any = {
-    verbose: () => undefined,
-    info: () => undefined,
-    warn: () => undefined,
-    error: () => undefined,
-    action: () => undefined,
-    clear: () => logger,
-    for: () => logger,
-  };
-  return logger;
-};
-
-class PgCredentialRepository {
-  readonly _adapter = {
-    logCtx: (args: any[]) => {
-      const ctx = findContext(args);
-      const log = noopLogger();
-      const response: any = {
-        log,
-        ctx: ctx ?? undefined,
-        ctxArgs: ctx ? [...args] : [],
-      };
-      response.for = () => {
-        response.log = log.for();
-        return response;
-      };
-      return response;
-    },
-  };
-
-  readonly _overrides = {};
-
-  protected clientFor(args: any[]): pg.Client {
-    const client = contextClient(args);
-    if (!client) {
-      throw new NotFoundError(
-        "credential lookup requires an RLS-bound execution context"
-      );
-    }
-    return client;
-  }
-
-  async read(id: string, ...args: any[]): Promise<any> {
-    const client = this.clientFor(args);
-    const result = await client.query(
-      `SELECT ${CREDENTIAL_COLUMNS.join(", ")} FROM credentials WHERE id = $1`,
-      [id]
-    );
-    const row = result.rows[0] as CredentialRow | undefined;
-    if (!row) throw new NotFoundError(`Credential ${id} not found`);
-    const { Credential } = siblingRequire("namespaces/index.cjs");
-    return toCredential(row, Credential);
-  }
-
-  /**
-   * Phase A write seam: `CredentialService.createCredential` (and
-   * `CredentialService.create` for filesystem-provider metadata rows) inserts
-   * through the repository's `create`. The insert runs on the RLS-bound client
-   * carried by the execution context, so the credential row is stamped with
-   * the Phase A `tenant`/`owner` relations exactly as the production adapter
-   * would stamp them, and the `credentials` insert policy is enforced.
-   */
-  async create(model: any, ...args: any[]): Promise<any> {
-    const client = this.clientFor(args);
-    const id = model.id ?? randomUUID();
-    const result = await client.query(
-      `INSERT INTO credentials
-         (id, tenant_id, org_unit_id, owner_principal_id, name,
-          credential_type, secret_name, provider, description, enabled,
-          metadata, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING ${CREDENTIAL_COLUMNS.join(", ")}`,
-      [
-        id,
-        referenceId(model.tenant),
-        referenceId(model.orgUnit) ?? null,
-        referenceId(model.owner) ?? null,
-        model.name,
-        model.credentialType,
-        model.secretName,
-        model.provider,
-        model.description ?? null,
-        typeof model.enabled === "boolean" ? model.enabled : true,
-        model.metadata ? JSON.stringify(model.metadata) : null,
-        model.expiresAt ?? null,
-      ]
-    );
-    const { Credential } = siblingRequire("namespaces/index.cjs");
-    return toCredential(result.rows[0] as CredentialRow, Credential);
-  }
-
-  async update(model: any, ...args: any[]): Promise<any> {
-    const client = this.clientFor(args);
-    const result = await client.query(
-      `UPDATE credentials
-          SET last_used_at = COALESCE($2, last_used_at),
-              enabled = COALESCE($3, enabled),
-              updated_at = now()
-        WHERE id = $1
-        RETURNING ${CREDENTIAL_COLUMNS.join(", ")}`,
-      [
-        model.id,
-        model.lastUsedAt ?? null,
-        typeof model.enabled === "boolean" ? model.enabled : null,
-      ]
-    );
-    const row = result.rows[0] as CredentialRow | undefined;
-    if (!row) throw new NotFoundError(`Credential ${model.id} not found`);
-    const { Credential } = siblingRequire("namespaces/index.cjs");
-    return toCredential(row, Credential);
-  }
-}
-
-class UnscopedCredentialRepository extends PgCredentialRepository {
-  constructor(private readonly admin: pg.Client) {
-    super();
-  }
-
-  protected override clientFor(): pg.Client {
-    return this.admin;
-  }
+function repositoryFor(adapter: any, model: any): any {
+  const RepositoryCtor = adapter.repository();
+  return new RepositoryCtor(adapter, model);
 }
 
 let adminClient: pg.Client;
 let setupClient: pg.Client | undefined;
 let appClient: pg.Client;
-let unscopedClient: pg.Client;
+let seedAdapter: any;
+let appAdapter: any;
+let adminAdapter: any;
 let fsRoot: string;
 let credentialService: any;
 let resolver: GraphNodeCredentialResolver;
@@ -659,14 +592,14 @@ interface PhaseACredentialSpec {
 }
 
 /**
- * Creates one credential through the Phase A `CredentialService` inside the
- * tenant's own principal-scoped transaction.
+ * Creates one credential through the Phase A `CredentialService` on the
+ * superuser seed adapter.
  *
- * The transaction is committed: `runAsPrincipal` defaults to rollback, which
- * is the right contract for read-only assertions but would discard a seed
- * write. Every write therefore runs on the same session that carries
- * `app.principal_id`, so both the `secrets` and `credentials` insert policies
- * are evaluated against the tenant principal exactly as in production.
+ * The seed adapter runs as the database owner before the application role
+ * exists, so fixture writes are not gated by RLS; the point of this helper is
+ * to exercise the Phase A write path (tenant/owner stamping and the encrypted
+ * secret store) rather than to assert insert-policy enforcement. Reads are
+ * asserted separately under the `NOSUPERUSER NOBYPASSRLS` application role.
  */
 async function createCredentialAs(
   service: any,
@@ -674,44 +607,34 @@ async function createCredentialAs(
   tenantId: string,
   spec: PhaseACredentialSpec
 ): Promise<any> {
-  const { runAsPrincipal } = siblingRequire(
-    "namespaces/rls/rls-bootstrap.service.cjs"
-  );
-  return runAsPrincipal(
-    appClient,
-    principalId,
-    async (executor) => {
-      const ctx = tenantContext(executor as pg.Client);
-      if (spec.provider === "model") {
-        const credential = await service.createCredential(
-          {
-            tenantId,
-            ownerPrincipalId: principalId,
-            name: spec.name,
-            credentialType: spec.credentialType,
-            secret: { value: spec.marker as string },
-          },
-          ctx
-        );
-        if (spec.enabled === false) {
-          return service.updateOne(credential.id, { enabled: false }, ctx);
-        }
-        return credential;
-      }
-      return service.create(
-        {
-          tenant: tenantId,
-          owner: principalId,
-          name: spec.name,
-          credentialType: spec.credentialType,
-          secretName: spec.secretName,
-          provider: "filesystem",
-          enabled: true,
-        },
-        ctx
-      );
+  const ctx = principalContext(principalId);
+  if (spec.provider === "model") {
+    const credential = await service.createCredential(
+      {
+        tenantId,
+        ownerPrincipalId: principalId,
+        name: spec.name,
+        credentialType: spec.credentialType,
+        secret: { value: spec.marker as string },
+      },
+      ctx
+    );
+    if (spec.enabled === false) {
+      return service.updateOne(credential.id, { enabled: false }, ctx);
+    }
+    return credential;
+  }
+  return service.create(
+    {
+      tenant: tenantId,
+      owner: principalId,
+      name: spec.name,
+      credentialType: spec.credentialType,
+      secretName: spec.secretName,
+      provider: "filesystem",
+      enabled: true,
     },
-    { commit: true }
+    ctx
   );
 }
 
@@ -779,35 +702,16 @@ async function resolveAs(
   target: GraphNodeCredentialResolver,
   expectedType = "deploy"
 ): Promise<unknown> {
-  const { runAsPrincipal } = siblingRequire(
-    "namespaces/rls/rls-bootstrap.service.cjs"
+  // The resolver's credential and secret services each open a transaction on
+  // the adapter and bind `principalId` transaction-locally to
+  // `app.principal_id`; RLS then scopes every read to that principal.
+  return target.resolve(
+    { credentialId, credentialType: expectedType },
+    expectedType,
+    true,
+    "SAA-1151",
+    principalContext(principalId)
   );
-  return runAsPrincipal(appClient, principalId, async (executor) => {
-    // The executor below is the exact session handed to the resolver's
-    // repository through `tenantContext`; assert the principal binding and
-    // role privileges on that session, not on a different connection.
-    const session = await (executor as pg.Client).query(
-      `SELECT current_user AS role_name,
-              current_setting('app.principal_id', true) AS principal_id,
-              r.rolsuper, r.rolbypassrls
-         FROM pg_roles r
-        WHERE r.rolname = current_user`
-    );
-    expect(session.rows[0]).toEqual({
-      role_name: APP_ROLE,
-      principal_id: principalId,
-      rolsuper: false,
-      rolbypassrls: false,
-    });
-
-    return target.resolve(
-      { credentialId, credentialType: expectedType },
-      expectedType,
-      true,
-      "SAA-1151",
-      tenantContext(executor as pg.Client)
-    );
-  });
 }
 
 async function expectGraphError(
@@ -837,12 +741,21 @@ async function expectGraphError(
 beforeAll(async () => {
   if (SKIP_REASON) return;
 
-  const { RlsBootstrapService, CredentialService } = siblingRequire(
-    "namespaces/index.cjs"
+  flavourModelsForTypeorm();
+  ensureSecretTimestampColumns();
+  alignStructuredColumnsWithFixture();
+
+  const { RlsBootstrapService } = siblingRequire(
+    "namespaces/rls/rls-bootstrap.service.cjs"
+  );
+  const { CredentialService } = siblingRequire(
+    "namespaces/services/index.cjs"
   );
   const { ModelSecretService, FsSecretService } = siblingRequire(
     "secrets/index.cjs"
   );
+  const { Secret } = siblingRequire("secrets/index.cjs");
+  const { Credential } = siblingRequire("namespaces/models/index.cjs");
 
   const credentialsMigration = readFileSync(CREDENTIALS_MIGRATION, "utf8");
   expect(credentialsMigration).toContain("ALTER TABLE secrets");
@@ -876,6 +789,14 @@ beforeAll(async () => {
   });
   await setupClient.connect();
   await setupClient.query(readFileSync(RLS_FIXTURE, "utf8"));
+  await setupClient.query(credentialsMigration);
+  // The model `Secret` extends BaseModel, so TypeORM writes timestamps even
+  // though the canonical fixture table predates that shape.
+  await setupClient.query(
+    `ALTER TABLE secrets
+       ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+       ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`
+  );
 
   const rls = new RlsBootstrapService();
   await rls.boot(setupClient);
@@ -932,8 +853,37 @@ beforeAll(async () => {
 
   await seedNamespaceRows(setupClient);
 
+  // Seed the credential/secret rows through the real Phase A services. The
+  // seed adapter runs as the database owner (superuser) before the application
+  // role exists, so fixture writes are not the assertion surface; the same
+  // Phase A path stamps tenant_id/owner_principal_id and encrypts the secret.
+  seedAdapter = await createAdapter(
+    urlForDatabase(DATABASE_NAME),
+    1,
+    SEED_ALIAS
+  );
+  const seedModelSecrets = new ModelSecretService();
+  await seedModelSecrets.boot(
+    {
+      provider: "model",
+      keySecret: MODEL_KEY_SECRET,
+      keyId: MODEL_KEY_ID,
+    },
+    repositoryFor(seedAdapter, Secret)
+  );
+  const seedCredentialService = new CredentialService({
+    repository: repositoryFor(seedAdapter, Credential),
+    secretService: seedModelSecrets as any,
+  });
+  await seedCredentials(seedCredentialService);
+  await seedAdapter.shutdown();
+  seedAdapter = undefined;
+  Adapter.unregister(SEED_ALIAS);
+
   await setupClient.query(
-    `CREATE ROLE ${quoteIdentifier(APP_ROLE)} NOSUPERUSER NOBYPASSRLS`
+    `CREATE ROLE ${quoteIdentifier(APP_ROLE)} LOGIN PASSWORD ${quoteLiteral(
+      APP_PASSWORD
+    )} NOSUPERUSER NOBYPASSRLS`
   );
   await setupClient.query(
     `GRANT USAGE ON SCHEMA public TO ${quoteIdentifier(APP_ROLE)}`
@@ -941,16 +891,51 @@ beforeAll(async () => {
   await setupClient.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${quoteIdentifier(APP_ROLE)}`
   );
+  await setupClient.query(
+    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${quoteIdentifier(APP_ROLE)}`
+  );
   await setupClient.end();
   setupClient = undefined;
 
+  fsRoot = await mkdtemp(join(tmpdir(), "saa1151-fs-"));
+  const fsSecrets = new FsSecretService();
+  await fsSecrets.boot({
+    provider: "filesystem",
+    keySecret: FS_KEY_SECRET,
+    keyId: FS_KEY_ID,
+    rootPath: fsRoot,
+  });
+  await fsSecrets.store(FS_SECRET.a, { value: FS_SECRET.aMarker });
+  await fsSecrets.store(FS_SECRET.b, { value: FS_SECRET.bMarker });
+
+  // The resolver's production seam: a real TypeORM adapter connected as the
+  // NOSUPERUSER NOBYPASSRLS application role. Every `@transactional` read
+  // binds the context's `principalId` to `app.principal_id` on its own
+  // transaction, so RLS scopes the credential and secret rows.
+  appAdapter = await createAdapter(
+    urlForRole(DATABASE_NAME, APP_ROLE, APP_PASSWORD),
+    1,
+    APP_ALIAS
+  );
+  const appSession = await appAdapter.client.query(
+    `SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls
+       FROM pg_roles r
+      WHERE r.rolname = current_user`
+  );
+  expect(appSession[0]).toEqual({
+    role_name: APP_ROLE,
+    rolsuper: false,
+    rolbypassrls: false,
+  });
+  expect(
+    appAdapter.client.entityMetadatas.map((meta: any) => meta.tableName)
+  ).toEqual(expect.arrayContaining(["credentials", "secrets"]));
+
   appClient = new pg.Client({
-    connectionString: urlForDatabase(DATABASE_NAME),
+    connectionString: urlForRole(DATABASE_NAME, APP_ROLE, APP_PASSWORD),
     connectionTimeoutMillis: 5_000,
   });
   await appClient.connect();
-  await appClient.query(`SET ROLE ${quoteIdentifier(APP_ROLE)}`);
-
   const sessionRole = await appClient.query(
     `SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls
        FROM pg_roles r
@@ -962,63 +947,49 @@ beforeAll(async () => {
     rolbypassrls: false,
   });
 
-  unscopedClient = new pg.Client({
-    connectionString: urlForDatabase(DATABASE_NAME),
-    connectionTimeoutMillis: 5_000,
-  });
-  await unscopedClient.connect();
-
-  fsRoot = await mkdtemp(join(tmpdir(), "saa1151-fs-"));
-
-  const modelSecrets = new ModelSecretService();
-  await modelSecrets.boot(
+  const appModelSecrets = new ModelSecretService();
+  await appModelSecrets.boot(
     {
       provider: "model",
       keySecret: MODEL_KEY_SECRET,
       keyId: MODEL_KEY_ID,
     },
-    new PgSecretRepository() as any
+    repositoryFor(appAdapter, Secret)
   );
-
-  const unscopedModelSecrets = new ModelSecretService();
-  await unscopedModelSecrets.boot(
-    {
-      provider: "model",
-      keySecret: MODEL_KEY_SECRET,
-      keyId: MODEL_KEY_ID,
-    },
-    new UnscopedSecretRepository(unscopedClient) as any
-  );
-
-  const fsSecrets = new FsSecretService();
-  await fsSecrets.boot({
-    provider: "filesystem",
-    keySecret: FS_KEY_SECRET,
-    keyId: FS_KEY_ID,
-    rootPath: fsRoot,
-  });
-  await fsSecrets.store(FS_SECRET.a, { value: FS_SECRET.aMarker });
-  await fsSecrets.store(FS_SECRET.b, { value: FS_SECRET.bMarker });
-
   credentialService = new CredentialService({
-    repository: new PgCredentialRepository() as any,
-    secretService: modelSecrets as any,
+    repository: repositoryFor(appAdapter, Credential),
+    secretService: appModelSecrets as any,
   });
-
-  await seedCredentials(credentialService);
-
   resolver = new GraphNodeCredentialResolver({
     credentialService: credentialService as any,
-    modelSecretService: modelSecrets as any,
+    modelSecretService: appModelSecrets as any,
     fsSecretService: fsSecrets as any,
   });
 
+  // Leak-detection control: the same resolver over a superuser adapter whose
+  // repository ignores the application role, so it can read tenant-B rows.
+  // This proves the cross-tenant denials above are not vacuous.
+  adminAdapter = await createAdapter(
+    urlForDatabase(DATABASE_NAME),
+    1,
+    ADMIN_ALIAS
+  );
+  const adminModelSecrets = new ModelSecretService();
+  await adminModelSecrets.boot(
+    {
+      provider: "model",
+      keySecret: MODEL_KEY_SECRET,
+      keyId: MODEL_KEY_ID,
+    },
+    repositoryFor(adminAdapter, Secret)
+  );
   const unscopedCredentialService = new CredentialService({
-    repository: new UnscopedCredentialRepository(unscopedClient) as any,
+    repository: repositoryFor(adminAdapter, Credential),
+    secretService: adminModelSecrets as any,
   });
   vulnerableResolver = new GraphNodeCredentialResolver({
     credentialService: unscopedCredentialService as any,
-    modelSecretService: unscopedModelSecrets as any,
+    modelSecretService: adminModelSecrets as any,
     fsSecretService: fsSecrets as any,
   });
 });
@@ -1027,7 +998,12 @@ afterAll(async () => {
   if (fsRoot) {
     await rm(fsRoot, { recursive: true, force: true }).catch(() => undefined);
   }
-  for (const client of [setupClient, appClient, unscopedClient]) {
+  for (const adapter of [appAdapter, adminAdapter, seedAdapter]) {
+    if (adapter) {
+      await adapter.shutdown().catch(() => undefined);
+    }
+  }
+  for (const client of [setupClient, appClient]) {
     if (client) {
       await client.end().catch(() => undefined);
     }
@@ -1047,7 +1023,7 @@ afterAll(async () => {
 
 describe("cross-tenant credential isolation through GraphNodeCredentialResolver", () => {
   liveIt(
-    "binds app.principal_id on the resolver session and enforces RLS at the database",
+    "enforces RLS for the application role and hides the other tenant's credential and secret rows",
     async () => {
       const { runAsPrincipal } = siblingRequire(
         "namespaces/rls/rls-bootstrap.service.cjs"
@@ -1142,14 +1118,14 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
 
         const own = await credentialService.getCredential(
           CREDENTIAL.aModel,
-          tenantContext(executor)
+          principalContext(P1)
         );
         expect(referenceId(own.tenant)).toBe(T1);
         expect(referenceId(own.owner)).toBe(P1);
         await expect(
           credentialService.getCredential(
             CREDENTIAL.bModel,
-            tenantContext(executor)
+            principalContext(P1)
           )
         ).rejects.toBeDefined();
       });
@@ -1193,14 +1169,14 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
 
         const own = await credentialService.getCredential(
           CREDENTIAL.bModel,
-          tenantContext(executor)
+          principalContext(P2)
         );
         expect(referenceId(own.tenant)).toBe(T2);
         expect(referenceId(own.owner)).toBe(P2);
         await expect(
           credentialService.getCredential(
             CREDENTIAL.aModel,
-            tenantContext(executor)
+            principalContext(P2)
           )
         ).rejects.toBeDefined();
       });
@@ -1210,14 +1186,45 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
   liveIt(
     "resolves and fails closed through the ctx-bound resolveNodeCredential wrapper",
     async () => {
-      const { runAsPrincipal } = siblingRequire(
-        "namespaces/rls/rls-bootstrap.service.cjs"
-      );
-      await runAsPrincipal(appClient, P1, async (executor: pg.Client) => {
-        const context = engineContext(executor, { nodeCredentials: resolver });
+      const context = engineContext(P1, { nodeCredentials: resolver });
 
-        const sameTenant = await resolveNodeCredential(
+      const sameTenant = await resolveNodeCredential(
+        context,
+        {
+          credentialRef: {
+            credentialId: CREDENTIAL.aModel,
+            credentialType: "deploy",
+          },
+        },
+        "deploy",
+        true,
+        "SAA-1155 wrapper"
+      );
+      expect(secretLeaked(sameTenant, [SECRET.aModel.marker])).toBe(true);
+
+      await expectGraphError(
+        resolveNodeCredential(
           context,
+          {
+            credentialRef: {
+              credentialId: CREDENTIAL.bModel,
+              credentialType: "deploy",
+            },
+          },
+          "deploy",
+          true,
+          "SAA-1155 wrapper"
+        ),
+        "GRAPH_CREDENTIAL_NOT_FOUND",
+        [SECRET.bModel.marker]
+      );
+
+      // The wrapper reads the resolver from `context.engine.nodeCredentials`;
+      // with no engine seam it fails closed instead of reading the
+      // environment or bypassing tenancy.
+      await expectGraphError(
+        resolveNodeCredential(
+          principalContext(P1),
           {
             credentialRef: {
               credentialId: CREDENTIAL.aModel,
@@ -1227,46 +1234,10 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
           "deploy",
           true,
           "SAA-1155 wrapper"
-        );
-        expect(secretLeaked(sameTenant, [SECRET.aModel.marker])).toBe(true);
-
-        await expectGraphError(
-          resolveNodeCredential(
-            context,
-            {
-              credentialRef: {
-                credentialId: CREDENTIAL.bModel,
-                credentialType: "deploy",
-              },
-            },
-            "deploy",
-            true,
-            "SAA-1155 wrapper"
-          ),
-          "GRAPH_CREDENTIAL_NOT_FOUND",
-          [SECRET.bModel.marker]
-        );
-
-        // The wrapper reads the resolver from `context.engine.nodeCredentials`;
-        // with no engine seam it fails closed instead of reading the
-        // environment or bypassing tenancy.
-        await expectGraphError(
-          resolveNodeCredential(
-            tenantContext(executor),
-            {
-              credentialRef: {
-                credentialId: CREDENTIAL.aModel,
-                credentialType: "deploy",
-              },
-            },
-            "deploy",
-            true,
-            "SAA-1155 wrapper"
-          ),
-          "GRAPH_CREDENTIAL_SERVICE_UNAVAILABLE",
-          [SECRET.aModel.marker]
-        );
-      });
+        ),
+        "GRAPH_CREDENTIAL_SERVICE_UNAVAILABLE",
+        [SECRET.aModel.marker]
+      );
     }
   );
 
@@ -1345,37 +1316,4 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
     }
   );
 
-  /**
-   * Gap 3: production ctx -> session binding.
-   *
-   * This suite proves the database contract by binding `app.principal_id`
-   * through the namespace RLS harness (`runAsPrincipal`) on the exact session
-   * the resolver repository reads through `rlsClient`. It cannot prove that a
-   * production host binds the principal on the session its adapter uses,
-   * because that wiring does not exist in this workspace yet:
-   *
-   * - `@decaf-ts/for-typeorm`'s `TypeORMAdapter#getRepository` only switches to
-   *   a transaction's `EntityManager`; `TypeORMContextLock` issues
-   *   BEGIN/COMMIT/ROLLBACK and never calls
-   *   `set_config('app.principal_id', ...)`.
-   * - `GraphExecutionModule.forRoot` accepts `nodeCredentials` but exposes no
-   *   principal-binding hook for the adapter/session.
-   * - The integrations models (`Credential`, `Secret`) are decorated with the
-   *   core `@table` family, not TypeORM `@Entity`. `for-typeorm` maps them only
-   *   through its TypeORM flavour pass; as-graph's
-   *   `createTypeormGraphAdapter` flavours only as-graph models, and the
-   *   sibling integrations build resolves its own decaf metadata registry (the
-   *   duplicate-registry trap documented at the top of this suite). A TypeORM
-   *   case here would therefore test a different registry than the Phase A
-   *   services use.
-   *
-   * Security Engineer owns the decision (SAA-1158) on whether a dedicated
-   * production assurance test is required once host-level principal binding
-   * lands. Do not convert this into false green by binding the principal inside
-   * the test and calling that "production".
-   */
-  it.skip(
-    "documents the missing production ctx -> session binding (for-typeorm / host wiring)",
-    () => undefined
-  );
 });
