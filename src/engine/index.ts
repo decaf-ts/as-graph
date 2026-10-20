@@ -28,6 +28,7 @@ export * from "./events/GraphExecutionEventEmitter";
 export * from "./events/GraphExecutionEventFactory";
 
 export * from "./auth";
+export * from "./credentials/GraphNodeCredentials";
 
 export * from "./execution/GraphExecutionContext";
 export * from "./execution/GraphNodeExecutor";

@@ -23,7 +23,7 @@ import {
 jest.setTimeout(60000);
 
 const kind = "core.devops.ftp";
-const envName = "GRAPH_CREDENTIAL_SAA1032_SFTP";
+const envName = "it-saa1032-SFTP";
 const credentials = credential(envName, "sftp");
 const base = {
   host: ENDPOINTS.ftp.host,

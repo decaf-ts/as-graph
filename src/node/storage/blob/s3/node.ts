@@ -7,7 +7,7 @@
  * encoding, and teardown behaviour come from `BlobNode`. The credential must
  * be a JSON object carrying `accessKeyId`, optional `secretAccessKey` and
  * `sessionToken` (a missing `secretAccessKey` becomes the empty string); it
- * resolves through a `GRAPH_CREDENTIAL_*` environment variable and stays
+ * resolves through the ctx-bound node credential resolver and stays
  * optional only in the sense that the service may still initialize without
  * explicit credentials (e.g. instance roles) — a configured bucket is always
  * required.
@@ -16,14 +16,14 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { S3BlobStoreService } from "@decaf-ts/integrations/blob/s3";
+import { S3NodeService } from "@decaf-ts/integrations/blob/s3";
 import type { S3BlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
 
 /** Assembles the S3 service configuration: credential JSON is parsed for the access keys, everything else comes from node config. */
 function s3Config(
-  secret: string | undefined,
+  secret: string | Record<string, unknown> | undefined,
   options: {
     bucket: string;
     sourceId: string;
@@ -58,7 +58,7 @@ function s3Config(
 /**
  * Shared S3 implementation behind the `core.storage.s3` and `core.storage.awsS3` node kinds.
  *
- * Builds an `S3BlobStoreService` from the bucket, endpoint/region/path-style
+ * Builds an `S3NodeService` from the bucket, endpoint/region/path-style
  * config, and the parsed credential JSON.
  */
 export class S3Node extends BlobNode {
@@ -72,8 +72,8 @@ export class S3Node extends BlobNode {
    * @throws {GraphExecutionError} with code `GRAPH_BLOB_BUCKET_REQUIRED` when no `bucket` is configured and `GRAPH_CREDENTIAL_INVALID_FORMAT` when the credential is not a JSON object.
    */
   protected async createService(
-    credential: string | undefined
-  ): Promise<S3BlobStoreService> {
+    credential: string | Record<string, unknown> | undefined
+  ): Promise<S3NodeService> {
     const bucket = asNonEmptyString(this.bucket);
     if (!bucket) {
       throw new GraphExecutionError(
@@ -81,8 +81,8 @@ export class S3Node extends BlobNode {
         "GRAPH_BLOB_BUCKET_REQUIRED"
       );
     }
-    const service = new S3BlobStoreService();
-    await service.initialize(
+    const service = new S3NodeService();
+    await service.boot(
       s3Config(credential, {
         bucket,
         sourceId: asNonEmptyString(this.sourceId) ?? "graph",

@@ -49,17 +49,12 @@ import {
   resolveMastraCapabilities,
   type MastraBackendCapabilities,
 } from "./MastraCapabilities";
-import { createMastraAgentRuntimeFromConfig, createMastraAgentStepHandler } from "./MastraAgentStepHandler";
+import { createMastraAgentRuntimeFromConfig } from "./MastraAgentStepHandler";
 import {
   GRAPH_MASTRA_ENGINE_DISABLED,
   MastraEnvironment,
 } from "./MastraEnvironment";
-import { createMastraHitlStepHandler } from "./MastraHitlStepHandler";
-import { createMastraMcpTriggerStepHandler } from "./MastraMcpTrigger";
-import { createMastraChannelTriggerStepHandlers } from "./MastraChannelTrigger";
-import { createMastraChannelResponseStepHandlers } from "./MastraChannelResponse";
-import { createMastraVoiceStepHandler } from "./MastraVoiceStepHandler";
-import { createMastraRagStepHandlers } from "./MastraRagStepHandlers";
+import { createMastraNodeStepHandlers } from "./nodes";
 import {
   wireMastraObservability,
   type MastraObservabilityHandle,
@@ -303,16 +298,6 @@ export class MastraGraphExecutionBackend
         // default terminal timeout comes from the accumulated mastra
         // environment (`MASTRA__ENGINE__TERMINAL_TIMEOUT_MS`), not a constant.
         : MastraEnvironment.mastra.engine.terminalTimeoutMs;
-    const stepHandlers: MastraNodeStepHandler[] = Array.isArray(
-      config.stepHandlers
-    )
-      ? [...config.stepHandlers]
-      : [];
-    // SAA-837 M1: register the real `core.agent` handler, overriding any host
-    // default for that kind. Precedence: an explicit runtime, else a config-
-    // backed runtime built from the agent map/factory. When none is supplied the
-    // kind is left to fail closed (no handler ⇒ GRAPH_MASTRA_UNSUPPORTED_KIND, or
-    // the host default's GRAPH_MASTRA_AGENT_UNAVAILABLE), never a fabricated echo.
     const agentRuntime =
       config.agentRuntime ??
       (config.agents ||
@@ -338,79 +323,67 @@ export class MastraGraphExecutionBackend
               : {}),
           })
         : undefined);
-    if (agentRuntime) {
-      stepHandlers.push(
-        createMastraAgentStepHandler({
-          runtime: agentRuntime,
+    const hostStepHandlers: MastraNodeStepHandler[] = Array.isArray(
+      config.stepHandlers
+    )
+      ? config.stepHandlers
+      : [];
+    const registeredStepHandlers = createMastraNodeStepHandlers({
+        agent: {
+          ...(agentRuntime ? { runtime: agentRuntime } : {}),
           ...(config.resolveProcessorModel
             ? { resolveProcessorModel: config.resolveProcessorModel }
             : {}),
-          // SAA-836 S1: host decaf-model registry for structured-output
-          // definitions (converted via @decaf-ts/as-zod).
           ...(config.resolveStructuredOutputModel
             ? { resolveModel: config.resolveStructuredOutputModel }
             : {}),
-        })
-      );
-    }
-    // SAA-836 M5: register the HITL suspending-step handler and the MCP
-    // trigger handler, overriding any host default for those kinds. The MCP
-    // trigger fails closed unless the host supplies the `@mastra/mcp` server
-    // surface (R2 extension point); the HITL handler is mastra-native.
-    stepHandlers.push(createMastraHitlStepHandler());
-    stepHandlers.push(
-      createMastraMcpTriggerStepHandler({
-        ...(config.createMcpServer ? { createMcpServer: config.createMcpServer } : {}),
-      })
-    );
-    // SAA-836 M6: register the channel trigger/response and voice handlers,
-    // overriding any host default for those kinds. The channel surface and
-    // voice surface are host-supplied extension points (R2) — without one the
-    // kinds fail closed instead of fabricating platform endpoints or voice
-    // capability.
-    stepHandlers.push(
-      ...createMastraChannelTriggerStepHandlers({
-        ...(config.resolveChannelAdapter
-          ? { resolveChannelAdapter: config.resolveChannelAdapter }
-          : {}),
-      })
-    );
-    stepHandlers.push(
-      ...createMastraChannelResponseStepHandlers({
-        ...(config.sendChannelResponse
-          ? { sendChannelResponse: config.sendChannelResponse }
-          : {}),
-      })
-    );
-    stepHandlers.push(
-      createMastraVoiceStepHandler({
-        ...(config.resolveVoice ? { resolveVoice: config.resolveVoice } : {}),
-      })
-    );
-    // SAA-747 Stage 2: register the real RAG/sandbox steps after the host
-    // default set, so the config-only pass-through handlers are overridden for
-    // the kinds that can execute against mastra-native vector/embedding/model
-    // bindings. A document that carries no work for a kind keeps the exact
-    // JSON-safe descriptor fallback (R9) the default handlers emit.
-    stepHandlers.push(
-      ...createMastraRagStepHandlers({
-        ...(config.embedText ? { embedText: config.embedText } : {}),
-        ...(config.generateText ? { generateText: config.generateText } : {}),
-        ...(config.runSandboxedCode
-          ? { runSandboxedCode: config.runSandboxedCode }
-          : {}),
-        ...(config.embedding ? { embedding: config.embedding } : {}),
-        ...(config.vectorStoreBindings
-          ? { vectorStoreBindings: config.vectorStoreBindings }
-          : {}),
-        ...(config.vectorStoreDrivers
-          ? { vectorStoreDrivers: config.vectorStoreDrivers }
-          : {}),
-        ...(config.resolveVectorStore
-          ? { resolveVectorStore: config.resolveVectorStore }
-          : {}),
-      })
-    );
+        },
+        mcp: {
+          ...(config.createMcpServer
+            ? { createMcpServer: config.createMcpServer }
+            : {}),
+        },
+        channelTrigger: {
+          ...(config.resolveChannelAdapter
+            ? { resolveChannelAdapter: config.resolveChannelAdapter }
+            : {}),
+        },
+        channelResponse: {
+          ...(config.sendChannelResponse
+            ? { sendChannelResponse: config.sendChannelResponse }
+            : {}),
+        },
+        voice: {
+          ...(config.resolveVoice ? { resolveVoice: config.resolveVoice } : {}),
+        },
+        rag: {
+          ...(config.embedText ? { embedText: config.embedText } : {}),
+          ...(config.generateText
+            ? { generateText: config.generateText }
+            : {}),
+          ...(config.runSandboxedCode
+            ? { runSandboxedCode: config.runSandboxedCode }
+            : {}),
+          ...(config.embedding ? { embedding: config.embedding } : {}),
+          ...(config.vectorStoreBindings
+            ? { vectorStoreBindings: config.vectorStoreBindings }
+            : {}),
+          ...(config.vectorStoreDrivers
+            ? { vectorStoreDrivers: config.vectorStoreDrivers }
+            : {}),
+          ...(config.resolveVectorStore
+            ? { resolveVectorStore: config.resolveVectorStore }
+            : {}),
+        },
+      });
+    const stepHandlers: MastraNodeStepHandler[] = [
+      ...hostStepHandlers,
+      ...(agentRuntime
+        ? registeredStepHandlers
+        : registeredStepHandlers.filter(
+            (handler) => handler.kind !== "core.agent"
+          )),
+    ];
     this.compiler = new MastraWorkflowCompiler({ stepHandlers });
     // SAA-836 O1: wire the mastra engine's observability layer onto the real
     // runtime — langfuse as the default and always-present export target plus

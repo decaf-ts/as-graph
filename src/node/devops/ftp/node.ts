@@ -3,7 +3,7 @@
  * @summary FTP/SFTP DevOps node declaration (Stage 3a; `core.devops.ftp`).
  * @description FTP — list, download, or delete remote files over SFTP. The
  * `host` and `username` are required; the port defaults to 22. The `sftp`
- * credential (resolved through a `GRAPH_CREDENTIAL_*` environment variable) is
+ * credential (resolved through the ctx-bound node credential resolver) is
  * either a bare password token or a JSON object carrying `password`,
  * `privateKey`, and `passphrase` — never inline in node config. `list` returns
  * the directory entries for `path` (falling back to `remotePath`), `download`
@@ -20,6 +20,7 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
   Ssh2SftpService,
   type Ssh2SftpConfig,
@@ -28,7 +29,7 @@ import {
   asNonEmptyString,
   asNumber,
   parseCredentialJson,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 
 /** Operation the node performs against the remote SFTP server. */
@@ -55,12 +56,21 @@ const OPERATIONS: FtpOperation[] = ["list", "download", "delete"];
  * token is treated as the password, a JSON object may carry `password`,
  * `privateKey`, and `passphrase`.
  */
-function sftpCredentials(secret: string | undefined): {
+function sftpCredentials(
+  secret: string | Record<string, unknown> | undefined
+): {
   password?: string;
   privateKey?: string;
   passphrase?: string;
 } {
   if (!secret) return {};
+  if (typeof secret !== "string") {
+    return {
+      password: asNonEmptyString(secret["password"]),
+      privateKey: asNonEmptyString(secret["privateKey"]),
+      passphrase: asNonEmptyString(secret["passphrase"]),
+    };
+  }
   if (!secret.trim().startsWith("{")) return { password: secret };
   const parsed: Record<string, unknown> = parseCredentialJson(secret, "FTP");
   return {
@@ -95,12 +105,14 @@ export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
   /**
    * Executes the configured SFTP operation.
    *
-   * @param request - Execution request carrying the credential secrets; the `sftp` credential is resolved via `resolveCredentialSecret`.
-   * @returns Execution values: `list` resolves to the directory entries; `download` to the file path/name/size with `content` (utf8 or base64) and `size` outputs; `delete` to `{ path, deleted: true }`.
+   * @param request - Execution request carrying the credential references; the `sftp` credential is resolved via `resolveNodeCredential`.
+   * @param context - Node execution context forwarded to the ctx-bound credential resolver.
+   * @returns Execution values: `list` resolves to the directory entries; `download` to the file path/name/size with `content` (utf8 or base64) and `size` outputs; `delete` to an object carrying the deleted `path` and a `deleted: true` flag.
    * @throws {GraphExecutionError} with code `GRAPH_FTP_CONNECTION_REQUIRED` when `host` or `username` is missing, `GRAPH_FTP_PATH_REQUIRED` when a non-list operation lacks a `path`, or `GRAPH_FTP_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<FtpNodeInput>
+    request: GraphNodeExecutionRequest<FtpNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const host = asNonEmptyString(this.host);
     const username = asNonEmptyString(this.username);
@@ -121,7 +133,8 @@ export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
         { operation }
       );
     }
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "sftp",
       false,

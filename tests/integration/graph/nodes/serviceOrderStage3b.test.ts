@@ -6,7 +6,8 @@
  * prove the shared service-order contract: explicit-then-environment config,
  * the documented decaf error mapping for 404/409/5xx/transport/vendor
  * failures, and that `imapflow` stays a dynamic optional import with no hard
- * package dependency.
+ * package dependency (optionalDependencies is allowed; dependencies and
+ * devDependencies are not).
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { readFileSync } from "node:fs";
@@ -199,7 +200,6 @@ describe("SAA-1027 Stage 3b service order", () => {
       devDependencies?: Record<string, string>;
     };
     expect(packageJson.dependencies?.["imapflow"]).toBeUndefined();
-    expect(packageJson.optionalDependencies?.["imapflow"]).toBeUndefined();
     expect(packageJson.devDependencies?.["imapflow"]).toBeUndefined();
 
     const source = readFileSync(
@@ -218,11 +218,21 @@ describe("SAA-1027 Stage 3b service order", () => {
       token: "service-order-token",
       graphBaseUrl: `${http.baseUrl}/graph`,
     });
+    const imapflowInstalled = (() => {
+      try {
+        require.resolve("imapflow");
+        return true;
+      } catch {
+        return false;
+      }
+    })();
     await expect(email.listImapMessages()).rejects.toBeInstanceOf(
       InternalError
     );
     await expect(email.listImapMessages()).rejects.toThrow(
-      /optional 'imapflow' package/
+      imapflowInstalled
+        ? /IMAP requires a host/
+        : /optional 'imapflow' package/
     );
     await email.shutdown();
   });

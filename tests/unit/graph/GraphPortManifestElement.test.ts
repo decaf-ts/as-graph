@@ -33,7 +33,7 @@ import {
   GRAPH_CATALOGUE_CONTROLLER_OPTIONS,
   GraphNodeCatalogueController,
 } from "../../../src/nest/graph";
-import { GRAPH_BUILT_IN_NODE_MANIFEST_SNAPSHOT } from "../../../../for-angular/src/graph/catalog/GraphNodeManifestSnapshot";
+import { GRAPH_BUILT_IN_NODE_MANIFEST_SNAPSHOT } from "../../../../for-angular/diagrams/src/lib/graph/catalog/GraphNodeManifestSnapshot";
 import { freshCatalogue } from "./engine-fixtures";
 
 const CODE_MANIFEST =

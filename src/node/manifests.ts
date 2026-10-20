@@ -175,6 +175,30 @@ function compileWithIcon(node: unknown, icon: string): GraphNodeManifest {
 }
 
 /**
+ * Compiles a node manifest and overlays catalogue metadata that consumers use
+ * for capability gating.
+ *
+ * The manifest is the only front-end-safe description of a node kind, so a
+ * "dangerous/opt-in" kind must advertise that posture there rather than
+ * relying on a UI convention. The overlay is deliberately limited to
+ * JSON-safe flags.
+ *
+ * @param node - The decorated node class constructor.
+ * @param metadata - JSON-safe catalogue flags (for example `danger`).
+ * @returns The compiled manifest with the flags merged under `metadata`.
+ */
+function compileWithManifestMetadata(
+  node: unknown,
+  metadata: Record<string, string | boolean>
+): GraphNodeManifest {
+  const manifest = compile(node);
+  return {
+    ...manifest,
+    metadata: { ...(manifest.metadata ?? {}), ...metadata },
+  };
+}
+
+/**
  * Merges the credential-adapter parameter and requirement into a compiled node
  * manifest.
  *
@@ -183,7 +207,7 @@ function compileWithIcon(node: unknown, icon: string): GraphNodeManifest {
  * decides whether a credential is mandatory) and records the credential type in
  * the manifest's requirement list, de-duplicating an existing requirement of
  * the same type. Used for every Stage 2/3 node kind that resolves secrets
- * through `GRAPH_CREDENTIAL_*` environment variables instead of inline config.
+ * through the ctx-bound node credential resolver instead of inline config.
  *
  * @param manifest - The runtime-derived base manifest to augment.
  * @param credentialType - Credential type id (e.g. `s3`, `github`, `sftp`).
@@ -466,7 +490,12 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
     "jwt",
     "graph.node.devops.common.fields.credentialRef.label"
   ),
-  compile(ExecuteCommandNode),
+  compileWithManifestMetadata(ExecuteCommandNode, {
+    danger: true,
+    requiresOptIn: true,
+    dangerReason:
+      "Executes arbitrary shell commands with the host process privileges; expose only behind an explicit operator opt-in.",
+  }),
   withCredential(
     compile(FtpNode),
     "sftp",

@@ -1,7 +1,7 @@
 /**
  * @module as-graph/nodes/storage/database/mysql
  * @summary MySQL storage node declaration (Stage 3a).
- * @description MySQL — run a SQL statement against a MySQL/MariaDB server. Fixes the `mysql` TypeORM driver (default port 3306) and accepts an optional `mysql`-type credential that supplies the connection password through a `GRAPH_CREDENTIAL_*` environment variable. Connection, SSL, parameter binding, result normalization, and teardown behaviour are inherited from `DatabaseNode`.
+ * @description MySQL — run a SQL statement against a MySQL/MariaDB server. Fixes the `mysql` TypeORM driver (default port 3306) and accepts an optional `mysql`-type credential that supplies the connection password through the ctx-bound node credential resolver. Connection, SSL, parameter binding, result normalization, and teardown behaviour are inherited from `DatabaseNode`.
  */
 import { model } from "@decaf-ts/decorator-validation";
 import { node } from "../../../../shared/graph";

@@ -74,6 +74,12 @@ function truncate(
  * The command string is required; every other option (`cwd`, `shell`,
  * `timeoutMs`, `failOnError`) is optional. Output is truncated to
  * `GRAPH_EXECUTE_COMMAND_MAX_OUTPUT_BYTES` per stream.
+ *
+ * Because the command runs with the host process privileges, the compiled
+ * manifest is published with `danger: true` and `requiresOptIn: true`
+ * catalogue metadata (see `compileWithManifestMetadata` in
+ * `src/node/manifests.ts`); consumers must gate the kind behind an explicit
+ * operator opt-in.
  */
 @node("core.devops.executeCommand", {
   kind: "core.devops.executeCommand",

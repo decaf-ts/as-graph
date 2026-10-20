@@ -2519,6 +2519,9 @@
             "ssl": {
               "label": "SSL"
             },
+            "acceptSelfSigned": {
+              "label": "Accept self-signed certificate"
+            },
             "sql": {
               "label": "SQL statement",
               "placeholder": "SELECT * FROM table WHERE id = $1"
@@ -2624,6 +2627,9 @@
             },
             "database": {
               "label": "Database index"
+            },
+            "tls": {
+              "label": "TLS"
             },
             "prefix": {
               "label": "Key prefix"

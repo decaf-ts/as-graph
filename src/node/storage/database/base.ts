@@ -8,10 +8,12 @@
  * unregistered in `finally`), sends the configured SQL statement with optional
  * bound parameters, and normalizes the driver-specific raw result into the
  * `result`/`rows`/`rowCount` outputs. Credentials are optional at the base
- * level (the password may not be needed); they resolve through
- * `GRAPH_CREDENTIAL_*` environment variables only. Connection options honor
- * the `ssl` toggle with per-driver TLS shapes, and no schema synchronization
- * is ever performed (`synchronize: false`).
+ * level (the password may not be needed); they resolve through the ctx-bound
+ * node credential resolver. Connection options honor
+ * the `ssl` toggle with per-driver TLS shapes. Postgres TLS always verifies the
+ * server certificate (`rejectUnauthorized: true`) unless the explicit
+ * `acceptSelfSigned` toggle is enabled; no schema synchronization is ever
+ * performed (`synchronize: false`).
  */
 import { required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
@@ -25,13 +27,15 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
   asBoolean,
   asNumber,
   asRecord,
   asStringArray,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../support";
+import { credentialSecret } from "../../credentials";
 
 /** Inputs accepted by the SQL database nodes (the optional `value` array feeds bound parameters). */
 export type DatabaseNodeInput = Record<string, unknown>;
@@ -72,9 +76,10 @@ export abstract class DatabaseNode extends GraphNode<
   /**
    * Assembles the TypeORM `DataSourceOptions` for this node's driver.
    *
-   * Postgres gets `ssl: { rejectUnauthorized: false }` when enabled (accepting
-   * self-signed certificates), MySQL enables TLS with an empty options object,
-   * and MSSQL encrypts while trusting the server certificate when SSL is off.
+   * Postgres gets `ssl: { rejectUnauthorized: true }` when enabled and rejects
+   * self-signed certificates unless the explicit `acceptSelfSigned` toggle is
+   * set. MySQL enables TLS with an empty options object, and MSSQL encrypts
+   * while trusting the server certificate when SSL is off.
    *
    * @param host - Resolved database host.
    * @param port - Resolved database port.
@@ -91,6 +96,7 @@ export abstract class DatabaseNode extends GraphNode<
     password: string | undefined
   ): DataSourceOptions {
     const ssl = asBoolean(this.ssl, false);
+    const acceptSelfSigned = asBoolean(this.acceptSelfSigned, false);
     const base = {
       host,
       port,
@@ -104,7 +110,7 @@ export abstract class DatabaseNode extends GraphNode<
       return {
         ...base,
         type: "postgres",
-        ssl: ssl ? { rejectUnauthorized: false } : false,
+        ssl: ssl ? { rejectUnauthorized: !acceptSelfSigned } : false,
       } as DataSourceOptions;
     }
     if (this.driver === "mysql") {
@@ -132,6 +138,7 @@ export abstract class DatabaseNode extends GraphNode<
    * instead.
    *
    * @param request - The execution request carrying resolved credentials and the optional `value` input.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns The result rows under `result` (and `rows`), plus `rowCount` where the driver reports affected rows.
    * @throws {GraphExecutionError} with code `GRAPH_DATABASE_SQL_REQUIRED` when no `sql` is configured,
    *   `GRAPH_DATABASE_CONNECTION_REQUIRED` when host, database, or username is blank,
@@ -139,7 +146,8 @@ export abstract class DatabaseNode extends GraphNode<
    *   `GRAPH_DATABASE_QUERY_FAILED` when adapter setup or the query itself fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<DatabaseNodeInput>
+    request: GraphNodeExecutionRequest<DatabaseNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const nodeName = this.constructor.name;
     const sql = this.sql?.trim();
@@ -158,10 +166,15 @@ export abstract class DatabaseNode extends GraphNode<
         "GRAPH_DATABASE_CONNECTION_REQUIRED"
       );
     }
-    const password = resolveCredentialSecret(
-      request.credentials,
-      this.credentialType,
-      false,
+    const password = credentialSecret(
+      await resolveNodeCredential(
+        context,
+        request.credentials,
+        this.credentialType,
+        false,
+        nodeName
+      ),
+      ["password", "secret", "token"],
       nodeName
     );
     const parameters =
@@ -181,13 +194,13 @@ export abstract class DatabaseNode extends GraphNode<
       ),
       alias
     );
-    const context = new Context();
+    const adapterContext = new Context();
     try {
-      await adapter.initialize(context);
+      await adapter.initialize(adapterContext);
       const raw = await adapter.raw<unknown, true>(
         { query: sql, values: parameters },
         true,
-        context
+        adapterContext
       );
       const { rows, rowCount } = normalizeDatabaseResult(raw);
       return { result: rows, rows, rowCount };
@@ -248,6 +261,18 @@ export abstract class DatabaseNode extends GraphNode<
   })
   @input({ handle: "ssl", userControlled: true })
   ssl: boolean = false;
+
+  /**
+   * Accept self-signed certificates for Postgres TLS. Defaults to `false`,
+   * which verifies the server certificate (`rejectUnauthorized: true`); only
+   * enable this for a known development database.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.storage.common.fields.acceptSelfSigned.label",
+    type: "boolean",
+  })
+  @input({ handle: "acceptSelfSigned", userControlled: true })
+  acceptSelfSigned: boolean = false;
 
   /** SQL statement to execute. */
   @required()

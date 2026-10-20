@@ -2,8 +2,8 @@
  * @module as-graph/nodes/devops/jwt
  * @summary JWT DevOps node declaration (Stage 3a; `core.devops.jwt`).
  * @description JWT — sign, verify, or decode a JSON Web Token. `sign`
- * requires the `jwt` credential (resolved through a `GRAPH_CREDENTIAL_*`
- * environment variable) plus `claims` (a JSON object, or the `value` input);
+ * requires the `jwt` credential (resolved through the ctx-bound node credential
+ * resolver) plus `claims` (a JSON object, or the `value` input);
  * the token expires after `expiry` (default `1h`). `verify` uses the
  * `jwt` credential when present, or a `verifyUrl` for remote JWKS-style
  * verification — at least one must be configured; `clockToleranceSeconds`
@@ -20,6 +20,7 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
   decodeJwtPayload,
   sign,
@@ -30,7 +31,7 @@ import {
   asNonEmptyString,
   asNumber,
   asRecord,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 
 /** Operation the node performs. */
@@ -98,12 +99,14 @@ export class JwtNode extends GraphNode<JwtNodeInput, JwtNodeOutput> {
   /**
    * Executes the configured JWT operation.
    *
-   * @param request - Execution request carrying the credential secrets; the `jwt` credential is resolved via `resolveCredentialSecret` (`sign` requires it, `verify` uses it or `verifyUrl`).
+   * @param request - Execution request carrying the credential secrets; the `jwt` credential is resolved via `resolveNodeCredential` (`sign` requires it, `verify` uses it or `verifyUrl`).
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values: `sign` resolves to the signed token (also on `token`); `verify`/`decode` to the payload (also on `payload`).
    * @throws {GraphExecutionError} with codes `GRAPH_JWT_TOKEN_REQUIRED` (missing token), `GRAPH_JWT_CLAIMS_REQUIRED`/`GRAPH_JWT_INVALID_CLAIMS` (sign claims problems), `GRAPH_JWT_VERIFICATION_NOT_CONFIGURED` (verify without secret or `verifyUrl`), or `GRAPH_JWT_OPERATION_FAILED` when the crypto call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<JwtNodeInput>
+    request: GraphNodeExecutionRequest<JwtNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
@@ -120,7 +123,8 @@ export class JwtNode extends GraphNode<JwtNodeInput, JwtNodeOutput> {
     }
     try {
       if (operation === "sign") {
-        const secret = resolveCredentialSecret(
+        const secret = await resolveNodeCredential(
+          context,
           request.credentials,
           "jwt",
           true,
@@ -135,7 +139,8 @@ export class JwtNode extends GraphNode<JwtNodeInput, JwtNodeOutput> {
         return { result: signed, token: signed };
       }
       if (operation === "verify") {
-        const secret = resolveCredentialSecret(
+        const secret = await resolveNodeCredential(
+          context,
           request.credentials,
           "jwt",
           false,
@@ -149,7 +154,10 @@ export class JwtNode extends GraphNode<JwtNodeInput, JwtNodeOutput> {
           );
         }
         const payload = await verify(token as string, {
-          secret,
+          secret:
+            typeof secret === "string"
+              ? secret
+              : asNonEmptyString(secret?.["secret"]),
           verifyUrl,
           clockToleranceSeconds: asNumber(this.clockToleranceSeconds),
         });

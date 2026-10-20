@@ -28,9 +28,47 @@ import {
 
 jest.setTimeout(90000);
 
+interface DataSourceOptionsProbe {
+  dataSourceOptions(
+    host: string,
+    port: number,
+    database: string,
+    username: string,
+    password: string | undefined
+  ): { ssl?: unknown };
+}
+
+function postgresOptions(parameters: Record<string, unknown>) {
+  const node = PostgresNode.instantiate(parameters) as unknown as DataSourceOptionsProbe;
+  return node.dataSourceOptions("db.example.test", 5432, "app", "user", "pass");
+}
+
+describe("core.storage.postgres TLS posture (SAA-1044 F3)", () => {
+  it("verifies the server certificate by default when ssl is enabled", () => {
+    const options = postgresOptions({ ssl: true });
+    expect(options.ssl).toEqual({ rejectUnauthorized: true });
+  });
+
+  it("rejects self-signed certificates unless acceptSelfSigned is explicitly set", () => {
+    expect(postgresOptions({ ssl: true, acceptSelfSigned: true }).ssl).toEqual({
+      rejectUnauthorized: false,
+    });
+    expect(
+      postgresOptions({ ssl: true, acceptSelfSigned: false }).ssl
+    ).toEqual({ rejectUnauthorized: true });
+  });
+
+  it("leaves TLS disabled when ssl is off, even with acceptSelfSigned", () => {
+    expect(postgresOptions({ ssl: false }).ssl).toBe(false);
+    expect(
+      postgresOptions({ ssl: false, acceptSelfSigned: true }).ssl
+    ).toBe(false);
+  });
+});
+
 describe("core.storage.postgres (real Postgres)", () => {
   const kind = "core.storage.postgres";
-  const envName = "GRAPH_CREDENTIAL_SAA1032_PG";
+  const envName = "it-saa1032-PG";
   const table = uniqueName("saa1032_pg").replace(/-/g, "_");
   const credentials = credential(envName, "postgres");
   const parameters = {
@@ -148,7 +186,7 @@ describe("core.storage.postgres (real Postgres)", () => {
 
 describe("core.storage.mySql (real MySQL)", () => {
   const kind = "core.storage.mySql";
-  const envName = "GRAPH_CREDENTIAL_SAA1032_MYSQL";
+  const envName = "it-saa1032-MYSQL";
   const table = uniqueName("saa1032_mysql").replace(/-/g, "_");
   const credentials = credential(envName, "mysql");
   const parameters = {
@@ -234,7 +272,7 @@ describe("core.storage.mySql (real MySQL)", () => {
 
 describe("core.storage.microsoftSql (real SQL Server)", () => {
   const kind = "core.storage.microsoftSql";
-  const envName = "GRAPH_CREDENTIAL_SAA1032_MSSQL";
+  const envName = "it-saa1032-MSSQL";
   const table = uniqueName("saa1032_mssql").replace(/-/g, "_");
   const credentials = credential(envName, "mssql");
   const parameters = {

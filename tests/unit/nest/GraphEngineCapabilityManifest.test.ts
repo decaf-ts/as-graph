@@ -391,7 +391,12 @@ describe("GraphEngineCapabilityManifest (SAA-197 C20)", () => {
         GraphExecutionBackendRegistry.list()
       );
 
+      // `detail` is a reviewed static allowlist (asserted below), so the
+      // exposure scan covers every other served string. The reviewed mastra
+      // detail legitimately names `tokenCostControl`, which would otherwise
+      // trip the generic "token" substring rule.
       const haystack = collectStrings(manifest)
+        .filter((value) => !REVIEWED_DETAILS.has(value))
         .join("\n")
         .toLowerCase();
       for (const forbidden of FORBIDDEN_SUBSTRINGS) {

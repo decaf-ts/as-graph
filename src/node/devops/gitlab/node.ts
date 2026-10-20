@@ -2,14 +2,14 @@
  * @module as-graph/nodes/devops/gitlab
  * @summary GitLab DevOps node declaration (Stage 3b; `core.devops.gitlab`).
  * @description GitLab — project lookup, issue listing/creation/commenting, and
- * merge-request listing through the Decaf `GitlabService`. The `gitlab`
- * credential (a bare personal-access token, resolved through a
- * `GRAPH_CREDENTIAL_*` environment variable) is optional; public projects can
+ * merge-request listing through the Decaf `GitlabNodeService`. The `gitlab`
+ * credential (a bare personal-access token, resolved through the ctx-bound
+ * node credential resolver) is optional; public projects can
  * be read without it. `projectId` scopes every operation; `getProject` and
  * unknown operations (falling back to `getProject`) only need it, while
  * `createIssue` requires a `title` (description falls back to the `value`
  * input) and `commentIssue` requires an issue `iid` and `body`. A throwaway
- * `GitlabService` is initialized per execution and shut down in a `finally`
+ * `GitlabNodeService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -21,11 +21,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { GitlabService } from "@decaf-ts/integrations/devops/gitlab";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GitlabNodeService } from "@decaf-ts/integrations/devops/gitlab";
 import {
   asNumber,
   asStringArray,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialToken } from "../../credentials";
 
@@ -61,7 +62,7 @@ const OPERATIONS: GitlabOperation[] = [
 
 /**
  * GitLab node (`core.devops.gitlab`): project, issue, and merge-request
- * operations through the Decaf `GitlabService`.
+ * operations through the Decaf `GitlabNodeService`.
  */
 @node("core.devops.gitlab", {
   kind: "core.devops.gitlab",
@@ -81,12 +82,14 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
   /**
    * Executes the configured GitLab operation.
    *
-   * @param request - Execution request carrying the credential secrets; the optional `gitlab` token is resolved via `resolveCredentialSecret`.
+   * @param request - Execution request carrying the credential secrets; the optional `gitlab` token is resolved via `resolveNodeCredential`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for issue writes, the `iid` and `url` outputs.
    * @throws {GraphExecutionError} with codes `GRAPH_GITLAB_OPERATION_REQUIRED` (no operation configured), `GRAPH_GITLAB_TITLE_REQUIRED`/`GRAPH_GITLAB_COMMENT_REQUIRED` (missing per-operation inputs), or `GRAPH_GITLAB_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<GitlabNodeInput>
+    request: GraphNodeExecutionRequest<GitlabNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -97,15 +100,16 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "getProject";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "gitlab",
       false,
       "GitLab"
     );
-    const service = new GitlabService();
+    const service = new GitlabNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialToken(secret, "GitLab"),
         projectId: this.projectId,
         baseUrl: this.baseUrl,

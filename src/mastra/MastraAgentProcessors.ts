@@ -299,6 +299,7 @@ async function modelSelectionOptionsOf(
       ...(typeof choice["name"] === "string" ? { name: choice["name"] } : {}),
     });
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { choices: _choices, ...rest } = options;
   const model = await classifierModelOf(adapter, resolveModel, node.id);
   return { ...rest, model, choices: resolvedChoices };
@@ -330,9 +331,9 @@ export async function mastraProcessorInstanceOf(
       const processorType = parameters["processorType"];
       if (
         typeof processorType !== "string" ||
-        !(
-          MASTRA_INPUT_PROCESSOR_TYPES as readonly string[]
-        ).includes(processorType)
+        !(MASTRA_INPUT_PROCESSOR_TYPES as readonly string[]).includes(
+          processorType
+        )
       ) {
         throw new GraphExecutionError(
           `Input-processor node '${node.id}' declares unknown processor type '${String(processorType)}'`,
@@ -346,22 +347,38 @@ export async function mastraProcessorInstanceOf(
         case "systemPromptScrubber":
           return new SystemPromptScrubber({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "languageDetector":
           return new LanguageDetector({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "piiDetector":
           return new PIIDetector({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "promptInjectionDetector":
           return new PromptInjectionDetector({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "tokenCostControl": {
           const maxCost = options["maxCost"];
@@ -399,9 +416,9 @@ export async function mastraProcessorInstanceOf(
       const processorType = parameters["processorType"];
       if (
         typeof processorType !== "string" ||
-        !(
-          MASTRA_OUTPUT_PROCESSOR_TYPES as readonly string[]
-        ).includes(processorType)
+        !(MASTRA_OUTPUT_PROCESSOR_TYPES as readonly string[]).includes(
+          processorType
+        )
       ) {
         throw new GraphExecutionError(
           `Output-processor node '${node.id}' declares unknown processor type '${String(processorType)}'`,
@@ -415,7 +432,9 @@ export async function mastraProcessorInstanceOf(
         case "toolCallFilter":
           return new ToolCallFilter(options as never);
         case "regexFilter":
-          return new RegexFilterProcessor(regexRulesOf(options, node.id) as never);
+          return new RegexFilterProcessor(
+            regexRulesOf(options, node.id) as never
+          );
         case "responseCache":
           return new ResponseCache(options as never);
         case "batchParts":
@@ -474,17 +493,29 @@ export async function mastraProcessorInstanceOf(
         case "moderation":
           return new ModerationProcessor({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "piiDetector":
           return new PIIDetector({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "promptInjectionDetector":
           return new PromptInjectionDetector({
             ...options,
-            model: (await processorModelOf(adapter, resolveModel, node.id)) as never,
+            model: (await processorModelOf(
+              adapter,
+              resolveModel,
+              node.id
+            )) as never,
           } as never);
         case "regexFilter":
           return new RegexFilterProcessor({

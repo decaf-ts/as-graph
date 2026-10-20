@@ -70,6 +70,17 @@
       },
       "default": "./lib/esm/mastra/index.js"
     },
+    "./mastra/nodes": {
+      "import": {
+        "types": "./lib/types/mastra/nodes/index.d.mts",
+        "default": "./lib/esm/mastra/nodes/index.js"
+      },
+      "require": {
+        "types": "./lib/types/mastra/nodes/index.d.cts",
+        "default": "./lib/cjs/mastra/nodes/index.cjs"
+      },
+      "default": "./lib/esm/mastra/nodes/index.js"
+    },
     "./dagster": {
       "import": {
         "types": "./lib/types/dagster/index.d.mts",
@@ -123,8 +134,8 @@
     "test:dist": "TEST_TARGET=lib npm run test:all && TEST_TARGET=dist npm run test:all",
     "test:circular": "dpdm -T --no-warning --no-tree ./src/index.ts",
     "prepare-it-tests": "bash scripts/prepare-it-tests.sh",
-    "teardown-it-tests": "bash tests/integration/dagster/run.sh down",
-    "coverage": "rimraf ./workdocs/reports/data/*.json && npm run test:all -- --coverage --config=./workdocs/reports/jest.coverage.config.cjs",
+    "teardown-it-tests": "bash scripts/teardown-it-tests.sh",
+    "coverage": "rimraf ./workdocs/reports/data/*.json && NODE_OPTIONS=--max-old-space-size=8192 npm run test:all -- --coverage --config=./workdocs/reports/jest.coverage.config.cjs --maxWorkers=6",
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "prepare-pr": "npm run lint-fix && npm run build:prod && npm run coverage && npm run docs",
@@ -239,8 +250,8 @@
     }
   },
   "optionalDependencies": {
-    "mysql2": "^3.14.0",
     "mssql": "^11.0.1",
+    "mysql2": "^3.14.0",
     "pg": "^8.16.3"
   }
 }

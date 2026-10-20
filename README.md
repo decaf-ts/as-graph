@@ -80,10 +80,13 @@ src/
 │   │   └── snapshot.ts   # frontend-safe execution snapshots
 │   └── ui/               # framework-neutral view models for the graph UI
 ├── node/       # built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
-│               # (triggers, flow, utility, loops, agents, boundary input/output value nodes)
-├── engine/     # execution engine (planning, validation, auth, loops, pinning, runs, store, catalog)
+│               # (triggers, flow, data, io, storage, devops, comms, utility, agents, boundary)
+├── engine/     # execution engine (planning, validation, auth, credentials, loops, pinning, runs, store, catalog)
 ├── nest/       # NestJS HTTP/SSE wiring for the engine
 ├── ram/        # adapter-backed run/run-event persistence (RamGraphRunStore, RamGraphRunEventStore)
+├── mastra/     # Mastra execution backend (mastra/nodes/: the mastra-only node-kind registry)
+├── typeorm/    # durable Postgres adapter factory for the as-graph decaf tables
+├── dagster/    # Dagster execution backend (host-injected DagsterClient port)
 ├── assets/     # locale JSON for @uielement strings (i18n/en.json, shipped via package files)
 └── log/        # run-log channel
 ```
@@ -151,6 +154,7 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: `GraphRunModel`/`GraphRunEventModel`/`GraphValueModel` and their `@repository()` classes, the `GraphNodeRepository` node-kind rows, the `RamGraphRunStore`/`RamGraphRunEventStore` stores, and the `createRamGraphAdapter` helper |
 | `@decaf-ts/as-graph/typeorm` | Durable production persistence: `createTypeormGraphAdapter({ dataSource })` — a `@decaf-ts/for-typeorm` Postgres adapter factory for the five as-graph decaf tables plus the mastra-layer decaf models (flavoured for the durable lane, `jsonb`-pinned structured columns, `synchronize: false`, bootstrap-owned DDL). See [Durable Postgres lane](#durable-postgres-lane-decaf-tsas-graphtypeorm) |
 | `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract), executing the RAG/sandbox kinds for real through `MastraRagStepHandlers` (fail-closed `GRAPH_MASTRA_RAG_UNAVAILABLE`/`GRAPH_MASTRA_EMBEDDING_UNAVAILABLE`/`GRAPH_MASTRA_SANDBOX_UNAVAILABLE`) and serving MCP deliveries behind the run-scoped C6 `MastraMcpDeliveryGuard` |
+| `@decaf-ts/as-graph/mastra/nodes` | Mastra-only node-kind registry (SAA-1141): the authoritative list of `core.agent[.*]` kinds, each paired with its declaration class and the step-handler factory that owns it. `createMastraNodeStepHandlers` composes the backend's registered handler set from the host extension points; `auditMastraNodeCoverage` / `assertMastraNodeCoverage` prove zero missing implementations |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
 
 The `exports` map in `package.json` is:
@@ -187,6 +191,11 @@ The `exports` map in `package.json` is:
       "import": { "types": "./lib/types/mastra/index.d.mts", "default": "./lib/esm/mastra/index.js" },
       "require": { "types": "./lib/types/mastra/index.d.cts", "default": "./lib/cjs/mastra/index.cjs" },
       "default": "./lib/esm/mastra/index.js"
+    },
+    "./mastra/nodes": {
+      "import": { "types": "./lib/types/mastra/nodes/index.d.mts", "default": "./lib/esm/mastra/nodes/index.js" },
+      "require": { "types": "./lib/types/mastra/nodes/index.d.cts", "default": "./lib/cjs/mastra/nodes/index.cjs" },
+      "default": "./lib/esm/mastra/nodes/index.js"
     },
     "./dagster": {
       "import": { "types": "./lib/types/dagster/index.d.mts", "default": "./lib/esm/dagster/index.js" },
@@ -301,9 +310,12 @@ The built-in kinds are declared one folder per node under
 | Agent | `core.agent` (the agent node) and its `core.agent.*` family kinds: `core.agent.tool|toolSelector` (tools), `core.agent.hook|toolDeny|delegationHook` (hooks), `core.agent.skill|skillSelector` (skills), `core.agent.sandbox` (sandbox), `core.agent.scorer|scorerSelector` (scorers), `core.agent.memory|memorySelector` (memory), `core.agent.embedding|vectorStore|retriever|rerank|chunking` (RAG), `core.agent.chain.basic|qa|summarization` (RAG chains), `core.agent.inputProcessor|outputProcessor|guardrail|structuredOutputParser|informationExtractor|langchainCode` (processors), `core.agent.hitl` (human-in-the-loop), `core.agent.voice` (voice), `core.agent.trigger.mcp|slack|discord|telegram|teams` (triggers), `core.agent.response.slack|discord|telegram|teams` (channel responses). Every `core.agent[.*]` kind requires the mastra engine — the general (local) engine fails closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` |
 | Boundary | `graph-input-value-node` (`GraphNode<void, …>` — reusable value node whose single `value` output may feed multiple targets), `graph-output-value-node` (`GraphNode<…, void>` — terminal sink whose `value` input receives the workflow result; it has **no output port** — the engine captures workflow outputs from the `$workflow` boundary edges into it) |
 
-Storage, DevOps, Comms, and credential-bearing IO kinds resolve their credentials at execution time from environment variables named
-`GRAPH_CREDENTIAL_*`. A node's `credentialRef` parameter holds the environment variable name (or a
-`{ credentialId, credentialType }` reference); secrets are never stored in workflow documents. The
+Storage, DevOps, Comms, and credential-bearing IO kinds resolve their credentials at execution time through the engine's ctx-bound
+`GraphNodeCredentialResolver` (`GraphExecutionEngine.nodeCredentials`), backed by the `@decaf-ts/integrations` credential and
+secret services. A node's `credentialRef` parameter holds a `{ credentialId, credentialType }` reference; the resolver loads the
+credential record, validates its type, enabled state and expiry, then retrieves the secret by `secretName` through the model-backed
+or filesystem-backed secret service. A missing/unconfigured resolver fails closed with `GRAPH_CREDENTIAL_SERVICE_UNAVAILABLE` and an
+unsupported provider with `GRAPH_CREDENTIAL_PROVIDER_UNSUPPORTED`; secrets are never stored in workflow documents. The
 PostgreSQL, MySQL, and Microsoft SQL kinds require the matching TypeORM driver (`pg`, `mysql2`, `mssql`), all three declared as optional dependencies. The Comms, DevOps, and IO kinds delegate to the service classes in `@decaf-ts/integrations` where applicable (`comms/{slack,telegram,teams,gmail,email}`, `devops/{github,gitlab}`, `core.devops.ftp` via `@decaf-ts/integrations/sftp`, `io/{google-sheets,airtable,graphql}`); `core.devops.crypto` and `core.devops.jwt` use `@decaf-ts/crypto`, `core.devops.executeCommand` runs a local `child_process`, and `core.io.spreadsheetFile` is local parsing/writing with no network service.
 
 There is no structural `parallel` node kind: the graph itself parallelizes on multiple connections
@@ -561,7 +573,10 @@ order), invokes the resolved agent with the node's `prompt` input, and projects 
 node's `response`/`actions` outputs. When none of the three is configured the step fails closed with
 `GRAPH_MASTRA_AGENT_UNAVAILABLE` instead of returning a fabricated result; the `core.agent.*` family
 kinds resolve their configuration into resource descriptors through the default handler set,
-overridden for the RAG and sandbox kinds by the real execution handlers below. The
+overridden for the RAG and sandbox kinds by the real execution handlers below. Every mastra-only
+step handler is composed through the `@decaf-ts/as-graph/mastra/nodes` registry
+(`createMastraNodeStepHandlers`), which filters the host options to the mastra-only kinds and
+proves zero missing implementations with `auditMastraNodeCoverage` / `assertMastraNodeCoverage`. The
 general (local) engine never runs the mastra AI family: any `core.agent[.*]` node reaching it fails
 closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND`.
 
@@ -1411,7 +1426,7 @@ host-injected `DagsterClient` built from `DAGSTER_GRAPHQL_URL`. Provision the pi
 (Docker; Dagster `1.13.25`) with the integration harness:
 
 ```bash
-# as-graph: boot + seed the pinned gateway and persist its GraphQL URL
+# as-graph: boot the integration service matrix + the pinned gateway (its GraphQL URL is persisted to the it-env file)
 npm run prepare-it-tests                      # publishes the gateway at http://127.0.0.1:3300/graphql
 DAGSTER_GRAPHQL_URL=http://127.0.0.1:3300/graphql npm run start:backend:dagster
 npm run teardown-it-tests                     # when done
@@ -1448,7 +1463,9 @@ with an empty seed set answers `501` (`NOT_SUPPORTED`). To run against an alread
 
 The dagster suite needs the gateway fixture (`prepare-it-tests`) and Docker; it skips honestly when
 no gateway is prepared. The standalone-binary boot test needs the `lib/cjs` build and skips when it
-is absent.
+is absent. All integration suites resolve their live endpoints from the service matrix booted by
+`npm run prepare-it-tests` (see [Integration service matrix](#integration-service-matrix)); absent
+infra is skipped honestly rather than faked.
 
 #### Scripts
 
@@ -1460,7 +1477,7 @@ is absent.
 | `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |
 | `npm run test:integration:standard` / `:mastra` / `:dagster` | Run one engine variant's integration suite |
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
-| `npm run prepare-it-tests` / `teardown-it-tests` | Provision / stop the pinned Dagster gateway fixture |
+| `npm run prepare-it-tests` / `teardown-it-tests` | Boot / stop the integration service matrix (`docker/tests-compose.yml`, 11 services) plus the pinned Dagster gateway fixture — see [Integration service matrix](#integration-service-matrix) |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
 | `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so the file stays excluded from the default Jest config and runs first in `test:all` (and therefore in `test`, `test:dist`, `coverage`, `prepare-pr`, and `prepare-release`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
@@ -1472,6 +1489,41 @@ is absent.
 | `npm run docs` | Build the generated JSDoc site into `docs/` |
 | `npm run uml` / `drawings` | Render `workdocs/uml/*.puml` and `workdocs/drawings/*.drawio` into `workdocs/resources` |
 | `repo:readme` | Regenerate `README.md` from `workdocs/Readme.md` |
+
+#### Integration service matrix
+
+The integration suites and `npm run coverage` run against the
+production-grade service matrix booted by `npm run prepare-it-tests`
+(SAA-1142):
+
+- **Compose file:** `docker/tests-compose.yml` (compose project
+  `as-graph-it`), 11 services — Postgres 16, PGVector (pg 17), Apache AGE
+  (pg 17), MySQL 8, SQL Server 2022, Redis, MinIO (S3), fake-gcs-server
+  (GCS), Azurite (Azure Blob), SFTP (atmoz/sftp), and Mailpit (SMTP sink) —
+  plus the pinned Dagster gateway fixture built by `tests/integration/dagster`.
+- **Contract:** every endpoint is probed before the script succeeds, and the
+  resolved endpoints are written to the git-ignored
+  `var/as-graph-it/.it-env.json`, which `tests/integration/it-env.setup.cjs`
+  loads for every Jest run (without overriding a value the caller already
+  exported). The Dagster gateway is published at
+  `http://127.0.0.1:3300/graphql` on a plain host
+  (`http://127.0.0.1:3000/graphql` inside a containerized runner).
+- **Knobs:** `AS_GRAPH_IT_HOST` overrides the service host (a containerized
+  runner defaults to the Docker bridge gateway `172.17.0.1`, a plain host to
+  `127.0.0.1`), and `AS_GRAPH_IT_SKIP_BUILD=1` reuses an existing `lib` build
+  for a fast infra-only re-prepare.
+- **Teardown:** `npm run teardown-it-tests` stops the gateway and the service
+  matrix, keeping the named volumes so the next prepare is fast; pass
+  `--volumes` for a full reset of service state.
+- **Honest skips:** without the booted matrix the live suites skip honestly.
+  Suites needing a real external SaaS credential (GitHub, GitLab, Airtable,
+  Gmail, Slack, Teams, Telegram, Google Sheets) stay skipped until that
+  credential is configured — the harness never fabricates one and never
+  starts a vendor stub in place of live infrastructure, and each skip title
+  names the exact missing env var.
+
+Docker (with a reachable daemon) and devDependencies are the only
+prerequisites.
 
 #### Test environment prerequisites
 

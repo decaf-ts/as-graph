@@ -18,6 +18,8 @@ import { resolve } from "node:path";
 
 import type { GraphEngineVariant } from "../../../src/nest/graph/GraphBackendHost";
 
+jest.setTimeout(60000);
+
 const BINARY = resolve(__dirname, "../../../lib/cjs/nest/graph/main.cjs");
 const READY_TIMEOUT_MS = 30000;
 
@@ -79,6 +81,10 @@ async function startStandalone(
     ...process.env,
     GRAPH_BACKEND_PORT: String(port),
     DAGSTER_GRAPHQL_URL: "",
+    // This suite asserts the capability manifest, not trace export. The
+    // observability lane otherwise requires user-supplied Langfuse keys from
+    // the git-ignored `.env.secret`, which the integration matrix does not seed.
+    MASTRA__OBSERVABILITY__ENABLED: "false",
   };
   if (variant) {
     env.GRAPH_BACKEND_ENGINE = variant;

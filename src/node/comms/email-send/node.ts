@@ -2,15 +2,15 @@
  * @module as-graph/nodes/comms/email-send
  * @summary Email Send Comms node declaration (Stage 3b; `core.comms.emailSend`).
  * @description Email Send — send mail or list an inbox through the Decaf
- * `EmailService`, which multiplexes SMTP, Microsoft Graph, and IMAP. The
- * `email` credential (resolved through a `GRAPH_CREDENTIAL_*` environment
- * variable) is a bare token or a JSON object whose fields (`provider`, `host`,
+ * `EmailNodeService`, which multiplexes SMTP, Microsoft Graph, and IMAP. The
+ * `email` credential (resolved through the ctx-bound node credential resolver)
+ * is a bare token or a JSON object whose fields (`provider`, `host`,
  * `port`, `secure`, `username`, `password`, `from`, `token`, `graphBaseUrl`)
  * fill any service config the node does not set explicitly — node config
  * always wins. `send` requires `to` and `subject` (text body falls back to the
  * `value` input); `listInbox` and `listImap` read a mailbox with optional
  * `limit`, `since`, and subject filter. An unknown `operation` silently falls
- * back to `send`. A throwaway `EmailService` is initialized per execution and
+ * back to `send`. A throwaway `EmailNodeService` is initialized per execution and
  * shut down in a `finally` block.
  */
 import { model, required } from "@decaf-ts/decorator-validation";
@@ -22,14 +22,15 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
-  EmailService,
+  EmailNodeService,
   type EmailProvider,
 } from "@decaf-ts/integrations/comms/email";
 import {
   asBoolean,
   asNumber,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialRecord } from "../../credentials";
 
@@ -52,7 +53,7 @@ const OPERATIONS: EmailSendOperation[] = ["send", "listInbox", "listImap"];
 
 /**
  * Email Send node (`core.comms.emailSend`): multi-provider mail send and inbox
- * listing through the Decaf `EmailService`.
+ * listing through the Decaf `EmailNodeService`.
  *
  * SMTP/Graph credentials and connection settings may live in the `email`
  * credential JSON so secrets never have to be written into node config.
@@ -79,11 +80,13 @@ export class EmailSendNode extends GraphNode<
    * Executes the configured email operation.
    *
    * @param request - Execution request carrying the credential secrets; the `email` credential (bare token or JSON record) is merged under the node config.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for `send`, the `messageId` output.
    * @throws {GraphExecutionError} with codes `GRAPH_EMAIL_OPERATION_REQUIRED` (no operation configured), `GRAPH_EMAIL_MESSAGE_REQUIRED` (missing `to`/`subject`), or `GRAPH_EMAIL_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<EmailSendNodeInput>
+    request: GraphNodeExecutionRequest<EmailSendNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -94,7 +97,8 @@ export class EmailSendNode extends GraphNode<
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "send";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "email",
       false,
@@ -103,9 +107,9 @@ export class EmailSendNode extends GraphNode<
     const credentials = credentialRecord(secret, "Email");
     const rawToken =
       secret && !credentials ? secret : undefined;
-    const service = new EmailService();
+    const service = new EmailNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         provider:
           this.provider ??
           (credentials?.["provider"] as EmailProvider | undefined),

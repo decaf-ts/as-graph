@@ -41,6 +41,10 @@ import {
   GraphExecutionStatus,
 } from "../../shared/graph";
 import { GraphExecutionError, GraphRunCancelledError } from "../errors";
+import {
+  GraphNodeCredentialResolver,
+  type GraphNodeCredentialServices,
+} from "../credentials/GraphNodeCredentials";
 import type {
   GraphExecutionOptions,
   GraphExecutionResult,
@@ -230,6 +234,13 @@ export interface GraphExecutionEngineConfig {
   onEngineCreated?: (
     engine: GraphExecutionEngine
   ) => void | Promise<void>;
+  /**
+   * Ctx-bound credential services every node kind resolves its credential
+   * references through. The host supplies Phase A `*NodeService` instances
+   * booted with explicit configuration; node execution never reads secrets
+   * from the Environment.
+   */
+  nodeCredentials?: GraphNodeCredentialServices;
 }
 
 /**
@@ -254,6 +265,8 @@ export interface GraphExecutionEngineClient {
   authValidator: GraphAuthValidator;
   /** Optional pluggable code sandbox evaluator. */
   codeSandboxEvaluator?: CodeSandboxEvaluator;
+  /** Ctx-bound credential resolver, when the host configured credential services. */
+  nodeCredentials?: GraphNodeCredentialResolver;
 }
 
 /**
@@ -344,6 +357,13 @@ export class GraphExecutionEngine
       ...(config.codeSandboxEvaluator
         ? { codeSandboxEvaluator: config.codeSandboxEvaluator }
         : {}),
+      ...(config.nodeCredentials
+        ? {
+            nodeCredentials: new GraphNodeCredentialResolver(
+              config.nodeCredentials
+            ),
+          }
+        : {}),
     };
     this._config = config;
     this._client = client;
@@ -403,6 +423,17 @@ export class GraphExecutionEngine
   /** Pluggable code sandbox evaluator (§22.4); may be undefined. */
   get codeSandboxEvaluator(): CodeSandboxEvaluator | undefined {
     return this.client.codeSandboxEvaluator;
+  }
+
+  /**
+   * The ctx-bound credential resolver configured by the host.
+   *
+   * Nodes resolve credential references only through this resolver, which
+   * forwards the execution context to the namespaced `CredentialService` and
+   * the model/filesystem secret services, so RLS scoping is enforced.
+   */
+  get nodeCredentials(): GraphNodeCredentialResolver | undefined {
+    return this.client.nodeCredentials;
   }
 
   /** Lazily-bound data-table repository backing {@linkcode GraphExecutionEngine.dataTableStore}. */

@@ -8,8 +8,8 @@
  * `url`, `copy`) against a shared `key`/`destination`/`prefix` vocabulary;
  * object contents flow through the `data` config or the `value` input and are
  * encoded either as UTF-8 text or Base64 (`BlobEncoding`). Credentials are
- * mandatory and resolve through `GRAPH_CREDENTIAL_*` environment variables;
- * leaves parse them into their provider-specific service configuration. The
+ * mandatory and resolve through the ctx-bound node credential resolver; leaves
+ * parse them into their provider-specific service configuration. The
  * built service is always shut down in `finally` so no store state survives
  * the run, and every failure is surfaced as a
  * `GraphExecutionError` carrying the operation and error code.
@@ -25,11 +25,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
   asNonEmptyString,
   asNumber,
   asRecord,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../support";
 
 /** Blob operations the node can run. */
@@ -124,7 +125,7 @@ export abstract class BlobNode extends GraphNode<
    * @throws {GraphExecutionError} with code `GRAPH_CREDENTIAL_INVALID_FORMAT` when the credential is required but missing or unparseable.
    */
   protected abstract createService(
-    credential: string | undefined
+    credential: string | Record<string, unknown> | undefined
   ): Promise<BlobStoreService>;
 
 /**
@@ -135,11 +136,13 @@ export abstract class BlobNode extends GraphNode<
    * `urlOperation` and `expiresInSeconds`. The service is shut down in `finally`, so no store state survives a failed run.
    *
    * @param request - The execution request carrying resolved credentials and the optional `value` input.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns The operation result under `result` (plus `value`, `contentLength`, `contentType` for `get`).
    * @throws {GraphExecutionError} with code `GRAPH_BLOB_KEY_REQUIRED` when the operation needs a key and none is configured, `GRAPH_BLOB_TARGET_KEY_REQUIRED` when `copy` lacks `targetKey`, `GRAPH_BLOB_INVALID_PAYLOAD` when the payload cannot be encoded, `GRAPH_BLOB_OPERATION_NOT_SUPPORTED` for unknown operations, `GRAPH_CREDENTIAL_*` codes from credential resolution, and `GRAPH_BLOB_OPERATION_FAILED` when the provider operation fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<BlobNodeInput>
+    request: GraphNodeExecutionRequest<BlobNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const nodeName = this.constructor.name;
     const operation = OPERATIONS.includes(this.operation)
@@ -153,7 +156,8 @@ export abstract class BlobNode extends GraphNode<
         { operation }
       );
     }
-    const credential = resolveCredentialSecret(
+    const credential = await resolveNodeCredential(
+      context,
       request.credentials,
       this.credentialType,
       false,

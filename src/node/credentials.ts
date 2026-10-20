@@ -14,16 +14,19 @@ import { asNonEmptyString, asRecord } from "./storage/support";
 /**
  * Parses a resolved secret into a credential record when it holds a JSON object.
  *
- * @param secret - The credential secret string (may be undefined).
+ * @param secret - The resolved credential secret (bare string or JSON record, may be undefined).
  * @param nodeName - Human-readable node name used in error messages.
  * @returns The parsed record, or `undefined` when the secret is absent or not JSON-shaped.
  * @throws {GraphExecutionError} with code `GRAPH_CREDENTIAL_INVALID_FORMAT` when the secret looks like JSON but does not parse to an object.
  */
 export function credentialRecord(
-  secret: string | undefined,
+  secret: string | Record<string, unknown> | undefined,
   nodeName: string
 ): Record<string, unknown> | undefined {
   if (!secret) return undefined;
+  if (typeof secret !== "string") {
+    return Array.isArray(secret) ? undefined : secret;
+  }
   if (!secret.trim().startsWith("{")) return undefined;
   try {
     const parsed = JSON.parse(secret);
@@ -46,31 +49,62 @@ export function credentialRecord(
  * as the `token` field only, so any other field name on a bare secret is
  * `undefined`.
  *
- * @param secret - The credential secret string (may be undefined).
+ * @param secret - The resolved credential secret (bare string or JSON record, may be undefined).
  * @param field - Field name to read from a JSON credential.
  * @param nodeName - Human-readable node name used in error messages.
  * @returns The non-empty field value, or `undefined` when absent.
  */
 export function credentialValue(
-  secret: string | undefined,
+  secret: string | Record<string, unknown> | undefined,
   field: string,
   nodeName: string
 ): string | undefined {
   const record = credentialRecord(secret, nodeName);
-  if (!record) return field === "token" ? asNonEmptyString(secret) : undefined;
+  if (!record) {
+    return field === "token" && typeof secret === "string"
+      ? asNonEmptyString(secret)
+      : undefined;
+  }
   return asNonEmptyString(record[field]);
 }
 
 /**
  * Reads the token from the credential secret (the `token` field of a JSON credential, or the bare secret itself).
  *
- * @param secret - The credential secret string (may be undefined).
+ * @param secret - The resolved credential secret (bare string or JSON record, may be undefined).
  * @param nodeName - Human-readable node name used in error messages.
  * @returns The non-empty token, or `undefined` when absent.
  */
 export function credentialToken(
-  secret: string | undefined,
+  secret: string | Record<string, unknown> | undefined,
   nodeName: string
 ): string | undefined {
   return credentialValue(secret, "token", nodeName);
+}
+
+/**
+ * Reads the first non-empty value among named fields of the credential secret.
+ *
+ * A bare string secret is returned as-is (trimmed/non-empty check applies);
+ * a JSON-object secret is searched in the given field order, so callers can
+ * express a preference chain (e.g. `privateKey`, then `key`, then `secret`).
+ *
+ * @param secret - The resolved credential secret (may be undefined).
+ * @param fields - Field name, or ordered list of field names, to read from a JSON credential.
+ * @param nodeName - Human-readable node name used in error messages.
+ * @returns The first non-empty value found, or `undefined` when absent.
+ */
+export function credentialSecret(
+  secret: string | Record<string, unknown> | undefined,
+  fields: string | string[],
+  nodeName: string
+): string | undefined {
+  if (typeof secret === "string") return asNonEmptyString(secret);
+  const record = credentialRecord(secret, nodeName);
+  if (!record) return undefined;
+  for (const field of Array.isArray(fields) ? fields : [fields]) {
+    const value = asNonEmptyString(record[field]);
+    if (value) return value;
+  }
+  return undefined;
 }

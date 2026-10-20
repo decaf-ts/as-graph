@@ -17,7 +17,7 @@ import {
 jest.setTimeout(60000);
 
 const kind = "core.devops.jwt";
-const envName = "GRAPH_CREDENTIAL_SAA1032_JWT";
+const envName = "it-saa1032-JWT";
 const secret = "saa1032-jwt-secret";
 const credentials = credential(envName, "jwt");
 const claims = { sub: "user-1", role: "admin" };
@@ -81,7 +81,7 @@ describe("core.devops.jwt (real JWT sign/verify/decode)", () => {
       {},
       credentials
     );
-    setCredential("GRAPH_CREDENTIAL_SAA1032_JWT_WRONG", "not-the-secret");
+    setCredential("it-saa1032-JWT_WRONG", "not-the-secret");
     try {
       await expect(
         runNode(
@@ -89,11 +89,11 @@ describe("core.devops.jwt (real JWT sign/verify/decode)", () => {
           kind,
           { operation: "verify", token: signed.token },
           {},
-          credential("GRAPH_CREDENTIAL_SAA1032_JWT_WRONG", "jwt")
+          credential("it-saa1032-JWT_WRONG", "jwt")
         )
       ).rejects.toMatchObject({ graphCode: "GRAPH_JWT_OPERATION_FAILED" });
     } finally {
-      clearCredentials("GRAPH_CREDENTIAL_SAA1032_JWT_WRONG");
+      clearCredentials("it-saa1032-JWT_WRONG");
     }
   });
 

@@ -49,10 +49,13 @@ src/
 │   │   └── snapshot.ts   # frontend-safe execution snapshots
 │   └── ui/               # framework-neutral view models for the graph UI
 ├── node/       # built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
-│               # (triggers, flow, utility, loops, agents, boundary input/output value nodes)
-├── engine/     # execution engine (planning, validation, auth, loops, pinning, runs, store, catalog)
+│               # (triggers, flow, data, io, storage, devops, comms, utility, agents, boundary)
+├── engine/     # execution engine (planning, validation, auth, credentials, loops, pinning, runs, store, catalog)
 ├── nest/       # NestJS HTTP/SSE wiring for the engine
 ├── ram/        # adapter-backed run/run-event persistence (RamGraphRunStore, RamGraphRunEventStore)
+├── mastra/     # Mastra execution backend (mastra/nodes/: the mastra-only node-kind registry)
+├── typeorm/    # durable Postgres adapter factory for the as-graph decaf tables
+├── dagster/    # Dagster execution backend (host-injected DagsterClient port)
 ├── assets/     # locale JSON for @uielement strings (i18n/en.json, shipped via package files)
 └── log/        # run-log channel
 ```

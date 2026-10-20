@@ -2,15 +2,15 @@
  * @module as-graph/nodes/comms/telegram
  * @summary Telegram Comms node declaration (Stage 3b; `core.comms.telegram`).
  * @description Telegram — bot messaging and updates through the Decaf
- * `TelegramService` Bot API. The `telegram` credential (a bare bot token,
- * resolved through a `GRAPH_CREDENTIAL_*` environment variable) is optional;
+ * `TelegramNodeService` Bot API. The `telegram` credential (a bare bot token,
+ * resolved through the ctx-bound node credential resolver) is optional;
  * unauthorized calls fail with the service's own Telegram API error.
  * `sendMessage` requires a `chatId` and `text` (text falls back to the `value`
  * input) and supports a parse mode, silent send/preview toggles, and
  * reply/thread targeting; `sendChatAction` requires a `chatId` and defaults to
  * the `typing` action. `getMe` and `getUpdates` need no extra inputs. An
  * unknown `operation` silently falls back to `sendMessage`. A throwaway
- * `TelegramService` is initialized per execution and shut down in a `finally`
+ * `TelegramNodeService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,10 +22,11 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { TelegramService } from "@decaf-ts/integrations/comms/telegram";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { TelegramNodeService } from "@decaf-ts/integrations/comms/telegram";
 import {
   asNumber,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialToken } from "../../credentials";
 
@@ -60,7 +61,7 @@ const OPERATIONS: TelegramOperation[] = [
 
 /**
  * Telegram node (`core.comms.telegram`): bot messaging and updates through the
- * Decaf `TelegramService`.
+ * Decaf `TelegramNodeService`.
  */
 @node("core.comms.telegram", {
   kind: "core.comms.telegram",
@@ -83,12 +84,14 @@ export class TelegramNode extends GraphNode<
   /**
    * Executes the configured Telegram operation.
    *
-   * @param request - Execution request carrying the credential secrets; the optional `telegram` bot token is resolved via `resolveCredentialSecret`.
+   * @param request - Execution request carrying the credential secrets; the optional `telegram` bot token is resolved via `resolveNodeCredential`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for `sendMessage`, the `messageId` output.
    * @throws {GraphExecutionError} with codes `GRAPH_TELEGRAM_OPERATION_REQUIRED` (no operation configured), `GRAPH_TELEGRAM_MESSAGE_REQUIRED`/`GRAPH_TELEGRAM_CHAT_REQUIRED` (missing per-operation inputs), or `GRAPH_TELEGRAM_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<TelegramNodeInput>
+    request: GraphNodeExecutionRequest<TelegramNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -99,16 +102,17 @@ export class TelegramNode extends GraphNode<
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "sendMessage";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "telegram",
       false,
       "Telegram"
     );
     const token = credentialToken(secret, "Telegram");
-    const service = new TelegramService();
+    const service = new TelegramNodeService();
     try {
-      await service.initialize({ token, baseUrl: this.baseUrl });
+      await service.boot({ token, baseUrl: this.baseUrl });
       switch (operation) {
         case "sendMessage": {
           const chatId = this.chatId;

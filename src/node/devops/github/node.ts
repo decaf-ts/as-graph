@@ -2,15 +2,15 @@
  * @module as-graph/nodes/devops/github
  * @summary GitHub DevOps node declaration (Stage 3b; `core.devops.github`).
  * @description GitHub — repository lookup, issue listing/creation/commenting,
- * and pull-request listing through the Decaf `GithubService`. The `github`
- * credential (a bare personal-access token, resolved through a
- * `GRAPH_CREDENTIAL_*` environment variable) is optional only in the sense
+ * and pull-request listing through the Decaf `GithubNodeService`. The `github`
+ * credential (a bare personal-access token, resolved through the ctx-bound
+ * node credential resolver) is optional only in the sense
  * that the service may operate on public repositories without it; tokenized
  * API access requires it. `owner` and `repo` scope every operation; `getRepo`
  * and unknown operations (falling back to `getRepo`) only need them, while
  * `createIssue` requires a `title` (body falls back to the `value` input) and
  * `commentIssue` requires an issue `number` and `body`. A throwaway
- * `GithubService` is initialized per execution and shut down in a `finally`
+ * `GithubNodeService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,11 +22,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { GithubService } from "@decaf-ts/integrations/devops/github";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GithubNodeService } from "@decaf-ts/integrations/devops/github";
 import {
   asNumber,
   asStringArray,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialToken } from "../../credentials";
 
@@ -62,7 +63,7 @@ const OPERATIONS: GithubOperation[] = [
 
 /**
  * GitHub node (`core.devops.github`): repository, issue, and pull-request
- * operations through the Decaf `GithubService`.
+ * operations through the Decaf `GithubNodeService`.
  */
 @node("core.devops.github", {
   kind: "core.devops.github",
@@ -82,12 +83,14 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
   /**
    * Executes the configured GitHub operation.
    *
-   * @param request - Execution request carrying the credential secrets; the optional `github` token is resolved via `resolveCredentialSecret`.
+   * @param request - Execution request carrying the credential secrets; the optional `github` token is resolved via `resolveNodeCredential`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for issue writes, the `number` and `url` outputs.
    * @throws {GraphExecutionError} with codes `GRAPH_GITHUB_OPERATION_REQUIRED` (no operation configured), `GRAPH_GITHUB_TITLE_REQUIRED`/`GRAPH_GITHUB_COMMENT_REQUIRED` (missing per-operation inputs), or `GRAPH_GITHUB_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<GithubNodeInput>
+    request: GraphNodeExecutionRequest<GithubNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -98,15 +101,16 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "getRepo";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "github",
       false,
       "GitHub"
     );
-    const service = new GithubService();
+    const service = new GithubNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialToken(secret, "GitHub"),
         owner: this.owner,
         repo: this.repo,

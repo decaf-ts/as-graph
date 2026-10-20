@@ -2,11 +2,14 @@
  * @module as-graph/tests/integration/graph/nodes/devops/githubGitlabNodes
  * @summary SAA-1027 Stage 3b: node→service integration coverage for the GitHub
  * and GitLab node kinds.
- * @description Both DevOps vendors run against a process-local HTTP stub that
- * implements the real service routes and records the emitted request. Reads are
- * exercised with a token present; the services allow unauthenticated reads, so
- * the suites assert the authenticated contract rather than inventing a
- * fail-closed read requirement.
+ * @description The loopback block is **contract** coverage: both DevOps vendors
+ * run against a process-local HTTP stub that implements the real service routes
+ * and records the emitted request, and it must never be reported as a live
+ * PASS. The live success path is credential-gated: GitHub needs
+ * `AS_GRAPH_IT_GITHUB_TOKEN` and `AS_GRAPH_IT_GITHUB_REPO` (`owner/repo`);
+ * GitLab needs `AS_GRAPH_IT_GITLAB_TOKEN`, `AS_GRAPH_IT_GITLAB_URL` (API base,
+ * e.g. `https://gitlab.com/api/v4`) and `AS_GRAPH_IT_GITLAB_PROJECT`. When a
+ * variable is absent the case is a SKIP naming it, not a stub-backed success.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { GithubNode } from "../../../../../src/node/devops/github/node";
@@ -18,6 +21,7 @@ import {
   setCredential,
 } from "../real-service-support";
 import { startHttpStub, type HttpStub } from "../loopback-support";
+import { credentialGatedIt, envValue } from "../credential-gated";
 
 jest.setTimeout(60000);
 
@@ -27,11 +31,11 @@ const SECRETS = {
 } as const;
 
 const CREDENTIALS = {
-  github: credential("GRAPH_CREDENTIAL_SAA1035_GITHUB", "github"),
-  gitlab: credential("GRAPH_CREDENTIAL_SAA1035_GITLAB", "gitlab"),
+  github: credential("it-saa1035-GITHUB", "github"),
+  gitlab: credential("it-saa1035-GITLAB", "gitlab"),
 } as const;
 
-describe("core.devops.* node → service integration (loopback vendors)", () => {
+describe("core.devops.* vendor contract (loopback stub; NOT a live-matrix claim)", () => {
   let http: HttpStub;
 
   beforeAll(async () => {
@@ -159,19 +163,19 @@ describe("core.devops.* node → service integration (loopback vendors)", () => 
       return { status: 404, body: { error: `unhandled ${path}` } };
     });
 
-    setCredential("GRAPH_CREDENTIAL_SAA1035_GITHUB", SECRETS.github);
-    setCredential("GRAPH_CREDENTIAL_SAA1035_GITLAB", SECRETS.gitlab);
+    setCredential("it-saa1035-GITHUB", SECRETS.github);
+    setCredential("it-saa1035-GITLAB", SECRETS.gitlab);
   });
 
   afterAll(async () => {
     clearCredentials(
-      "GRAPH_CREDENTIAL_SAA1035_GITHUB",
-      "GRAPH_CREDENTIAL_SAA1035_GITLAB"
+      "it-saa1035-GITHUB",
+      "it-saa1035-GITLAB"
     );
     await http.close();
   });
 
-  it("GitHub reads, creates, comments and lists pull requests", async () => {
+  it("contract: GitHub reads, creates, comments and lists pull requests", async () => {
     const baseUrl = `${http.baseUrl}/github`;
     const before = http.requests.length;
     const repo = await runNode(
@@ -282,7 +286,7 @@ describe("core.devops.* node → service integration (loopback vendors)", () => 
     ]);
   });
 
-  it("GitLab reads, creates, comments and lists merge requests", async () => {
+  it("contract: GitLab reads, creates, comments and lists merge requests", async () => {
     const baseUrl = `${http.baseUrl}/gitlab`;
     const before = http.requests.length;
     const project = await runNode(
@@ -385,7 +389,7 @@ describe("core.devops.* node → service integration (loopback vendors)", () => 
     ]);
   });
 
-  it("never echoes a DevOps vendor secret into a node result", async () => {
+  it("contract: never echoes a DevOps vendor secret into a node result", async () => {
     const github = await runNode(
       GithubNode,
       "core.devops.github",
@@ -414,4 +418,74 @@ describe("core.devops.* node → service integration (loopback vendors)", () => 
       expect(serialized).not.toContain(secret);
     }
   });
+});
+
+/**
+ * Live credential-gated success paths. The loopback block above is contract
+ * coverage, not live infrastructure.
+ */
+describe("core.devops.* live SaaS integration (credential-gated)", () => {
+  credentialGatedIt(
+    "live: GitHub reads a real repository",
+    ["AS_GRAPH_IT_GITHUB_TOKEN", "AS_GRAPH_IT_GITHUB_REPO"],
+    async () => {
+      const id = "it-live-GITHUB";
+      const [owner, repo] = envValue("AS_GRAPH_IT_GITHUB_REPO").split("/");
+      setCredential(id, envValue("AS_GRAPH_IT_GITHUB_TOKEN"));
+      try {
+        const result = await runNode(
+          GithubNode,
+          "core.devops.github",
+          { operation: "getRepo", owner, repo },
+          {},
+          credential(id, "github")
+        );
+        expect(result.result).toMatchObject({
+          id: expect.any(Number),
+          full_name: expect.stringContaining("/"),
+        });
+        expect(JSON.stringify(result)).not.toContain(
+          envValue("AS_GRAPH_IT_GITHUB_TOKEN")
+        );
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
+
+  credentialGatedIt(
+    "live: GitLab reads a real project",
+    [
+      "AS_GRAPH_IT_GITLAB_TOKEN",
+      "AS_GRAPH_IT_GITLAB_URL",
+      "AS_GRAPH_IT_GITLAB_PROJECT",
+    ],
+    async () => {
+      const id = "it-live-GITLAB";
+      const baseUrl = envValue("AS_GRAPH_IT_GITLAB_URL");
+      setCredential(id, envValue("AS_GRAPH_IT_GITLAB_TOKEN"));
+      try {
+        const result = await runNode(
+          GitlabNode,
+          "core.devops.gitlab",
+          {
+            operation: "getProject",
+            projectId: envValue("AS_GRAPH_IT_GITLAB_PROJECT"),
+            baseUrl,
+          },
+          {},
+          credential(id, "gitlab")
+        );
+        expect(result.result).toMatchObject({
+          id: expect.any(Number),
+          path_with_namespace: expect.any(String),
+        });
+        expect(JSON.stringify(result)).not.toContain(
+          envValue("AS_GRAPH_IT_GITLAB_TOKEN")
+        );
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
 });

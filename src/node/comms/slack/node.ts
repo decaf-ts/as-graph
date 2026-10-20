@@ -2,15 +2,15 @@
  * @module as-graph/nodes/comms/slack
  * @summary Slack Comms node declaration (Stage 3b; `core.comms.slack`).
  * @description Slack — message posting, conversation listing/lookup, and user
- * lookup through the Decaf `SlackService`. The `slack` credential (a bare bot
- * token, resolved through a `GRAPH_CREDENTIAL_*` environment variable) is
+ * lookup through the Decaf `SlackNodeService`. The `slack` credential (a bare bot
+ * token, resolved through the ctx-bound node credential resolver) is
  * optional; operations that need authorization fail with the service's own
  * Slack API error. `postMessage` requires a `channel` and `text` (text falls
  * back to the `value` input) and supports Block Kit `blocks`, threading
  * (`threadTs`, `replyBroadcast`), and unfurl toggles; `getConversation`
  * requires a `channel` and `getUser` requires a `userId`. An unknown
  * `operation` silently falls back to `postMessage`. A throwaway
- * `SlackService` is initialized per execution and shut down in a `finally`
+ * `SlackNodeService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,14 +22,15 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
-  SlackService,
+  SlackNodeService,
   type SlackChannel,
 } from "@decaf-ts/integrations/comms/slack";
 import {
   asNumber,
   asStringArray,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialToken } from "../../credentials";
 
@@ -63,7 +64,7 @@ const OPERATIONS: SlackOperation[] = [
 
 /**
  * Slack node (`core.comms.slack`): messaging and workspace lookups through the
- * Decaf `SlackService`.
+ * Decaf `SlackNodeService`.
  */
 @node("core.comms.slack", {
   kind: "core.comms.slack",
@@ -83,12 +84,14 @@ export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
   /**
    * Executes the configured Slack operation.
    *
-   * @param request - Execution request carrying the credential secrets; the optional `slack` bot token is resolved via `resolveCredentialSecret`.
+   * @param request - Execution request carrying the credential secrets; the optional `slack` bot token is resolved via `resolveNodeCredential`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for message writes/`getConversation`, the `channel` (and `ts`) outputs.
    * @throws {GraphExecutionError} with codes `GRAPH_SLACK_OPERATION_REQUIRED` (no operation configured), `GRAPH_SLACK_MESSAGE_REQUIRED`/`GRAPH_SLACK_CHANNEL_REQUIRED`/`GRAPH_SLACK_USER_REQUIRED` (missing per-operation inputs), or `GRAPH_SLACK_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<SlackNodeInput>
+    request: GraphNodeExecutionRequest<SlackNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
@@ -99,16 +102,17 @@ export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
         "GRAPH_SLACK_OPERATION_REQUIRED"
       );
     }
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "slack",
       false,
       "Slack"
     );
     const token = credentialToken(secret, "Slack");
-    const service = new SlackService();
+    const service = new SlackNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token,
         baseUrl: this.baseUrl,
       });

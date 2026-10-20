@@ -4,7 +4,7 @@
  * @description Google Cloud Storage — blob operations against a GCS bucket.
  * Operations, encoding, and teardown behaviour come from `BlobNode`. The
  * credential must be a Google service-account JSON object; it resolves through
- * a `GRAPH_CREDENTIAL_*` environment variable and is optional only when the
+ * the ctx-bound node credential resolver and is optional only when the
  * environment already provides default credentials — a configured bucket is
  * always required.
  */
@@ -12,16 +12,16 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { GcsBlobStoreService } from "@decaf-ts/integrations/blob/gcp";
+import { GcsNodeService } from "@decaf-ts/integrations/blob/gcp";
 import type { GcsBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
 
 /**
- * Google Cloud Storage blob node: object storage in a GCS bucket through `GcsBlobStoreService`.
+ * Google Cloud Storage blob node: object storage in a GCS bucket through `GcsNodeService`.
  */
 /**
- * Google Cloud Storage node; builds `GcsBlobStoreService` from the bucket, project, and service-account credential.
+ * Google Cloud Storage node; builds `GcsNodeService` from the bucket, project, and service-account credential.
  */
 @node("core.storage.googleCloudStorage", {
   kind: "core.storage.googleCloudStorage",
@@ -48,8 +48,8 @@ export class GoogleCloudStorageNode extends BlobNode {
    * @throws {GraphExecutionError} with code `GRAPH_BLOB_BUCKET_REQUIRED` when no `bucket` is configured and `GRAPH_CREDENTIAL_INVALID_FORMAT` when the credential is not a JSON object.
    */
   protected async createService(
-    credential: string | undefined
-  ): Promise<GcsBlobStoreService> {
+    credential: string | Record<string, unknown> | undefined
+  ): Promise<GcsNodeService> {
     const bucket = asNonEmptyString(this.bucket);
     if (!bucket) {
       throw new GraphExecutionError(
@@ -68,8 +68,8 @@ export class GoogleCloudStorageNode extends BlobNode {
         ? parseCredentialJson(credential, "Google Cloud Storage")
         : undefined,
     };
-    const service = new GcsBlobStoreService();
-    await service.initialize(config);
+    const service = new GcsNodeService();
+    await service.boot(config);
     return service;
   }
 

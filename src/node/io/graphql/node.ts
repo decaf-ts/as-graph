@@ -2,15 +2,15 @@
  * @module as-graph/nodes/io/graphql
  * @summary GraphQL IO node declaration (Stage 3b; `core.io.graphql`).
  * @description GraphQL — run a GraphQL query or mutation against a GraphQL
- * endpoint through the Decaf `GraphqlService`. The query document comes from
+ * endpoint through the Decaf `GraphqlNodeService`. The query document comes from
  * `query` (falling back to the `value` input); optional `variables` (an object)
  * and `operationName` are passed through. The `graphql` credential (resolved
- * through a `GRAPH_CREDENTIAL_*` environment variable) is a JSON object
+ * through the ctx-bound node credential resolver) is a JSON object
  * carrying `endpoint` and/or `token` (node config wins for `endpoint`); both
  * are optional. GraphQL-level errors (`response.errors`) are not thrown — they
  * are reported on the `errors` output alongside any partial `data`; transport
  * failures throw. An unknown `operation` silently falls back to `query`. A
- * throwaway `GraphqlService` is initialized per execution and shut down in a
+ * throwaway `GraphqlNodeService` is initialized per execution and shut down in a
  * `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,10 +22,11 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { GraphqlService } from "@decaf-ts/integrations/io/graphql";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GraphqlNodeService } from "@decaf-ts/integrations/io/graphql";
 import {
   asRecord,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
@@ -45,7 +46,7 @@ export interface GraphqlNodeOutput {
 const OPERATIONS: GraphqlOperation[] = ["query", "mutation"];
 
 /**
- * GraphQL IO node: query/mutation execution through `GraphqlService`.
+ * GraphQL IO node: query/mutation execution through `GraphqlNodeService`.
  */
 @node("core.io.graphql", {
   kind: "core.io.graphql",
@@ -69,11 +70,13 @@ export class GraphqlNode extends GraphNode<
    * Executes the configured GraphQL operation.
    *
    * @param request - Execution request carrying the credential secrets and the optional `value` query fallback.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns The response `data` on `result`; GraphQL-level errors are emitted on the `errors` output instead of throwing.
    * @throws {GraphExecutionError} with codes `GRAPH_GRAPHQL_OPERATION_REQUIRED` (no operation configured), `GRAPH_GRAPHQL_QUERY_REQUIRED` (no query document), `GRAPH_CREDENTIAL_*` codes from credential resolution, or `GRAPH_GRAPHQL_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<GraphqlNodeInput>
+    request: GraphNodeExecutionRequest<GraphqlNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -91,15 +94,16 @@ export class GraphqlNode extends GraphNode<
         "GRAPH_GRAPHQL_QUERY_REQUIRED"
       );
     }
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "graphql",
       false,
       "GraphQL"
     );
-    const service = new GraphqlService();
+    const service = new GraphqlNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         endpoint:
           this.endpoint ??
           credentialValue(secret, "endpoint", "GraphQL"),

@@ -9,12 +9,14 @@
  *
  * @module as-graph/jest.pdf.config
  */
+// eslint-disable-next-line @typescript-eslint/no-require-imports,no-undef
 const base = require("./jest.config.cjs");
 
 const config = {
   ...base,
   testPathIgnorePatterns: ["/node_modules/", "/n8n/"],
-  testRegex: "/tests/unit/graph/nodes/ReadPDFNode\\.test\\.ts$",
+  testRegex:
+    "/tests/(unit|integration)/graph/nodes/(.*/)?ReadPDF(Node|Live)\\.test\\.ts$",
 };
 
 // eslint-disable-next-line no-undef

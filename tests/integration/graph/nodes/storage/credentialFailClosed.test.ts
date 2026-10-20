@@ -3,10 +3,12 @@
  * @summary SAA-1032: credential fail-closed coverage for the storage/devops
  * node kinds.
  * @description Proves the executor never proceeds with a credential it cannot
- * resolve: a missing environment variable, a non-`GRAPH_CREDENTIAL_*`
- * reference, a type mismatch, and malformed credential JSON each fail with the
- * documented `GRAPH_CREDENTIAL_*` code before any service call. Also asserts a
- * resolved secret never appears in a node result.
+ * resolve: an unregistered reference, a disabled credential, an unsupported
+ * secret provider, a type mismatch, and malformed credential JSON each fail
+ * with the documented Phase B.1 `GRAPH_CREDENTIAL_*` code before any service
+ * call. Credentials are supplied through the ctx-bound resolver double, never
+ * through `process.env`. Also asserts a resolved secret never appears in a node
+ * result.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { PostgresNode } from "../../../../../src/node/storage/database/postgres/node";
@@ -34,43 +36,71 @@ const pgParameters = {
 
 describe("credential fail-closed paths", () => {
   beforeAll(() => {
-    setCredential("GRAPH_CREDENTIAL_SAA1032_S3", s3CredentialJson());
-    setCredential("GRAPH_CREDENTIAL_SAA1032_S3_BADJSON", "this-is-not-json");
-    setCredential("GRAPH_CREDENTIAL_SAA1032_GCS_BADJSON", "{not valid json");
-    setCredential("GRAPH_CREDENTIAL_SAA1032_SFTP_BADJSON", "{not valid json");
+    setCredential("it-saa1032-S3", s3CredentialJson());
+    setCredential("it-saa1032-S3_BADJSON", "this-is-not-json");
+    setCredential("it-saa1032-GCS_BADJSON", "{not valid json");
+    setCredential("it-saa1032-SFTP_BADJSON", "{not valid json");
   });
 
   afterAll(() => {
     clearCredentials(
-      "GRAPH_CREDENTIAL_SAA1032_S3",
-      "GRAPH_CREDENTIAL_SAA1032_S3_BADJSON",
-      "GRAPH_CREDENTIAL_SAA1032_GCS_BADJSON",
-      "GRAPH_CREDENTIAL_SAA1032_SFTP_BADJSON"
+      "it-saa1032-S3",
+      "it-saa1032-S3_BADJSON",
+      "it-saa1032-GCS_BADJSON",
+      "it-saa1032-SFTP_BADJSON"
     );
   });
 
-  it("fails when the referenced variable is not set in the environment", async () => {
+  it("fails when the credential reference is not registered", async () => {
     await expect(
       runNode(
         PostgresNode,
         "core.storage.postgres",
         pgParameters,
         {},
-        credential("GRAPH_CREDENTIAL_SAA1032_UNSET", "postgres")
+        credential("it-saa1032-UNSET", "postgres")
       )
-    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_NOT_CONFIGURED" });
+    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_NOT_FOUND" });
   });
 
-  it("fails when the reference does not name a GRAPH_CREDENTIAL_* variable", async () => {
-    await expect(
-      runNode(
-        PostgresNode,
-        "core.storage.postgres",
-        pgParameters,
-        {},
-        credential("DATABASE_URL", "postgres")
-      )
-    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_INVALID_REFERENCE" });
+  it("fails when the referenced credential is disabled", async () => {
+    const disabled = "it-saa1032-DISABLED";
+    setCredential(disabled, ENDPOINTS.postgres.password, { enabled: false });
+    try {
+      await expect(
+        runNode(
+          PostgresNode,
+          "core.storage.postgres",
+          pgParameters,
+          {},
+          credential(disabled, "postgres")
+        )
+      ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_DISABLED" });
+    } finally {
+      clearCredentials(disabled);
+    }
+  });
+
+  it("fails when the credential provider has no configured secret service", async () => {
+    const unsupported = "it-saa1032-UNSUPPORTED_PROVIDER";
+    setCredential(unsupported, ENDPOINTS.postgres.password, {
+      provider: "vault",
+    });
+    try {
+      await expect(
+        runNode(
+          PostgresNode,
+          "core.storage.postgres",
+          pgParameters,
+          {},
+          credential(unsupported, "postgres")
+        )
+      ).rejects.toMatchObject({
+        graphCode: "GRAPH_CREDENTIAL_PROVIDER_UNSUPPORTED",
+      });
+    } finally {
+      clearCredentials(unsupported);
+    }
   });
 
   it("fails when the credential type does not match the node", async () => {
@@ -80,7 +110,7 @@ describe("credential fail-closed paths", () => {
         "core.storage.postgres",
         pgParameters,
         {},
-        credential("GRAPH_CREDENTIAL_SAA1032_S3", "mysql")
+        credential("it-saa1032-S3", "mysql")
       )
     ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_TYPE_MISMATCH" });
   });
@@ -95,7 +125,7 @@ describe("credential fail-closed paths", () => {
         key: "saa1032/missing.txt",
       },
       {},
-      credential("GRAPH_CREDENTIAL_SAA1032_S3_BADJSON", "s3")
+      credential("it-saa1032-S3_BADJSON", "s3")
     ).catch((error) => error);
     expect(s3.graphCode).toBe("GRAPH_CREDENTIAL_INVALID_FORMAT");
 
@@ -108,7 +138,7 @@ describe("credential fail-closed paths", () => {
         key: "saa1032/missing.txt",
       },
       {},
-      credential("GRAPH_CREDENTIAL_SAA1032_GCS_BADJSON", "gcs")
+      credential("it-saa1032-GCS_BADJSON", "gcs")
     ).catch((error) => error);
     expect(gcs.graphCode).toBe("GRAPH_CREDENTIAL_INVALID_FORMAT");
 
@@ -122,7 +152,7 @@ describe("credential fail-closed paths", () => {
         operation: "list",
       },
       {},
-      credential("GRAPH_CREDENTIAL_SAA1032_SFTP_BADJSON", "sftp")
+      credential("it-saa1032-SFTP_BADJSON", "sftp")
     ).catch((error) => error);
     expect(ftp.graphCode).toBe("GRAPH_CREDENTIAL_INVALID_FORMAT");
   });
@@ -141,7 +171,7 @@ describe("credential fail-closed paths", () => {
         key: `saa1032/not-present-${Date.now()}.txt`,
       },
       {},
-      credential("GRAPH_CREDENTIAL_SAA1032_S3", "s3")
+      credential("it-saa1032-S3", "s3")
     );
     expect(result.result).toBe(false);
     expect(JSON.stringify(result)).not.toContain(secret);

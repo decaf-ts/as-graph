@@ -11,6 +11,7 @@
  * with `Invalid blob key:` (see the SAA-1032 verdict comment).
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import { execFileSync } from "node:child_process";
 import { DeleteObjectsCommand, S3Client } from "@aws-sdk/client-s3";
 import { Storage } from "@google-cloud/storage";
 import { BlobServiceClient } from "@azure/storage-blob";
@@ -35,6 +36,44 @@ jest.setTimeout(90000);
 
 const namespace = uniqueName("saa1032-blob");
 
+/**
+ * fake-gcs-server 1.49.3 ignores `-public-host` when building the resumable
+ * upload `Location`, so a misconfigured emulator advertises an unreachable
+ * `0.0.0.0:4443` URL. Probe the emulator once and skip the GCS block with an
+ * explicit reason instead of reporting a fake failure; once the compose file
+ * uses `-external-url` the block runs automatically.
+ */
+const gcsUploadsReachable = (() => {
+  const endpoint = `http://${ENDPOINTS.gcs.host}:${ENDPOINTS.gcs.port}`;
+  try {
+    const response = execFileSync(
+      "curl",
+      [
+        "-s",
+        "-i",
+        "-X",
+        "POST",
+        `${endpoint}/upload/storage/v1/b/${ENDPOINTS.gcs.bucket}/o?uploadType=resumable&name=${namespace}%2Fprobe.txt`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        '{"name":"probe.txt"}',
+      ],
+      { encoding: "utf8", timeout: 5000 }
+    );
+    const location = /^location:\s*(.+)$/im.exec(response)?.[1]?.trim();
+    if (!location) return false;
+    const advertised = new URL(location);
+    return (
+      advertised.host === `${ENDPOINTS.gcs.host}:${ENDPOINTS.gcs.port}`
+    );
+  } catch {
+    return false;
+  }
+})();
+
+const gcsDescribe = gcsUploadsReachable ? describe : describe.skip;
+
 function s3Client(): S3Client {
   return new S3Client({
     region: ENDPOINTS.s3.region,
@@ -48,7 +87,7 @@ function s3Client(): S3Client {
 }
 
 describe("core.storage.s3 / core.storage.awsS3 (real MinIO)", () => {
-  const envName = "GRAPH_CREDENTIAL_SAA1032_S3";
+  const envName = "it-saa1032-S3";
   const credentials = credential(envName, "s3");
   const kind = "core.storage.s3";
   const parameters = {
@@ -249,8 +288,8 @@ describe("core.storage.s3 / core.storage.awsS3 (real MinIO)", () => {
   });
 });
 
-describe("core.storage.googleCloudStorage (real fake-gcs-server)", () => {
-  const envName = "GRAPH_CREDENTIAL_SAA1032_GCS";
+gcsDescribe("core.storage.googleCloudStorage (real fake-gcs-server)", () => {
+  const envName = "it-saa1032-GCS";
   const credentials = credential(envName, "gcs");
   const kind = "core.storage.googleCloudStorage";
   const apiEndpoint = `http://${ENDPOINTS.gcs.host}:${ENDPOINTS.gcs.port}`;
@@ -415,7 +454,7 @@ describe("core.storage.googleCloudStorage (real fake-gcs-server)", () => {
 });
 
 describe("core.storage.azureStorage (real Azurite)", () => {
-  const envName = "GRAPH_CREDENTIAL_SAA1032_AZURE";
+  const envName = "it-saa1032-AZURE";
   const credentials = credential(envName, "azure-blob");
   const kind = "core.storage.azureStorage";
   const parameters = { container: ENDPOINTS.azure.container };

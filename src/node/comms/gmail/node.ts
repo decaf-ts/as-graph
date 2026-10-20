@@ -2,14 +2,14 @@
  * @module as-graph/nodes/comms/gmail
  * @summary Gmail Comms node declaration (Stage 3b; `core.comms.gmail`).
  * @description Gmail — message send/list/get and label listing through the
- * Decaf `GmailService` REST API. The `gmail` credential (resolved through a
- * `GRAPH_CREDENTIAL_*` environment variable) is a bare OAuth token or a JSON
+ * Decaf `GmailNodeService` REST API. The `gmail` credential (resolved through a
+ * ctx-bound node credential resolver) is a bare OAuth token or a JSON
  * object; a `userId` field in the credential supplies the mailbox when the
  * node's `userId` is unset. `send` requires `from` (falling back to a
  * credential `from` field), `to`, and `subject`, with the text body falling
  * back to the `value` input; `get` requires a `messageId`; `list` and
  * `labels` need no extra inputs. An unknown `operation` silently falls back to
- * `send`. A throwaway `GmailService` is initialized per execution and shut
+ * `send`. A throwaway `GmailNodeService` is initialized per execution and shut
  * down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -21,11 +21,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { GmailService } from "@decaf-ts/integrations/comms/gmail";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GmailNodeService } from "@decaf-ts/integrations/comms/gmail";
 import {
   asNumber,
   asStringArray,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialToken, credentialValue } from "../../credentials";
 
@@ -48,7 +49,7 @@ const OPERATIONS: GmailOperation[] = ["send", "list", "get", "labels"];
 
 /**
  * Gmail node (`core.comms.gmail`): message and label operations through the
- * Decaf `GmailService`.
+ * Decaf `GmailNodeService`.
  */
 @node("core.comms.gmail", {
   kind: "core.comms.gmail",
@@ -69,11 +70,13 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
    * Executes the configured Gmail operation.
    *
    * @param request - Execution request carrying the credential secrets; the `gmail` credential supplies the OAuth token and optional `userId`/`from` fields.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and, for `send`, the `id` output.
    * @throws {GraphExecutionError} with codes `GRAPH_GMAIL_OPERATION_REQUIRED` (no operation configured), `GRAPH_GMAIL_MESSAGE_REQUIRED`/`GRAPH_GMAIL_MESSAGE_ID_REQUIRED` (missing per-operation inputs), or `GRAPH_GMAIL_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<GmailNodeInput>
+    request: GraphNodeExecutionRequest<GmailNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -84,15 +87,16 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "send";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "gmail",
       false,
       "Gmail"
     );
-    const service = new GmailService();
+    const service = new GmailNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialToken(secret, "Gmail"),
         userId: this.userId ?? credentialValue(secret, "userId", "Gmail"),
         baseUrl: this.baseUrl,

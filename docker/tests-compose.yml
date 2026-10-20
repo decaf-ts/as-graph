@@ -1,0 +1,265 @@
+# as-graph integration-test service matrix (SAA-1142, Phase B.2).
+#
+# Boots EVERY external service the as-graph node integration suites need:
+# relational engines, Redis, object stores, SFTP, SMTP, and the PGVector/AGE
+# backends used by the Mastra breadth suites. Dagster is booted separately by
+# `tests/integration/dagster/run.sh` (it needs a built image); `prepare-it-tests`
+# orchestrates both.
+#
+# Ports are the canonical SAA-1032/SAA-920 test ports and are baked into
+# `tests/integration/graph/nodes/real-service-support.ts` and the Mastra live
+# helpers, so do not renumber them.
+#
+# Boot:   npm run prepare-it-tests
+# Shut down: npm run teardown-it-tests
+# Raw:    docker compose -f docker/tests-compose.yml up -d --wait
+#         docker compose -f docker/tests-compose.yml down
+#
+# The runner may itself be a container. Services publish on 0.0.0.0, so the
+# suites reach them through the Docker host address (172.17.0.1 from inside a
+# container, 127.0.0.1 on a plain host). `prepare-it-tests` exports the resolved
+# address through `var/as-graph-it/.it-env.json`.
+name: as-graph-it
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: as-graph-it-postgres
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test
+      POSTGRES_INITDB_ARGS: --data-checksums
+    ports:
+      - "55440:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - as-graph-it-postgres:/var/lib/postgresql/data
+
+  pgvector:
+    image: pgvector/pgvector:pg17
+    container_name: as-graph-it-pgvector
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test
+    ports:
+      - "55441:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - as-graph-it-pgvector:/var/lib/postgresql/data
+
+  age:
+    image: apache/age:release_PG17_1.7.0
+    container_name: as-graph-it-age
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test
+    ports:
+      - "55442:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - as-graph-it-age:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.0
+    container_name: as-graph-it-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: test
+    ports:
+      - "53306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pmysql --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    volumes:
+      - as-graph-it-mysql:/var/lib/mysql
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: as-graph-it-mssql
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+      MSSQL_PID: Developer
+    ports:
+      - "51433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/1433'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    volumes:
+      - as-graph-it-mssql:/var/opt/mssql
+
+  redis:
+    image: redis:7-alpine
+    container_name: as-graph-it-redis
+    restart: unless-stopped
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: as-graph-it-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "59000:9000"
+      - "59001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - as-graph-it-minio:/data
+
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.49.3
+    container_name: as-graph-it-gcs
+    restart: unless-stopped
+    # The external URL is what fake-gcs-server returns in resumable-upload
+    # `Location` headers and signed URLs. It must be the address the suites can
+    # actually reach, so `prepare-it-tests` exports AS_GRAPH_IT_HOST (the Docker
+    # bridge gateway in a container, loopback on a plain host). Do not use
+    # `-public-host`: 1.49.3 ignores it for resumable uploads and emits
+    # `http://0.0.0.0:4443`, which is unreachable from the runner.
+    command:
+      - -scheme
+      - http
+      - -host
+      - 0.0.0.0
+      - -port
+      - "4443"
+      - -external-url
+      - "http://${AS_GRAPH_IT_HOST:-127.0.0.1}:54444"
+      - -backend
+      - memory
+    ports:
+      - "54444:4443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:4443/storage/v1/b >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+    container_name: as-graph-it-azurite
+    restart: unless-stopped
+    command:
+      - azurite-blob
+      - --blobHost
+      - 0.0.0.0
+      - --blobPort
+      - "10000"
+      - --skipApiVersionCheck
+      - --location
+      - /data
+    ports:
+      - "10010:10000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://127.0.0.1:10000/', r => { r.resume(); process.exit(0); }).on('error', () => process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - as-graph-it-azurite:/data
+
+  sftp:
+    image: atmoz/sftp:latest
+    container_name: as-graph-it-sftp
+    restart: unless-stopped
+    # user:pass:uid:gid:relative-dir — /upload inside the chroot is
+    # /home/testuser/upload on the volume.
+    command: testuser:testpass:1001:1001:upload
+    ports:
+      - "52222:22"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - as-graph-it-sftp:/home/testuser/upload
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: as-graph-it-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8025/api/v1/info >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  as-graph-it-postgres:
+    name: as-graph-it-postgres
+  as-graph-it-pgvector:
+    name: as-graph-it-pgvector
+  as-graph-it-age:
+    name: as-graph-it-age
+  as-graph-it-mysql:
+    name: as-graph-it-mysql
+  as-graph-it-mssql:
+    name: as-graph-it-mssql
+  as-graph-it-minio:
+    name: as-graph-it-minio
+  as-graph-it-azurite:
+    name: as-graph-it-azurite
+  as-graph-it-sftp:
+    name: as-graph-it-sftp

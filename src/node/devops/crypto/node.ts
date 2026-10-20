@@ -7,9 +7,10 @@
  * non-string payloads are JSON-encoded; a missing or unserializable payload
  * throws. Digest/signature output is `hex` or `base64` (default `hex`). The
  * `hmac`, `encrypt`, `decrypt`, `sign`, and `verify` operations resolve the
- * `crypto` credential (required) through a `GRAPH_CREDENTIAL_*` environment
- * variable — except that `sign`/`verify` prefer explicit `privateKey` /
- * `publicKey` config when present. `decrypt` additionally requires
+ * `crypto` credential (required) through the ctx-bound node credential
+ * resolver. Signing always uses the credential key material — private keys are
+ * never accepted inline — while `verify` may use an explicit `publicKey` config
+ * because public keys are not secret. `decrypt` additionally requires
  * `encryptedData` and the encryption `salt`. `generate` produces PEM key pairs
  * (`rsa` with `modulusLength` floored to ≥2048, `ec` with `namedCurve`
  * defaulting to `prime256v1`, or `ed25519`). An unknown `operation` silently
@@ -25,11 +26,13 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { CryptoService } from "@decaf-ts/crypto/integration/services/crypto";
 import {
   asNonEmptyString,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
+import { credentialSecret } from "../../credentials";
 
 /** Operation the node performs. */
 export type CryptoOperation =
@@ -112,9 +115,9 @@ function payloadString(value: unknown, nodeName: string): string {
  * Crypto node (`core.devops.crypto`): hash, HMAC, encrypt/decrypt, sign/verify,
  * and key-pair generation through the Decaf `CryptoService`.
  *
- * Credentials and key material are always resolved from the `crypto`
- * credential reference or explicit key fields — never embedded in workflow
- * documents.
+ * Credentials and private key material are always resolved from the `crypto`
+ * credential reference — never embedded in workflow documents. Only a public
+ * verification key may be supplied inline.
  */
 @node("core.devops.crypto", {
   kind: "core.devops.crypto",
@@ -134,14 +137,34 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   /**
    * Executes the configured crypto operation.
    *
-   * @param request - Execution request carrying the credential secrets; the `crypto` credential is resolved via `resolveCredentialSecret` where the operation requires it.
+   * @param request - Execution request carrying the credential references; the `crypto` credential is resolved via `resolveNodeCredential` where the operation requires it.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the operation `result` and, for `encrypt`, the `encodings` output (`base64`).
    * @throws {GraphExecutionError} with codes `GRAPH_CRYPTO_PAYLOAD_REQUIRED`/`GRAPH_CRYPTO_INVALID_PAYLOAD` (payload problems), `GRAPH_CREDENTIAL_MISSING` (missing secret), `GRAPH_CRYPTO_ENCRYPTED_DATA_REQUIRED`, `GRAPH_CRYPTO_SALT_REQUIRED`, `GRAPH_CRYPTO_SIGNATURE_REQUIRED` (missing per-operation inputs), or `GRAPH_CRYPTO_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<CryptoNodeInput>
+    request: GraphNodeExecutionRequest<CryptoNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const nodeName = "Crypto";
+    const secretFor = async (fields: string[]): Promise<string> => {
+      const resolved = await resolveNodeCredential(
+        context,
+        request.credentials,
+        "crypto",
+        true,
+        nodeName
+      );
+      const value = credentialSecret(resolved, fields, nodeName);
+      if (!value) {
+        throw new GraphExecutionError(
+          `${nodeName} node credential must contain the required key material`,
+          "GRAPH_CREDENTIAL_INVALID_FORMAT",
+          { node: nodeName }
+        );
+      }
+      return value;
+    };
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "hash";
@@ -162,36 +185,36 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
               .digest(encoding),
           };
         case "hmac": {
-          const secret = resolveCredentialSecret(
-            request.credentials,
-            "crypto",
-            true,
-            nodeName
-          );
+          const secret = await secretFor([
+            "secret",
+            "key",
+            "password",
+            "token",
+          ]);
           return {
             result: crypto
-              .createHmac(algorithm, secret as string)
+              .createHmac(algorithm, secret)
               .update(payloadOf())
               .digest(encoding),
           };
         }
         case "encrypt": {
-          const secret = resolveCredentialSecret(
-            request.credentials,
-            "crypto",
-            true,
-            nodeName
-          );
-          const result = await service.encrypt(payloadOf(), secret as string);
+          const secret = await secretFor([
+            "secret",
+            "key",
+            "password",
+            "token",
+          ]);
+          const result = await service.encrypt(payloadOf(), secret);
           return { result, encodings: ["base64"] };
         }
         case "decrypt": {
-          const secret = resolveCredentialSecret(
-            request.credentials,
-            "crypto",
-            true,
-            nodeName
-          );
+          const secret = await secretFor([
+            "secret",
+            "key",
+            "password",
+            "token",
+          ]);
           const encryptedData = asNonEmptyString(this.encryptedData);
           if (!encryptedData) {
             throw new GraphExecutionError(
@@ -207,38 +230,27 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
             );
           }
           return {
-            result: await service.decrypt(
-              encryptedData,
-              secret as string,
-              salt
-            ),
+            result: await service.decrypt(encryptedData, secret, salt),
           };
         }
         case "sign": {
-          const key =
-            asNonEmptyString(this.privateKey) ??
-            resolveCredentialSecret(
-              request.credentials,
-              "crypto",
-              true,
-              nodeName
-            );
+          const key = await secretFor([
+            "privateKey",
+            "key",
+            "secret",
+            "token",
+          ]);
           return {
             result: crypto
               .createSign(algorithm)
               .update(payloadOf())
-              .sign(key as string, encoding),
+              .sign(key, encoding),
           };
         }
         case "verify": {
           const key =
             asNonEmptyString(this.publicKey) ??
-            resolveCredentialSecret(
-              request.credentials,
-              "crypto",
-              true,
-              nodeName
-            );
+            (await secretFor(["publicKey", "key", "secret", "token"]));
           const signature = asNonEmptyString(this.signature);
           if (!signature) {
             throw new GraphExecutionError(
@@ -250,7 +262,7 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
             result: crypto
               .createVerify(algorithm)
               .update(payloadOf())
-              .verify(key as string, signature, encoding),
+              .verify(key, signature, encoding),
           };
         }
         case "generate": {
@@ -349,14 +361,6 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   })
   @input({ handle: "salt", userControlled: true })
   salt?: string;
-
-  /** Explicit PEM private key; preferred over the `crypto` credential for `sign`. */
-  @uielement("ngx-decaf-crud-field", {
-    label: "graph.node.devops.crypto.fields.privateKey.label",
-    type: "textarea",
-  })
-  @input({ handle: "privateKey", userControlled: true })
-  privateKey?: string;
 
   /** Explicit PEM public key; preferred over the `crypto` credential for `verify`. */
   @uielement("ngx-decaf-crud-field", {

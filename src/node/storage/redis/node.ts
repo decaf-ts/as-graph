@@ -11,10 +11,13 @@
  * needs no identifier and returns the server info text (optionally filtered by
  * `section`). Execution creates a throwaway `RedisAdapter` (uniquely aliased,
  * always shut down and unregistered in `finally`) with connection settings
- * from config plus an optional `redis`-type credential supplying the password;
- * `value` falls back to the `value` input when unset. The raw client is
- * accessed through a local structural interface, keeping this node independent
- * of the concrete Redis client dependency.
+ * from config plus an optional `redis`-type credential supplying the password
+ * through the ctx-bound node credential resolver;
+ * `value` falls back to the `value` input when unset. `tls` enables transport
+ * encryption. The `keys` operation maps to Redis `KEYS`, which blocks the
+ * server while it walks the keyspace; prefer a `SCAN`-based client or a
+ * maintained index for large production namespaces. The raw client is accessed through a local structural interface,
+ * keeping this node independent of the concrete Redis client dependency.
  */
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
@@ -26,12 +29,14 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { RedisAdapter } from "@decaf-ts/integrations/redis";
 import {
   asNonEmptyString,
   asNumber,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../support";
+import { credentialSecret } from "../../credentials";
 
 /** Redis operations the node can run. */
 export type RedisOperation =
@@ -137,21 +142,28 @@ export class RedisNode extends GraphNode<RedisNodeInput, RedisNodeOutput> {
    * (`delete`, `incr`, `keys`, `lpush`, `rpush`, `publish`) also emit `count`.
    *
    * @param request - The execution request carrying resolved credentials and the optional `value` input.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns The operation result under `result` (plus `count` where meaningful).
    * @throws {GraphExecutionError} with code `GRAPH_REDIS_KEY_REQUIRED` when the operation needs a key, pattern, or
    *   channel and none is configured, `GRAPH_CREDENTIAL_*` codes from credential resolution, and
    *   `GRAPH_REDIS_OPERATION_FAILED` when the operation fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<RedisNodeInput>
+    request: GraphNodeExecutionRequest<RedisNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "get";
-    const password = resolveCredentialSecret(
-      request.credentials,
-      "redis",
-      false,
+    const password = credentialSecret(
+      await resolveNodeCredential(
+        context,
+        request.credentials,
+        "redis",
+        false,
+        "Redis"
+      ),
+      ["password", "secret", "token"],
       "Redis"
     );
     const host = asNonEmptyString(this.host) ?? "localhost";
@@ -185,6 +197,7 @@ export class RedisNode extends GraphNode<RedisNodeInput, RedisNodeOutput> {
         username: asNonEmptyString(this.username),
         password,
         database: asNumber(this.database),
+        tls: this.tls ? true : undefined,
       },
       alias
     );
@@ -309,6 +322,17 @@ export class RedisNode extends GraphNode<RedisNodeInput, RedisNodeOutput> {
   })
   @input({ handle: "database", userControlled: true })
   database?: number;
+
+  /**
+   * Enable TLS for the Redis connection. Defaults to `false`; use only when the
+   * server presents a certificate the client can verify.
+   */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.storage.redis.fields.tls.label",
+    type: "boolean",
+  })
+  @input({ handle: "tls", userControlled: true })
+  tls: boolean = false;
 
   /** Optional namespace prefix applied as `prefix:key` to keys, patterns, and channels. */
   @uielement("ngx-decaf-crud-field", {

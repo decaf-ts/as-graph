@@ -4,7 +4,10 @@
  * `core.devops.crypto`.
  * @description Exercises the real `@decaf-ts/crypto` `CryptoService` (no
  * mocks) for hashing, HMAC, AES-GCM encryption/decryption, RSA signing and key
- * generation, plus the credential fail-closed paths.
+ * generation, plus the credential fail-closed paths. SAA-1062 adds SAA-1044 F4
+ * coverage: signing always uses the `crypto` credential key material, an inline
+ * `privateKey` parameter cannot override it, and signing fails closed without a
+ * credential.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { createHash, createHmac } from "node:crypto";
@@ -19,16 +22,18 @@ import {
 jest.setTimeout(60000);
 
 const kind = "core.devops.crypto";
-const envName = "GRAPH_CREDENTIAL_SAA1032_CRYPTO";
+const envName = "it-saa1032-CRYPTO";
 const secret = "saa1032-crypto-secret";
 const credentials = credential(envName, "crypto");
+const signEnvName = "it-saa1032-CRYPTO_SIGN";
+const signCredentials = credential(signEnvName, "crypto");
 
 beforeAll(() => {
   setCredential(envName, secret);
 });
 
 afterAll(() => {
-  clearCredentials(envName);
+  clearCredentials(envName, signEnvName);
 });
 
 describe("core.devops.crypto (real CryptoService)", () => {
@@ -110,12 +115,18 @@ describe("core.devops.crypto (real CryptoService)", () => {
     expect(pair.privateKey).toContain("BEGIN PRIVATE KEY");
     expect(pair.publicKey).toContain("BEGIN PUBLIC KEY");
 
-    const signed = await runNode(CryptoNode, kind, {
-      operation: "sign",
-      algorithm: "SHA256",
-      payload: "signed-payload",
-      privateKey: pair.privateKey,
-    });
+    setCredential(signEnvName, pair.privateKey);
+    const signed = await runNode(
+      CryptoNode,
+      kind,
+      {
+        operation: "sign",
+        algorithm: "SHA256",
+        payload: "signed-payload",
+      },
+      {},
+      signCredentials
+    );
     expect(typeof signed.result).toBe("string");
 
     const verified = await runNode(CryptoNode, kind, {
@@ -137,6 +148,73 @@ describe("core.devops.crypto (real CryptoService)", () => {
     expect(tampered.result).toBe(false);
   });
 
+  it("signs with the credential key and cannot be overridden by an inline privateKey", async () => {
+    const credentialPair = (
+      await runNode(CryptoNode, kind, {
+        operation: "generate",
+        keyType: "rsa",
+        modulusLength: 2048,
+      })
+    ).result as { publicKey: string; privateKey: string };
+    const inlinePair = (
+      await runNode(CryptoNode, kind, {
+        operation: "generate",
+        keyType: "rsa",
+        modulusLength: 2048,
+      })
+    ).result as { publicKey: string; privateKey: string };
+
+    setCredential(signEnvName, credentialPair.privateKey);
+    const signed = await runNode(
+      CryptoNode,
+      kind,
+      {
+        operation: "sign",
+        algorithm: "SHA256",
+        payload: "credential-only-payload",
+        privateKey: inlinePair.privateKey,
+      },
+      {},
+      signCredentials
+    );
+
+    const withCredentialKey = await runNode(CryptoNode, kind, {
+      operation: "verify",
+      algorithm: "SHA256",
+      payload: "credential-only-payload",
+      publicKey: credentialPair.publicKey,
+      signature: signed.result,
+    });
+    expect(withCredentialKey.result).toBe(true);
+
+    const withInlineKey = await runNode(CryptoNode, kind, {
+      operation: "verify",
+      algorithm: "SHA256",
+      payload: "credential-only-payload",
+      publicKey: inlinePair.publicKey,
+      signature: signed.result,
+    });
+    expect(withInlineKey.result).toBe(false);
+  });
+
+  it("fails closed when signing without a credential, even with an inline privateKey", async () => {
+    const pair = (
+      await runNode(CryptoNode, kind, {
+        operation: "generate",
+        keyType: "ed25519",
+      })
+    ).result as { publicKey: string; privateKey: string };
+
+    await expect(
+      runNode(CryptoNode, kind, {
+        operation: "sign",
+        algorithm: "SHA256",
+        payload: "no-credential",
+        privateKey: pair.privateKey,
+      })
+    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_MISSING" });
+  });
+
   it("fails closed when a required credential reference is absent", async () => {
     await expect(
       runNode(CryptoNode, kind, { operation: "hmac", payload: "payload" })
@@ -155,28 +233,34 @@ describe("core.devops.crypto (real CryptoService)", () => {
     ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_TYPE_MISMATCH" });
   });
 
-  it("fails closed on a non GRAPH_CREDENTIAL_* reference", async () => {
+  it("fails closed when the credential reference is not registered", async () => {
     await expect(
       runNode(
         CryptoNode,
         kind,
         { operation: "hmac", payload: "payload" },
         {},
-        credential("NOT_A_CREDENTIAL_VARIABLE", "crypto")
+        credential("it-saa1032-not-registered", "crypto")
       )
-    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_INVALID_REFERENCE" });
+    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_NOT_FOUND" });
   });
 
-  it("fails closed when the referenced variable is not configured", async () => {
-    await expect(
-      runNode(
-        CryptoNode,
-        kind,
-        { operation: "hmac", payload: "payload" },
-        {},
-        credential("GRAPH_CREDENTIAL_SAA1032_NOT_SET", "crypto")
-      )
-    ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_NOT_CONFIGURED" });
+  it("fails closed when the referenced credential is disabled", async () => {
+    const disabled = "it-saa1032-crypto-disabled";
+    setCredential(disabled, secret, { enabled: false });
+    try {
+      await expect(
+        runNode(
+          CryptoNode,
+          kind,
+          { operation: "hmac", payload: "payload" },
+          {},
+          credential(disabled, "crypto")
+        )
+      ).rejects.toMatchObject({ graphCode: "GRAPH_CREDENTIAL_DISABLED" });
+    } finally {
+      clearCredentials(disabled);
+    }
   });
 
   it("requires decrypt data and the encryption salt", async () => {

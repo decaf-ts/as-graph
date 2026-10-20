@@ -4,10 +4,12 @@
  * against the real `node:child_process` runtime.
  * @description Executes real shell commands, asserting stdout/stderr capture,
  * the exit-code contract, `cwd`, the `failOnError` gate, and the documented
- * `GraphExecutionError` failure codes.
+ * `GraphExecutionError` failure codes. SAA-1062 adds the SAA-1044 F7 catalogue
+ * posture assertion for this dangerous kind.
  */
 import { describe, it, expect } from "@jest/globals";
 import { ExecuteCommandNode } from "../../../../../src/node/devops/execute-command/node";
+import { GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND } from "../../../../../src/node/manifests";
 import { runNode } from "../real-service-support";
 
 jest.setTimeout(60000);
@@ -77,5 +79,17 @@ describe("core.devops.executeCommand (real child_process)", () => {
     await expect(
       runNode(ExecuteCommandNode, kind, { command: "   " })
     ).rejects.toMatchObject({ graphCode: "GRAPH_EXECUTE_COMMAND_REQUIRED" });
+  });
+});
+
+describe("core.devops.executeCommand catalogue posture (SAA-1044 F7)", () => {
+  it("advertises danger and requiresOptIn in the built-in manifest metadata", () => {
+    const manifest =
+      GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.devops.executeCommand"];
+    expect(manifest).toBeDefined();
+    expect(manifest.metadata).toMatchObject({
+      danger: true,
+      requiresOptIn: true,
+    });
   });
 });

@@ -2,14 +2,14 @@
  * @module as-graph/nodes/io/google-sheets
  * @summary Google Sheets IO node declaration (Stage 3b; `core.io.googleSheets`).
  * @description Google Sheets — read/write/clear a range, append rows, or
- * create a spreadsheet through the Decaf `GoogleSheetsService` REST API. The
- * `google-sheets` credential (resolved through a `GRAPH_CREDENTIAL_*`
- * environment variable) supplies an OAuth `token` or an `apiKey` (read-only).
+ * create a spreadsheet through the Decaf `GoogleSheetsNodeService` REST API. The
+ * `google-sheets` credential (resolved through the ctx-bound node credential
+ * resolver) supplies an OAuth `token` or an `apiKey` (read-only).
  * `spreadsheetId` and `range` are required by everything except `create`,
  * which needs a `title` instead; `update`/`append` also require `values` as an
  * array of rows and honour `valueInputOption` (default `USER_ENTERED`). An
  * unknown `operation` silently falls back to `get`. A throwaway
- * `GoogleSheetsService` is initialized per execution and shut down in a
+ * `GoogleSheetsNodeService` is initialized per execution and shut down in a
  * `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -21,8 +21,9 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { GoogleSheetsService } from "@decaf-ts/integrations/io/google-sheets";
-import { resolveCredentialSecret } from "../../storage/support";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GoogleSheetsNodeService } from "@decaf-ts/integrations/io/google-sheets";
+import { resolveNodeCredential } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
 /** Operations the node can run against Google Sheets. */
@@ -61,7 +62,7 @@ const OPERATIONS: GoogleSheetsOperation[] = [
 ];
 
 /**
- * Google Sheets IO node: spreadsheet read/write operations through `GoogleSheetsService`.
+ * Google Sheets IO node: spreadsheet read/write operations through `GoogleSheetsNodeService`.
  */
 @node("core.io.googleSheets", {
   kind: "core.io.googleSheets",
@@ -85,11 +86,13 @@ export class GoogleSheetsNode extends GraphNode<
    * Executes the configured Google Sheets operation.
    *
    * @param request - Execution request carrying the credential secrets; the `google-sheets` credential supplies `token`/`apiKey`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result` and the `values`, `spreadsheetId`, and `range` outputs where the operation reports them.
    * @throws {GraphExecutionError} with codes `GRAPH_GOOGLE_SHEETS_OPERATION_REQUIRED` (no operation configured), `GRAPH_GOOGLE_SHEETS_SPREADSHEET_REQUIRED`, `GRAPH_GOOGLE_SHEETS_RANGE_REQUIRED`, `GRAPH_GOOGLE_SHEETS_VALUES_REQUIRED`, `GRAPH_GOOGLE_SHEETS_TITLE_REQUIRED` (missing per-operation inputs), `GRAPH_CREDENTIAL_*` codes from credential resolution, or `GRAPH_GOOGLE_SHEETS_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<GoogleSheetsNodeInput>
+    request: GraphNodeExecutionRequest<GoogleSheetsNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -100,15 +103,16 @@ export class GoogleSheetsNode extends GraphNode<
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "get";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "google-sheets",
       false,
       "Google Sheets"
     );
-    const service = new GoogleSheetsService();
+    const service = new GoogleSheetsNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialValue(secret, "token", "Google Sheets"),
         apiKey: credentialValue(secret, "apiKey", "Google Sheets"),
         baseUrl: this.baseUrl,

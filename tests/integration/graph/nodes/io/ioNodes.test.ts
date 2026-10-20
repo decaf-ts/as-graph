@@ -4,8 +4,16 @@
  * node kinds.
  * @description Google Sheets, Airtable and GraphQL run against a process-local
  * HTTP stub that records the real integration-service request (method, path,
- * query, auth header and JSON body). The spreadsheet-file kind is fully local
- * and covers parse/write round-tripping without a credential.
+ * query, auth header and JSON body). That block is **contract** coverage and is
+ * never a live-matrix PASS. The live success path for the two SaaS vendors is
+ * credential-gated: Google Sheets needs
+ * `AS_GRAPH_IT_GOOGLE_SHEETS_ACCESS_TOKEN`,
+ * `AS_GRAPH_IT_GOOGLE_SHEETS_SPREADSHEET_ID` and
+ * `AS_GRAPH_IT_GOOGLE_SHEETS_RANGE`; Airtable needs
+ * `AS_GRAPH_IT_AIRTABLE_TOKEN`, `AS_GRAPH_IT_AIRTABLE_BASE_ID` and
+ * `AS_GRAPH_IT_AIRTABLE_TABLE`. A missing variable is a SKIP naming it. The
+ * spreadsheet-file kind is fully local and covers parse/write round-tripping
+ * without a credential.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { GoogleSheetsNode } from "../../../../../src/node/io/google-sheets/node";
@@ -19,6 +27,7 @@ import {
   setCredential,
 } from "../real-service-support";
 import { startHttpStub, type HttpStub } from "../loopback-support";
+import { credentialGatedIt, envValue } from "../credential-gated";
 
 jest.setTimeout(60000);
 
@@ -29,12 +38,12 @@ const SECRETS = {
 } as const;
 
 const CREDENTIALS = {
-  sheets: credential("GRAPH_CREDENTIAL_SAA1035_SHEETS", "google-sheets"),
-  airtable: credential("GRAPH_CREDENTIAL_SAA1035_AIRTABLE", "airtable"),
-  graphql: credential("GRAPH_CREDENTIAL_SAA1035_GRAPHQL", "graphql"),
+  sheets: credential("it-saa1035-SHEETS", "google-sheets"),
+  airtable: credential("it-saa1035-AIRTABLE", "airtable"),
+  graphql: credential("it-saa1035-GRAPHQL", "graphql"),
 } as const;
 
-describe("core.io.* node → service integration (loopback vendors)", () => {
+describe("core.io.* vendor contract (loopback stub; NOT a live-matrix claim)", () => {
   let http: HttpStub;
 
   beforeAll(async () => {
@@ -159,21 +168,21 @@ describe("core.io.* node → service integration (loopback vendors)", () => {
       return { status: 404, body: { error: `unhandled ${path}` } };
     });
 
-    setCredential("GRAPH_CREDENTIAL_SAA1035_SHEETS", SECRETS.sheets);
-    setCredential("GRAPH_CREDENTIAL_SAA1035_AIRTABLE", SECRETS.airtable);
-    setCredential("GRAPH_CREDENTIAL_SAA1035_GRAPHQL", SECRETS.graphql);
+    setCredential("it-saa1035-SHEETS", SECRETS.sheets);
+    setCredential("it-saa1035-AIRTABLE", SECRETS.airtable);
+    setCredential("it-saa1035-GRAPHQL", SECRETS.graphql);
   });
 
   afterAll(async () => {
     clearCredentials(
-      "GRAPH_CREDENTIAL_SAA1035_SHEETS",
-      "GRAPH_CREDENTIAL_SAA1035_AIRTABLE",
-      "GRAPH_CREDENTIAL_SAA1035_GRAPHQL"
+      "it-saa1035-SHEETS",
+      "it-saa1035-AIRTABLE",
+      "it-saa1035-GRAPHQL"
     );
     await http.close();
   });
 
-  it("Google Sheets gets, updates, appends, clears and creates", async () => {
+  it("contract: Google Sheets gets, updates, appends, clears and creates", async () => {
     const baseUrl = `${http.baseUrl}/v4/spreadsheets`;
     const before = http.requests.length;
     const read = await runNode(
@@ -266,7 +275,7 @@ describe("core.io.* node → service integration (loopback vendors)", () => {
     });
   });
 
-  it("Airtable lists, gets, creates, updates and deletes records", async () => {
+  it("contract: Airtable lists, gets, creates, updates and deletes records", async () => {
     const baseUrl = `${http.baseUrl}/v0`;
     const listed = await runNode(
       AirtableNode,
@@ -366,7 +375,7 @@ describe("core.io.* node → service integration (loopback vendors)", () => {
     expect(deleted.result).toEqual({ id: "rec-1", deleted: true });
   });
 
-  it("GraphQL runs a query with variables and surfaces vendor errors", async () => {
+  it("contract: GraphQL runs a query with variables and surfaces vendor errors", async () => {
     const baseUrl = `${http.baseUrl}/graphql`;
     const before = http.requests.length;
     const queried = await runNode(
@@ -464,7 +473,7 @@ describe("core.io.* node → service integration (loopback vendors)", () => {
     expect(json.header).toEqual(["name", "role"]);
   });
 
-  it("never echoes an IO vendor secret into a node result", async () => {
+  it("contract: never echoes an IO vendor secret into a node result", async () => {
     const result = await runNode(
       AirtableNode,
       "core.io.airtable",
@@ -483,4 +492,77 @@ describe("core.io.* node → service integration (loopback vendors)", () => {
       expect(serialized).not.toContain(secret);
     }
   });
+});
+
+/**
+ * Live credential-gated success paths. The loopback block above is contract
+ * coverage, not live infrastructure.
+ */
+describe("core.io.* live SaaS integration (credential-gated)", () => {
+  credentialGatedIt(
+    "live: Google Sheets reads a real range",
+    [
+      "AS_GRAPH_IT_GOOGLE_SHEETS_ACCESS_TOKEN",
+      "AS_GRAPH_IT_GOOGLE_SHEETS_SPREADSHEET_ID",
+      "AS_GRAPH_IT_GOOGLE_SHEETS_RANGE",
+    ],
+    async () => {
+      const id = "it-live-SHEETS";
+      const spreadsheetId = envValue("AS_GRAPH_IT_GOOGLE_SHEETS_SPREADSHEET_ID");
+      setCredential(id, envValue("AS_GRAPH_IT_GOOGLE_SHEETS_ACCESS_TOKEN"));
+      try {
+        const result = await runNode(
+          GoogleSheetsNode,
+          "core.io.googleSheets",
+          {
+            operation: "get",
+            spreadsheetId,
+            range: envValue("AS_GRAPH_IT_GOOGLE_SHEETS_RANGE"),
+          },
+          {},
+          credential(id, "google-sheets")
+        );
+        expect(result.spreadsheetId).toBe(spreadsheetId);
+        expect(Array.isArray(result.values ?? [])).toBe(true);
+        expect(JSON.stringify(result)).not.toContain(
+          envValue("AS_GRAPH_IT_GOOGLE_SHEETS_ACCESS_TOKEN")
+        );
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
+
+  credentialGatedIt(
+    "live: Airtable lists records from a real base",
+    [
+      "AS_GRAPH_IT_AIRTABLE_TOKEN",
+      "AS_GRAPH_IT_AIRTABLE_BASE_ID",
+      "AS_GRAPH_IT_AIRTABLE_TABLE",
+    ],
+    async () => {
+      const id = "it-live-AIRTABLE";
+      setCredential(id, envValue("AS_GRAPH_IT_AIRTABLE_TOKEN"));
+      try {
+        const result = await runNode(
+          AirtableNode,
+          "core.io.airtable",
+          {
+            operation: "list",
+            baseId: envValue("AS_GRAPH_IT_AIRTABLE_BASE_ID"),
+            table: envValue("AS_GRAPH_IT_AIRTABLE_TABLE"),
+            maxRecords: 1,
+          },
+          {},
+          credential(id, "airtable")
+        );
+        expect(Array.isArray(result.records)).toBe(true);
+        expect(JSON.stringify(result)).not.toContain(
+          envValue("AS_GRAPH_IT_AIRTABLE_TOKEN")
+        );
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
 });

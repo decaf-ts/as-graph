@@ -21,6 +21,7 @@ import { Adapter } from "@decaf-ts/core";
 import { RamAdapter, RamFlavour } from "@decaf-ts/core/ram";
 import type { GraphRunLimits, GraphWorkflowDocument } from "../../shared/graph";
 import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
+import type { GraphNodeCredentialServices } from "../../engine/credentials/GraphNodeCredentials";
 import {
   GraphExecutionEngine,
   GraphNodeCatalogue,
@@ -198,6 +199,12 @@ export interface GraphExecutionModuleOptions {
    * credential exists or that the run is authorized to use it (SAA-595 F8).
    */
   credentialAuthorizer?: GraphCredentialAuthorizer;
+  /**
+   * Ctx-bound Phase A credential/secret services used by every
+   * credential-bearing node. When omitted, nodes that require a credential
+   * fail closed instead of reading secrets from the Environment.
+   */
+  nodeCredentials?: GraphNodeCredentialServices;
   /**
    * Decaf adapter backing cached/pinned value persistence. When omitted the
    * engine falls back to the globally configured adapter (`Adapter.current`),
@@ -403,6 +410,9 @@ export class GraphExecutionModule {
             ...(options.authMatch ? { authMatch: options.authMatch } : {}),
             ...(options.credentialAuthorizer
               ? { credentialAuthorizer: options.credentialAuthorizer }
+              : {}),
+            ...(options.nodeCredentials
+              ? { nodeCredentials: options.nodeCredentials }
               : {}),
           });
           return engine;

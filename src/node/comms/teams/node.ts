@@ -2,15 +2,15 @@
  * @module as-graph/nodes/comms/teams
  * @summary Microsoft Teams Comms node declaration (Stage 3b; `core.comms.teams`).
  * @description Microsoft Teams — incoming-webhook posts and Graph channel
- * messaging through the Decaf `TeamsService`. The `teams` credential (resolved
- * through a `GRAPH_CREDENTIAL_*` environment variable) is a bare token or a
+ * messaging through the Decaf `TeamsNodeService`. The `teams` credential (resolved
+ * through the ctx-bound node credential resolver) is a bare token or a
  * JSON object; a `token` field authorizes Graph operations and a `webhookUrl`
  * field authorizes webhook posts. `sendWebhook` requires `text` (falling back
  * to the `value` input) and posts via the webhook URL; `sendChannelMessage`
  * requires `teamId`, `channelId`, and `content` and posts via the Graph API
  * with a `token`; `listTeams` and `listChannels` (which requires `teamId`)
  * only need Graph access. An unknown `operation` silently falls back to
- * `sendWebhook`. A throwaway `TeamsService` is initialized per execution and
+ * `sendWebhook`. A throwaway `TeamsNodeService` is initialized per execution and
  * shut down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,10 +22,11 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { TeamsService } from "@decaf-ts/integrations/comms/teams";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { TeamsNodeService } from "@decaf-ts/integrations/comms/teams";
 import {
   asNumber,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
@@ -55,7 +56,7 @@ const OPERATIONS: TeamsOperation[] = [
 
 /**
  * Teams node (`core.comms.teams`): webhook posts and Graph channel messaging
- * through the Decaf `TeamsService`.
+ * through the Decaf `TeamsNodeService`.
  */
 @node("core.comms.teams", {
   kind: "core.comms.teams",
@@ -76,11 +77,13 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
    * Executes the configured Teams operation.
    *
    * @param request - Execution request carrying the credential secrets; the `teams` credential supplies the Graph `token` and/or `webhookUrl`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result`.
    * @throws {GraphExecutionError} with codes `GRAPH_TEAMS_OPERATION_REQUIRED` (no operation configured), `GRAPH_TEAMS_TEXT_REQUIRED`/`GRAPH_TEAMS_CHANNEL_MESSAGE_REQUIRED`/`GRAPH_TEAMS_TEAM_REQUIRED` (missing per-operation inputs), or `GRAPH_TEAMS_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<TeamsNodeInput>
+    request: GraphNodeExecutionRequest<TeamsNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -91,15 +94,16 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "sendWebhook";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "teams",
       false,
       "Microsoft Teams"
     );
-    const service = new TeamsService();
+    const service = new TeamsNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialValue(secret, "token", "Microsoft Teams"),
         webhookUrl: credentialValue(
           secret,

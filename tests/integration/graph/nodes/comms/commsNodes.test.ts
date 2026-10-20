@@ -2,12 +2,19 @@
  * @module as-graph/tests/integration/graph/nodes/comms/commsNodes
  * @summary SAA-1027 Stage 3b: node→service integration coverage for the five
  * comms node kinds.
- * @description The Slack, Telegram, Teams, Gmail and Email vendors have no live
- * credentials in this workspace, so each suite runs the production node
- * instantiation/execution contract against a process-local loopback HTTP stub
- * (or SMTP stub for the SMTP email path) and asserts the exact request the real
- * integration service emitted. IMAP is exercised through the absent optional
- * `imapflow` dependency to prove the dynamic-load fallback.
+ * @description The Slack, Telegram, Teams and Gmail suites are **contract**
+ * coverage: they run the production node instantiation/execution contract
+ * against a process-local loopback HTTP stub and assert the exact request the
+ * real integration service emitted. That block is explicitly not a live-matrix
+ * PASS. The live success path for those four SaaS vendors is credential-gated
+ * and skips with the exact missing variable when the operator has not supplied
+ * real access: `AS_GRAPH_IT_SLACK_BOT_TOKEN`,
+ * `AS_GRAPH_IT_TELEGRAM_BOT_TOKEN`, `AS_GRAPH_IT_TEAMS_WEBHOOK_URL`, and
+ * `AS_GRAPH_IT_GMAIL_ACCESS_TOKEN` (+ optional `AS_GRAPH_IT_GMAIL_USER_ID`).
+ * The Email vendor is live against the Mailpit container (`AS_GRAPH_IT_SMTP_*`,
+ * `AS_GRAPH_IT_MAILPIT_HTTP`) and keeps its loopback Graph-inbox contract case.
+ * The IMAP dynamic-load fallback is exercised only when the optional
+ * `imapflow` package is not installed in this workspace.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { SlackNode } from "../../../../../src/node/comms/slack/node";
@@ -18,18 +25,27 @@ import { EmailSendNode } from "../../../../../src/node/comms/email-send/node";
 import {
   credential,
   clearCredentials,
+  ENDPOINTS,
   runNode,
   setCredential,
 } from "../real-service-support";
 import {
   startHttpStub,
-  startSmtpStub,
   type HttpStub,
-  type SmtpStub,
   type StubRequest,
 } from "../loopback-support";
+import { credentialGatedIt, envValue } from "../credential-gated";
 
 jest.setTimeout(60000);
+
+const imapflowInstalled = (() => {
+  try {
+    require.resolve("imapflow");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const SECRETS = {
   slack: "xoxb-saa1035-slack-secret",
@@ -40,15 +56,15 @@ const SECRETS = {
 } as const;
 
 const CREDENTIALS = {
-  slack: credential("GRAPH_CREDENTIAL_SAA1035_SLACK", "slack"),
-  telegram: credential("GRAPH_CREDENTIAL_SAA1035_TELEGRAM", "telegram"),
-  teams: credential("GRAPH_CREDENTIAL_SAA1035_TEAMS", "teams"),
+  slack: credential("it-saa1035-SLACK", "slack"),
+  telegram: credential("it-saa1035-TELEGRAM", "telegram"),
+  teams: credential("it-saa1035-TEAMS", "teams"),
   teamsWebhook: credential(
-    "GRAPH_CREDENTIAL_SAA1035_TEAMS_WEBHOOK",
+    "it-saa1035-TEAMS_WEBHOOK",
     "teams"
   ),
-  gmail: credential("GRAPH_CREDENTIAL_SAA1035_GMAIL", "gmail"),
-  email: credential("GRAPH_CREDENTIAL_SAA1035_EMAIL", "email"),
+  gmail: credential("it-saa1035-GMAIL", "gmail"),
+  email: credential("it-saa1035-EMAIL", "email"),
 } as const;
 
 interface CommsReply {
@@ -62,12 +78,10 @@ function stubReply(
   return handler(request);
 }
 
-describe("core.comms.* node → service integration (loopback vendors)", () => {
+describe("core.comms.* vendor contract (loopback stub; NOT a live-matrix claim)", () => {
   let http: HttpStub;
-  let smtp: SmtpStub;
 
   beforeAll(async () => {
-    smtp = await startSmtpStub();
     http = await startHttpStub((request) =>
       stubReply(request, (value) => {
         const body = (value.body ?? {}) as Record<string, unknown>;
@@ -192,34 +206,33 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
       })
     );
 
-    setCredential("GRAPH_CREDENTIAL_SAA1035_SLACK", SECRETS.slack);
-    setCredential("GRAPH_CREDENTIAL_SAA1035_TELEGRAM", SECRETS.telegram);
-    setCredential("GRAPH_CREDENTIAL_SAA1035_TEAMS", SECRETS.teams);
+    setCredential("it-saa1035-SLACK", SECRETS.slack);
+    setCredential("it-saa1035-TELEGRAM", SECRETS.telegram);
+    setCredential("it-saa1035-TEAMS", SECRETS.teams);
     setCredential(
-      "GRAPH_CREDENTIAL_SAA1035_TEAMS_WEBHOOK",
+      "it-saa1035-TEAMS_WEBHOOK",
       JSON.stringify({ webhookUrl: `${http.baseUrl}/webhook` })
     );
-    setCredential("GRAPH_CREDENTIAL_SAA1035_GMAIL", SECRETS.gmail);
+    setCredential("it-saa1035-GMAIL", SECRETS.gmail);
     setCredential(
-      "GRAPH_CREDENTIAL_SAA1035_EMAIL",
+      "it-saa1035-EMAIL",
       JSON.stringify({ provider: "graph", token: SECRETS.graph })
     );
   });
 
   afterAll(async () => {
     clearCredentials(
-      "GRAPH_CREDENTIAL_SAA1035_SLACK",
-      "GRAPH_CREDENTIAL_SAA1035_TELEGRAM",
-      "GRAPH_CREDENTIAL_SAA1035_TEAMS",
-      "GRAPH_CREDENTIAL_SAA1035_TEAMS_WEBHOOK",
-      "GRAPH_CREDENTIAL_SAA1035_GMAIL",
-      "GRAPH_CREDENTIAL_SAA1035_EMAIL"
+      "it-saa1035-SLACK",
+      "it-saa1035-TELEGRAM",
+      "it-saa1035-TEAMS",
+      "it-saa1035-TEAMS_WEBHOOK",
+      "it-saa1035-GMAIL",
+      "it-saa1035-EMAIL"
     );
     await http.close();
-    await smtp.close();
   });
 
-  it("Slack posts a message with the bearer token and reports channel/ts", async () => {
+  it("contract: Slack posts a message with the bearer token and reports channel/ts", async () => {
     const before = http.requests.length;
     const result = await runNode(
       SlackNode,
@@ -250,7 +263,7 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     });
   });
 
-  it("Slack lists conversations, fetches one and reads a user", async () => {
+  it("contract: Slack lists conversations, fetches one and reads a user", async () => {
     const listed = await runNode(
       SlackNode,
       "core.comms.slack",
@@ -290,7 +303,7 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     expect(user.result).toEqual({ id: "U-SAA1035", name: "tester" });
   });
 
-  it("Slack maps a vendor ok:false response to a graph execution error", async () => {
+  it("contract: Slack maps a vendor ok:false response to a graph execution error", async () => {
     await expect(
       runNode(
         SlackNode,
@@ -310,7 +323,7 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     });
   });
 
-  it("Telegram sends messages, reads bot identity, updates and chat actions", async () => {
+  it("contract: Telegram sends messages, reads bot identity, updates and chat actions", async () => {
     const before = http.requests.length;
     const sent = await runNode(
       TelegramNode,
@@ -363,7 +376,7 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     expect(action.result).toBe(true);
   });
 
-  it("Teams delivers a webhook and the Graph channel/list operations", async () => {
+  it("contract: Teams delivers a webhook and the Graph channel/list operations", async () => {
     const webhook = await runNode(
       TeamsNode,
       "core.comms.teams",
@@ -413,7 +426,7 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     expect(channels.result).toEqual([{ id: "C-SAA1035" }]);
   });
 
-  it("Gmail sends MIME, lists, reads and labels messages", async () => {
+  it("contract: Gmail sends MIME, lists, reads and labels messages", async () => {
     const before = http.requests.length;
     const sent = await runNode(
       GmailNode,
@@ -483,26 +496,27 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
   });
 
   it("Email sends over SMTP and lists a Graph inbox", async () => {
-    clearCredentials("GRAPH_CREDENTIAL_SAA1035_EMAIL");
+    clearCredentials("it-saa1035-EMAIL");
     setCredential(
-      "GRAPH_CREDENTIAL_SAA1035_EMAIL",
+      "it-saa1035-EMAIL",
       JSON.stringify({
         provider: "smtp",
         from: "smtp-sender@example.com",
       })
     );
+    const subject = `SAA-1144 mailpit ${Date.now()}`;
     const smtpResult = await runNode(
       EmailSendNode,
       "core.comms.emailSend",
       {
         operation: "send",
         provider: "smtp",
-        host: smtp.host,
-        port: smtp.port,
+        host: ENDPOINTS.mailpit.host,
+        port: ENDPOINTS.mailpit.port,
         secure: false,
         to: ["smtp-recipient@example.com"],
-        subject: "SAA-1035 smtp",
-        text: "smtp body",
+        subject,
+        text: "smtp body via live Mailpit",
       },
       {},
       CREDENTIALS.email
@@ -512,15 +526,31 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
       recipients: ["smtp-recipient@example.com"],
       provider: "smtp",
     });
-    expect(smtp.messages).toHaveLength(1);
-    expect(smtp.messages[0].from).toBe("smtp-sender@example.com");
-    expect(smtp.messages[0].recipients).toEqual([
-      "smtp-recipient@example.com",
-    ]);
-    expect(smtp.messages[0].raw).toContain("Subject: SAA-1035 smtp");
+
+    const listed = await fetch(
+      `${ENDPOINTS.mailpit.httpUrl}/api/v1/messages?limit=50`
+    );
+    expect(listed.ok).toBe(true);
+    const mailpitInbox = (await listed.json()) as {
+      messages?: Array<{ ID: string; Subject?: string; To?: Array<{ Address: string }> }>;
+    };
+    const delivered = mailpitInbox.messages?.find(
+      (message) => message.Subject === subject
+    );
+    expect(delivered).toBeDefined();
+    expect(delivered!.To?.map((entry) => entry.Address)).toContain(
+      "smtp-recipient@example.com"
+    );
+
+    const raw = await fetch(
+      `${ENDPOINTS.mailpit.httpUrl}/api/v1/message/${delivered!.ID}`
+    );
+    expect(raw.ok).toBe(true);
+    const body = (await raw.json()) as { Text?: string };
+    expect(body.Text).toContain("smtp body via live Mailpit");
 
     setCredential(
-      "GRAPH_CREDENTIAL_SAA1035_EMAIL",
+      "it-saa1035-EMAIL",
       JSON.stringify({ provider: "graph", token: SECRETS.graph })
     );
     const inbox = await runNode(
@@ -537,7 +567,9 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
     expect(inbox.result).toEqual([{ id: "graph-1", subject: "hello" }]);
   });
 
-  it("Email IMAP fails closed with the optional-dependency message when imapflow is absent", async () => {
+  (imapflowInstalled ? it.skip : it)(
+    "Email IMAP fails closed with the optional-dependency message when imapflow is absent",
+    async () => {
     await expect(
       runNode(
         EmailSendNode,
@@ -551,13 +583,14 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
         {},
         CREDENTIALS.email
       )
-    ).rejects.toMatchObject({
-      graphCode: "GRAPH_EMAIL_OPERATION_FAILED",
-      message: expect.stringContaining("optional 'imapflow' package"),
-    });
-  });
+      ).rejects.toMatchObject({
+        graphCode: "GRAPH_EMAIL_OPERATION_FAILED",
+        message: expect.stringContaining("optional 'imapflow' package"),
+      });
+    }
+  );
 
-  it("never echoes a vendor secret into a node result", async () => {
+  it("contract: never echoes a vendor secret into a node result", async () => {
     const result = await runNode(
       SlackNode,
       "core.comms.slack",
@@ -575,4 +608,112 @@ describe("core.comms.* node → service integration (loopback vendors)", () => {
       expect(serialized).not.toContain(secret);
     }
   });
+});
+
+/**
+ * Live SaaS success paths. These are the only cases the node-kind matrix may
+ * count as live for Slack, Telegram, Teams and Gmail; the loopback block above
+ * is contract coverage and must never be reported as a live PASS.
+ */
+describe("core.comms.* live SaaS integration (credential-gated)", () => {
+  credentialGatedIt(
+    "live: Slack lists one conversation with a real bot token",
+    ["AS_GRAPH_IT_SLACK_BOT_TOKEN"],
+    async () => {
+      const id = "it-live-SLACK";
+      setCredential(id, envValue("AS_GRAPH_IT_SLACK_BOT_TOKEN"));
+      try {
+        const result = await runNode(
+          SlackNode,
+          "core.comms.slack",
+          { operation: "listConversations", limit: 1 },
+          {},
+          credential(id, "slack")
+        );
+        const body = result.result as { channels?: unknown[] };
+        expect(body).toBeDefined();
+        expect(Array.isArray(body.channels)).toBe(true);
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
+
+  credentialGatedIt(
+    "live: Telegram getMe returns the bot identity",
+    ["AS_GRAPH_IT_TELEGRAM_BOT_TOKEN"],
+    async () => {
+      const id = "it-live-TELEGRAM";
+      setCredential(id, envValue("AS_GRAPH_IT_TELEGRAM_BOT_TOKEN"));
+      try {
+        const result = await runNode(
+          TelegramNode,
+          "core.comms.telegram",
+          { operation: "getMe" },
+          {},
+          credential(id, "telegram")
+        );
+        expect(result.result).toMatchObject({ is_bot: true });
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
+
+  credentialGatedIt(
+    "live: Teams delivers a webhook message",
+    ["AS_GRAPH_IT_TEAMS_WEBHOOK_URL"],
+    async () => {
+      const id = "it-live-TEAMS";
+      setCredential(
+        id,
+        JSON.stringify({ webhookUrl: envValue("AS_GRAPH_IT_TEAMS_WEBHOOK_URL") })
+      );
+      try {
+        const result = await runNode(
+          TeamsNode,
+          "core.comms.teams",
+          {
+            operation: "sendWebhook",
+            title: "as-graph live IT",
+            text: `as-graph live IT ${Date.now()}`,
+          },
+          {},
+          credential(id, "teams-webhook")
+        );
+        expect(result).toHaveProperty("result");
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
+
+  credentialGatedIt(
+    "live: Gmail lists labels with a real access token",
+    ["AS_GRAPH_IT_GMAIL_ACCESS_TOKEN"],
+    async () => {
+      const id = "it-live-GMAIL";
+      setCredential(
+        id,
+        JSON.stringify({
+          token: envValue("AS_GRAPH_IT_GMAIL_ACCESS_TOKEN"),
+          ...(process.env["AS_GRAPH_IT_GMAIL_USER_ID"]
+            ? { userId: envValue("AS_GRAPH_IT_GMAIL_USER_ID") }
+            : {}),
+        })
+      );
+      try {
+        const result = await runNode(
+          GmailNode,
+          "core.comms.gmail",
+          { operation: "labels" },
+          {},
+          credential(id, "gmail")
+        );
+        expect(Array.isArray(result.result)).toBe(true);
+      } finally {
+        clearCredentials(id);
+      }
+    }
+  );
 });

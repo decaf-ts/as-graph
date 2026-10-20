@@ -2,14 +2,14 @@
  * @module as-graph/nodes/io/airtable
  * @summary Airtable IO node declaration (Stage 3b; `core.io.airtable`).
  * @description Airtable — record CRUD against a base through the Decaf
- * `AirtableService`. The `airtable` credential (resolved through a
- * `GRAPH_CREDENTIAL_*` environment variable) supplies the API token and may
+ * `AirtableNodeService`. The `airtable` credential (resolved through the
+ * ctx-bound node credential resolver) supplies the API token and may
  * also carry a default `baseId`; the node's `baseId` wins. `table` is required
  * by every operation; `get`/`update`/`delete` additionally require a
  * `recordId`, and `create`/`update` require `recordFields` as an object.
  * `list` supports a view, `filterByFormula`, field selection, sorting,
  * pagination caps, and returns the next-page `offset`. An unknown `operation`
- * silently falls back to `list`. A throwaway `AirtableService` is initialized
+ * silently falls back to `list`. A throwaway `AirtableNodeService` is initialized
  * per execution and shut down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -21,11 +21,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
-import { AirtableService } from "@decaf-ts/integrations/io/airtable";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { AirtableNodeService } from "@decaf-ts/integrations/io/airtable";
 import {
   asNumber,
   asRecord,
-  resolveCredentialSecret,
+  resolveNodeCredential,
 } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
@@ -61,7 +62,7 @@ const OPERATIONS: AirtableOperation[] = [
 
 /**
  * Airtable node (`core.io.airtable`): record CRUD through the Decaf
- * `AirtableService`.
+ * `AirtableNodeService`.
  */
 @node("core.io.airtable", {
   kind: "core.io.airtable",
@@ -85,11 +86,13 @@ export class AirtableNode extends GraphNode<
    * Executes the configured Airtable operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `airtable` credential supplies the token and default `baseId`.
+    * @param context - Node execution context forwarded to the ctx-bound credential resolver.
    * @returns Execution values with the service response on `result`, the affected records on `records`, and the `offset` continuation token for `list`.
    * @throws {GraphExecutionError} with codes `GRAPH_AIRTABLE_OPERATION_REQUIRED` (no operation configured), `GRAPH_AIRTABLE_TABLE_REQUIRED`/`GRAPH_AIRTABLE_RECORD_REQUIRED`/`GRAPH_AIRTABLE_FIELDS_REQUIRED` (missing per-operation inputs), or `GRAPH_AIRTABLE_OPERATION_FAILED` when the service call fails.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<AirtableNodeInput>
+    request: GraphNodeExecutionRequest<AirtableNodeInput>,
+    context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.operation) {
       throw new GraphExecutionError(
@@ -100,15 +103,16 @@ export class AirtableNode extends GraphNode<
     const operation = OPERATIONS.includes(this.operation)
       ? this.operation
       : "list";
-    const secret = resolveCredentialSecret(
+    const secret = await resolveNodeCredential(
+      context,
       request.credentials,
       "airtable",
       false,
       "Airtable"
     );
-    const service = new AirtableService();
+    const service = new AirtableNodeService();
     try {
-      await service.initialize({
+      await service.boot({
         token: credentialValue(secret, "token", "Airtable"),
         baseId: this.baseId ?? credentialValue(secret, "baseId", "Airtable"),
         baseUrl: this.baseUrl,

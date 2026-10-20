@@ -150,14 +150,14 @@ describe("SAA-1027 Stage 3b credential fail-closed", () => {
     http = await startHttpStub(() => {
       throw new Error("a fail-closed credential path must not reach the vendor");
     });
-    setCredential("GRAPH_CREDENTIAL_SAA1035_WRONG", "wrong-secret");
-    setCredential("GRAPH_CREDENTIAL_SAA1035_SLACK", "{");
+    setCredential("it-saa1035-WRONG", "wrong-secret");
+    setCredential("it-saa1035-SLACK", "{");
   });
 
   afterAll(async () => {
     clearCredentials(
-      "GRAPH_CREDENTIAL_SAA1035_WRONG",
-      "GRAPH_CREDENTIAL_SAA1035_SLACK"
+      "it-saa1035-WRONG",
+      "it-saa1035-SLACK"
     );
     await http.close();
   });
@@ -172,7 +172,7 @@ describe("SAA-1027 Stage 3b credential fail-closed", () => {
           kind,
           parameters(`${http.baseUrl}/v1`),
           {},
-          credential("GRAPH_CREDENTIAL_SAA1035_WRONG", "not-" + expectedType)
+          credential("it-saa1035-WRONG", "not-" + expectedType)
         )
       ).rejects.toMatchObject({
         graphCode: "GRAPH_CREDENTIAL_TYPE_MISMATCH",
@@ -181,7 +181,7 @@ describe("SAA-1027 Stage 3b credential fail-closed", () => {
     }
   );
 
-  it("rejects a credential ID that is not a GRAPH_CREDENTIAL_* variable", async () => {
+  it("rejects an unknown credential ID before any HTTP call", async () => {
     const before = http.requests.length;
     await expect(
       runNode(
@@ -197,7 +197,7 @@ describe("SAA-1027 Stage 3b credential fail-closed", () => {
         credential("not-a-credential-ref", "slack")
       )
     ).rejects.toMatchObject({
-      graphCode: "GRAPH_CREDENTIAL_INVALID_REFERENCE",
+      graphCode: "GRAPH_CREDENTIAL_NOT_FOUND",
     });
     expect(http.requests).toHaveLength(before);
   });
@@ -215,7 +215,7 @@ describe("SAA-1027 Stage 3b credential fail-closed", () => {
           baseUrl: `${http.baseUrl}/v1`,
         },
         {},
-        credential("GRAPH_CREDENTIAL_SAA1035_SLACK", "slack")
+        credential("it-saa1035-SLACK", "slack")
       )
     ).rejects.toMatchObject({
       graphCode: "GRAPH_CREDENTIAL_INVALID_FORMAT",

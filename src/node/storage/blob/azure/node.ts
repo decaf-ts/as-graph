@@ -5,7 +5,7 @@
  * container. Operations, encoding, and teardown behaviour come from
  * `BlobNode`. The credential is an Azure storage connection string, given
  * either as the bare string or inside a JSON object under `connectionString`;
- * it resolves through a `GRAPH_CREDENTIAL_*` environment variable. The
+ * it resolves through the ctx-bound node credential resolver. The
  * container name is prefixed to object keys, so a configured container is
  * always required.
  */
@@ -13,7 +13,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { AzureBlobStoreService } from "@decaf-ts/integrations/blob/azure";
+import { AzureNodeService } from "@decaf-ts/integrations/blob/azure";
 import type { AzureBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import {
@@ -22,8 +22,11 @@ import {
 } from "../../support";
 
 /** Extracts the Azure connection string from the credential: a bare string passes through, JSON must carry `connectionString`. */
-function azureConnectionString(secret: string | undefined): string | undefined {
+function azureConnectionString(secret: string | Record<string, unknown> | undefined): string | undefined {
   if (!secret) return undefined;
+  if (typeof secret !== "string") {
+    return asNonEmptyString(secret["connectionString"]);
+  }
   const trimmed = secret.trim();
   if (!trimmed.startsWith("{")) return trimmed;
   const parsed = parseCredentialJson(trimmed, "Azure Storage");
@@ -31,10 +34,10 @@ function azureConnectionString(secret: string | undefined): string | undefined {
 }
 
 /**
- * Azure Blob Storage node: object storage in an Azure container through `AzureBlobStoreService`.
+ * Azure Blob Storage node: object storage in an Azure container through `AzureNodeService`.
  */
 /**
- * Azure Storage node; builds `AzureBlobStoreService` from the container name and connection-string credential.
+ * Azure Storage node; builds `AzureNodeService` from the container name and connection-string credential.
  */
 @node("core.storage.azureStorage", {
   kind: "core.storage.azureStorage",
@@ -61,8 +64,8 @@ export class AzureStorageNode extends BlobNode {
    * @throws {GraphExecutionError} with code `GRAPH_BLOB_CONTAINER_REQUIRED` when no `container` is configured and `GRAPH_CREDENTIAL_INVALID_FORMAT` when a JSON credential lacks `connectionString`.
    */
   protected async createService(
-    credential: string | undefined
-  ): Promise<AzureBlobStoreService> {
+    credential: string | Record<string, unknown> | undefined
+  ): Promise<AzureNodeService> {
     const container = asNonEmptyString(this.container);
     if (!container) {
       throw new GraphExecutionError(
@@ -79,8 +82,8 @@ export class AzureStorageNode extends BlobNode {
       prefix: asNonEmptyString(this.prefix),
       connectionString: azureConnectionString(credential),
     };
-    const service = new AzureBlobStoreService();
-    await service.initialize(config);
+    const service = new AzureNodeService();
+    await service.boot(config);
     return service;
   }
 

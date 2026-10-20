@@ -18,6 +18,12 @@ const config = {
     "node_modules/@workflow/.+\\.js$": "ts-jest",
   },
   testEnvironment: "node",
+  // Live integration suites boot mastra and real services; the 5s default
+  // is not enough under the coverage run's worker parallelism.
+  testTimeout: 30000,
+  // `npm run prepare-it-tests` writes the verified live-service endpoints to a
+  // git-ignored file; load them before any suite resolves its live gate.
+  setupFiles: ["<rootDir>/tests/integration/it-env.setup.cjs"],
   testRegex: "/tests/.*\\.(test|spec|e2e)\\.(ts|tsx)$",
   testPathIgnorePatterns: [
     "/node_modules/",
@@ -26,6 +32,7 @@ const config = {
     // fake-worker dynamic import. Run ReadPDFNode.test.ts through
     // `jest.pdf.config.cjs` with `npm run test:unit:pdf` instead.
     "/tests/unit/graph/nodes/ReadPDFNode.test.ts",
+    "/tests/integration/graph/nodes/io/ReadPDFLive.test.ts",
   ],
   transformIgnorePatterns: [
     "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow)/)",
