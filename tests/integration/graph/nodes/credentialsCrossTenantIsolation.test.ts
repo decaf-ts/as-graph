@@ -104,6 +104,7 @@ const MISSING_SIBLING = [
   join(INTEGRATIONS_LIB, "namespaces/services/index.cjs"),
   join(INTEGRATIONS_LIB, "secrets/index.cjs"),
   join(INTEGRATIONS_LIB, "namespaces/rls/rls-bootstrap.service.cjs"),
+  join(INTEGRATIONS_LIB, "namespaces/rls/session-binding.cjs"),
   join(FOR_TYPEORM_LIB, "index.cjs"),
   RLS_TEMPLATE,
   CREDENTIALS_MIGRATION,
@@ -440,10 +441,24 @@ function flavourModelsForTypeorm(): void {
   }
 }
 
+/**
+ * The RLS binding configuration lives in `integrations/namespaces/rls`, not in
+ * `for-typeorm`: the adapter is namespace-agnostic and only understands the
+ * generic `sessionBinding` option. Adapters that serve RLS-restricted
+ * credential/secret reads must spread `namespaceRlsTypeORMOptions()` into
+ * their own options, or every read silently binds nothing.
+ */
+function namespaceRlsTypeORMOptions(options?: any): any {
+  return siblingRequire("namespaces/rls/session-binding.cjs").namespaceRlsTypeORMOptions(
+    options
+  );
+}
+
 async function createAdapter(
   url: string,
   max: number,
-  alias: string
+  alias: string,
+  adapterOptions: any = {}
 ): Promise<any> {
   const { TypeORMAdapter, TypeORMFlavour } = typeormRequire("index.cjs");
   const { DataSource } = require(join(
@@ -468,7 +483,10 @@ async function createAdapter(
   }
 
   const adapter = new Saa1151TypeormAdapter(
-    dataSourceOptions(url, max),
+    {
+      ...dataSourceOptions(url, max),
+      ...adapterOptions,
+    },
     alias
   );
   Adapter.setCurrent(TypeORMFlavour);
@@ -915,7 +933,8 @@ beforeAll(async () => {
   appAdapter = await createAdapter(
     urlForRole(DATABASE_NAME, APP_ROLE, APP_PASSWORD),
     1,
-    APP_ALIAS
+    APP_ALIAS,
+    namespaceRlsTypeORMOptions()
   );
   const appSession = await appAdapter.client.query(
     `SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls
@@ -969,6 +988,10 @@ beforeAll(async () => {
   // Leak-detection control: the same resolver over a superuser adapter whose
   // repository ignores the application role, so it can read tenant-B rows.
   // This proves the cross-tenant denials above are not vacuous.
+  // Intentionally NOT wired with `namespaceRlsTypeORMOptions()`: this adapter
+  // runs as the database owner (superuser/BYPASSRLS), so no RLS-restricted read
+  // happens on it. It is the unscoped leak-detection control, and binding a
+  // session setting would not change a superuser read.
   adminAdapter = await createAdapter(
     urlForDatabase(DATABASE_NAME),
     1,

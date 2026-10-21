@@ -13,13 +13,15 @@
  * session (a) carries the decaf `principals.id` UUID and (b) only carries it
  * for the duration of that principal's transaction.
  *
- * This suite is RED before the SAA-1160 wiring: `CredentialsService.getCredential`
- * is not transactional and nothing calls `set_config('app.principal_id', ...)`
- * on the read session, so the same-tenant positive control fails closed with
- * `GRAPH_CREDENTIAL_NOT_FOUND` and the RLS probe observes a `NULL` principal.
+ * This suite was RED before the SAA-1160 wiring: `CredentialsService.getCredential`
+ * was not transactional and nothing called `set_config('app.principal_id', ...)`
+ * on the read session, so the same-tenant positive control failed closed with
+ * `GRAPH_CREDENTIAL_NOT_FOUND` and the RLS probe observed a `NULL` principal.
  * The cross-tenant denials in this suite are therefore only meaningful once
  * the positive controls are green; the suite fails on the positive control
- * first rather than reporting a vacuous isolation pass.
+ * first rather than reporting a vacuous isolation pass. The SAA-1160 wiring in
+ * the current tree (transactional credential reads plus transaction-local
+ * principal binding) satisfies the positive controls.
  *
  * The installed `@decaf-ts/integrations` build has no credentials RLS/schema
  * support, so the workspace sibling build is required explicitly. The as-graph
@@ -64,6 +66,7 @@ const MISSING_SIBLING = [
   join(INTEGRATIONS_LIB, "namespaces/models/index.cjs"),
   join(INTEGRATIONS_LIB, "namespaces/services/index.cjs"),
   join(INTEGRATIONS_LIB, "namespaces/rls/rls-bootstrap.service.cjs"),
+  join(INTEGRATIONS_LIB, "namespaces/rls/session-binding.cjs"),
   join(INTEGRATIONS_LIB, "secrets/index.cjs"),
   join(FOR_TYPEORM_LIB, "index.cjs"),
   RLS_TEMPLATE,
@@ -327,7 +330,23 @@ function flavourModelsForTypeorm(): void {
   }
 }
 
-async function createAdapter(url: string, max: number): Promise<any> {
+/**
+ * The RLS binding configuration lives in `integrations/namespaces/rls`, not in
+ * `for-typeorm`: the adapter is namespace-agnostic and only understands the
+ * generic `sessionBinding` option, so every RLS-restricted adapter must spread
+ * `namespaceRlsTypeORMOptions()` into its own options.
+ */
+function namespaceRlsTypeORMOptions(options?: any): any {
+  return siblingRequire("namespaces/rls/session-binding.cjs").namespaceRlsTypeORMOptions(
+    options
+  );
+}
+
+async function createAdapter(
+  url: string,
+  max: number,
+  adapterOptions: any = {}
+): Promise<any> {
   const { TypeORMAdapter, TypeORMFlavour } = typeormRequire("index.cjs");
 
   class Saa1162TypeormAdapter extends TypeORMAdapter {
@@ -336,7 +355,10 @@ async function createAdapter(url: string, max: number): Promise<any> {
     }
   }
 
-  const adapter = new Saa1162TypeormAdapter(dataSourceOptions(url, max));
+  const adapter = new Saa1162TypeormAdapter({
+    ...dataSourceOptions(url, max),
+    ...adapterOptions,
+  });
   Adapter.setCurrent(TypeORMFlavour);
   await adapter.initialize();
   return adapter;
@@ -621,7 +643,8 @@ beforeAll(async () => {
   );
   appAdapter = await createAdapter(
     urlForRole(DATABASE_NAME, APP_ROLE, APP_PASSWORD),
-    1
+    1,
+    namespaceRlsTypeORMOptions()
   );
 
   const session = await appAdapter.client.query(
