@@ -14,6 +14,7 @@ import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
 import { AzureBlobStoreService } from "@decaf-ts/integrations/blob/azure";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import type { AzureBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import {
@@ -83,7 +84,7 @@ export class AzureStorageNode extends BlobNode {
       connectionString: azureConnectionString(credential),
     };
     const service = new AzureBlobStoreService();
-    await service.boot(config);
+    await bootWithoutEnvironment(service, config);
     return service;
   }
 

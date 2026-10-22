@@ -23,6 +23,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { AirtableService } from "@decaf-ts/integrations/io/airtable";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   asRecord,
@@ -112,7 +113,7 @@ export class AirtableNode extends GraphNode<
     );
     const service = new AirtableService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialValue(secret, "token", "Airtable"),
         baseId: this.baseId ?? credentialValue(secret, "baseId", "Airtable"),
         baseUrl: this.baseUrl,

@@ -27,6 +27,7 @@ import {
   SlackService,
   type SlackChannel,
 } from "@decaf-ts/integrations/comms/slack";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   asStringArray,
@@ -112,7 +113,7 @@ export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
     const token = credentialToken(secret, "Slack");
     const service = new SlackService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token,
         baseUrl: this.baseUrl,
       });

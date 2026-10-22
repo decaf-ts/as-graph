@@ -24,6 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GraphqlService } from "@decaf-ts/integrations/io/graphql";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asRecord,
   resolveNodeCredential,
@@ -103,7 +104,7 @@ export class GraphqlNode extends GraphNode<
     );
     const service = new GraphqlService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         endpoint:
           this.endpoint ??
           credentialValue(secret, "endpoint", "GraphQL"),

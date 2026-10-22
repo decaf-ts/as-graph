@@ -23,6 +23,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GitlabService } from "@decaf-ts/integrations/devops/gitlab";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   asStringArray,
@@ -109,7 +110,7 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
     );
     const service = new GitlabService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialToken(secret, "GitLab"),
         projectId: this.projectId,
         baseUrl: this.baseUrl,

@@ -24,6 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GithubService } from "@decaf-ts/integrations/devops/github";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   asStringArray,
@@ -110,7 +111,7 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
     );
     const service = new GithubService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialToken(secret, "GitHub"),
         owner: this.owner,
         repo: this.repo,

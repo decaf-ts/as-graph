@@ -17,6 +17,7 @@ import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
 import { S3BlobStoreService } from "@decaf-ts/integrations/blob/s3";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import type { S3BlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
@@ -82,7 +83,8 @@ export class S3Node extends BlobNode {
       );
     }
     const service = new S3BlobStoreService();
-    await service.boot(
+    await bootWithoutEnvironment(
+      service,
       s3Config(credential, {
         bucket,
         sourceId: asNonEmptyString(this.sourceId) ?? "graph",

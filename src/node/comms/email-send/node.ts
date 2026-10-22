@@ -27,6 +27,7 @@ import {
   EmailService,
   type EmailProvider,
 } from "@decaf-ts/integrations/comms/email";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asBoolean,
   asNumber,
@@ -109,7 +110,7 @@ export class EmailSendNode extends GraphNode<
       secret && !credentials ? secret : undefined;
     const service = new EmailService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         provider:
           this.provider ??
           (credentials?.["provider"] as EmailProvider | undefined),

@@ -24,6 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { TeamsService } from "@decaf-ts/integrations/comms/teams";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   resolveNodeCredential,
@@ -103,7 +104,7 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
     );
     const service = new TeamsService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialValue(secret, "token", "Microsoft Teams"),
         webhookUrl: credentialValue(
           secret,

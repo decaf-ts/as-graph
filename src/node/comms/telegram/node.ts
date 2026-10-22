@@ -24,6 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { TelegramService } from "@decaf-ts/integrations/comms/telegram";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   resolveNodeCredential,
@@ -112,7 +113,7 @@ export class TelegramNode extends GraphNode<
     const token = credentialToken(secret, "Telegram");
     const service = new TelegramService();
     try {
-      await service.boot({ token, baseUrl: this.baseUrl });
+      await bootWithoutEnvironment(service, { token, baseUrl: this.baseUrl });
       switch (operation) {
         case "sendMessage": {
           const chatId = this.chatId;

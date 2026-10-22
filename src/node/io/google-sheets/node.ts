@@ -23,6 +23,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GoogleSheetsService } from "@decaf-ts/integrations/io/google-sheets";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import { resolveNodeCredential } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
@@ -112,7 +113,7 @@ export class GoogleSheetsNode extends GraphNode<
     );
     const service = new GoogleSheetsService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialValue(secret, "token", "Google Sheets"),
         apiKey: credentialValue(secret, "apiKey", "Google Sheets"),
         baseUrl: this.baseUrl,

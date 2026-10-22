@@ -23,6 +23,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GmailService } from "@decaf-ts/integrations/comms/gmail";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import {
   asNumber,
   asStringArray,
@@ -96,7 +97,7 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
     );
     const service = new GmailService();
     try {
-      await service.boot({
+      await bootWithoutEnvironment(service, {
         token: credentialToken(secret, "Gmail"),
         userId: this.userId ?? credentialValue(secret, "userId", "Gmail"),
         baseUrl: this.baseUrl,

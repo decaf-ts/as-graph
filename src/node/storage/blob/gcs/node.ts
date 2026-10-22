@@ -13,6 +13,7 @@ import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
 import { GcsBlobStoreService } from "@decaf-ts/integrations/blob/gcp";
+import { bootWithoutEnvironment } from "@decaf-ts/integrations/shared/http";
 import type { GcsBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
@@ -69,7 +70,7 @@ export class GoogleCloudStorageNode extends BlobNode {
         : undefined,
     };
     const service = new GcsBlobStoreService();
-    await service.boot(config);
+    await bootWithoutEnvironment(service, config);
     return service;
   }
 
