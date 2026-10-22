@@ -2,7 +2,7 @@
  * @module as-graph/nodes/io/graphql
  * @summary GraphQL IO node declaration (Stage 3b; `core.io.graphql`).
  * @description GraphQL — run a GraphQL query or mutation against a GraphQL
- * endpoint through the Decaf `GraphqlNodeService`. The query document comes from
+ * endpoint through the Decaf `GraphqlService`. The query document comes from
  * `query` (falling back to the `value` input); optional `variables` (an object)
  * and `operationName` are passed through. The `graphql` credential (resolved
  * through the ctx-bound node credential resolver) is a JSON object
@@ -10,7 +10,7 @@
  * are optional. GraphQL-level errors (`response.errors`) are not thrown — they
  * are reported on the `errors` output alongside any partial `data`; transport
  * failures throw. An unknown `operation` silently falls back to `query`. A
- * throwaway `GraphqlNodeService` is initialized per execution and shut down in a
+ * throwaway `GraphqlService` is initialized per execution and shut down in a
  * `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -23,7 +23,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { GraphqlNodeService } from "@decaf-ts/integrations/io/graphql";
+import { GraphqlService } from "@decaf-ts/integrations/io/graphql";
 import {
   asRecord,
   resolveNodeCredential,
@@ -46,7 +46,7 @@ export interface GraphqlNodeOutput {
 const OPERATIONS: GraphqlOperation[] = ["query", "mutation"];
 
 /**
- * GraphQL IO node: query/mutation execution through `GraphqlNodeService`.
+ * GraphQL IO node: query/mutation execution through `GraphqlService`.
  */
 @node("core.io.graphql", {
   kind: "core.io.graphql",
@@ -101,7 +101,7 @@ export class GraphqlNode extends GraphNode<
       false,
       "GraphQL"
     );
-    const service = new GraphqlNodeService();
+    const service = new GraphqlService();
     try {
       await service.boot({
         endpoint:

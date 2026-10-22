@@ -236,9 +236,9 @@ export interface GraphExecutionEngineConfig {
   ) => void | Promise<void>;
   /**
    * Ctx-bound credential services every node kind resolves its credential
-   * references through. The host supplies Phase A `*NodeService` instances
-   * booted with explicit configuration; node execution never reads secrets
-   * from the Environment.
+   * references through. The host supplies the undecorated integration
+   * service instances booted with explicit configuration; node execution never
+   * reads secrets from the Environment.
    */
   nodeCredentials?: GraphNodeCredentialServices;
 }

@@ -2,14 +2,14 @@
  * @module as-graph/nodes/io/airtable
  * @summary Airtable IO node declaration (Stage 3b; `core.io.airtable`).
  * @description Airtable — record CRUD against a base through the Decaf
- * `AirtableNodeService`. The `airtable` credential (resolved through the
+ * `AirtableService`. The `airtable` credential (resolved through the
  * ctx-bound node credential resolver) supplies the API token and may
  * also carry a default `baseId`; the node's `baseId` wins. `table` is required
  * by every operation; `get`/`update`/`delete` additionally require a
  * `recordId`, and `create`/`update` require `recordFields` as an object.
  * `list` supports a view, `filterByFormula`, field selection, sorting,
  * pagination caps, and returns the next-page `offset`. An unknown `operation`
- * silently falls back to `list`. A throwaway `AirtableNodeService` is initialized
+ * silently falls back to `list`. A throwaway `AirtableService` is initialized
  * per execution and shut down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,7 +22,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { AirtableNodeService } from "@decaf-ts/integrations/io/airtable";
+import { AirtableService } from "@decaf-ts/integrations/io/airtable";
 import {
   asNumber,
   asRecord,
@@ -62,7 +62,7 @@ const OPERATIONS: AirtableOperation[] = [
 
 /**
  * Airtable node (`core.io.airtable`): record CRUD through the Decaf
- * `AirtableNodeService`.
+ * `AirtableService`.
  */
 @node("core.io.airtable", {
   kind: "core.io.airtable",
@@ -110,7 +110,7 @@ export class AirtableNode extends GraphNode<
       false,
       "Airtable"
     );
-    const service = new AirtableNodeService();
+    const service = new AirtableService();
     try {
       await service.boot({
         token: credentialValue(secret, "token", "Airtable"),

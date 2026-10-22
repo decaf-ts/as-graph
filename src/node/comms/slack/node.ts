@@ -2,7 +2,7 @@
  * @module as-graph/nodes/comms/slack
  * @summary Slack Comms node declaration (Stage 3b; `core.comms.slack`).
  * @description Slack — message posting, conversation listing/lookup, and user
- * lookup through the Decaf `SlackNodeService`. The `slack` credential (a bare bot
+ * lookup through the Decaf `SlackService`. The `slack` credential (a bare bot
  * token, resolved through the ctx-bound node credential resolver) is
  * optional; operations that need authorization fail with the service's own
  * Slack API error. `postMessage` requires a `channel` and `text` (text falls
@@ -10,7 +10,7 @@
  * (`threadTs`, `replyBroadcast`), and unfurl toggles; `getConversation`
  * requires a `channel` and `getUser` requires a `userId`. An unknown
  * `operation` silently falls back to `postMessage`. A throwaway
- * `SlackNodeService` is initialized per execution and shut down in a `finally`
+ * `SlackService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -24,7 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
-  SlackNodeService,
+  SlackService,
   type SlackChannel,
 } from "@decaf-ts/integrations/comms/slack";
 import {
@@ -64,7 +64,7 @@ const OPERATIONS: SlackOperation[] = [
 
 /**
  * Slack node (`core.comms.slack`): messaging and workspace lookups through the
- * Decaf `SlackNodeService`.
+ * Decaf `SlackService`.
  */
 @node("core.comms.slack", {
   kind: "core.comms.slack",
@@ -110,7 +110,7 @@ export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
       "Slack"
     );
     const token = credentialToken(secret, "Slack");
-    const service = new SlackNodeService();
+    const service = new SlackService();
     try {
       await service.boot({
         token,

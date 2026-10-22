@@ -2,14 +2,14 @@
  * @module as-graph/nodes/comms/gmail
  * @summary Gmail Comms node declaration (Stage 3b; `core.comms.gmail`).
  * @description Gmail — message send/list/get and label listing through the
- * Decaf `GmailNodeService` REST API. The `gmail` credential (resolved through a
+ * Decaf `GmailService` REST API. The `gmail` credential (resolved through a
  * ctx-bound node credential resolver) is a bare OAuth token or a JSON
  * object; a `userId` field in the credential supplies the mailbox when the
  * node's `userId` is unset. `send` requires `from` (falling back to a
  * credential `from` field), `to`, and `subject`, with the text body falling
  * back to the `value` input; `get` requires a `messageId`; `list` and
  * `labels` need no extra inputs. An unknown `operation` silently falls back to
- * `send`. A throwaway `GmailNodeService` is initialized per execution and shut
+ * `send`. A throwaway `GmailService` is initialized per execution and shut
  * down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,7 +22,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { GmailNodeService } from "@decaf-ts/integrations/comms/gmail";
+import { GmailService } from "@decaf-ts/integrations/comms/gmail";
 import {
   asNumber,
   asStringArray,
@@ -49,7 +49,7 @@ const OPERATIONS: GmailOperation[] = ["send", "list", "get", "labels"];
 
 /**
  * Gmail node (`core.comms.gmail`): message and label operations through the
- * Decaf `GmailNodeService`.
+ * Decaf `GmailService`.
  */
 @node("core.comms.gmail", {
   kind: "core.comms.gmail",
@@ -94,7 +94,7 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
       false,
       "Gmail"
     );
-    const service = new GmailNodeService();
+    const service = new GmailService();
     try {
       await service.boot({
         token: credentialToken(secret, "Gmail"),

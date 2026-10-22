@@ -2,7 +2,7 @@
  * @module as-graph/nodes/comms/teams
  * @summary Microsoft Teams Comms node declaration (Stage 3b; `core.comms.teams`).
  * @description Microsoft Teams — incoming-webhook posts and Graph channel
- * messaging through the Decaf `TeamsNodeService`. The `teams` credential (resolved
+ * messaging through the Decaf `TeamsService`. The `teams` credential (resolved
  * through the ctx-bound node credential resolver) is a bare token or a
  * JSON object; a `token` field authorizes Graph operations and a `webhookUrl`
  * field authorizes webhook posts. `sendWebhook` requires `text` (falling back
@@ -10,7 +10,7 @@
  * requires `teamId`, `channelId`, and `content` and posts via the Graph API
  * with a `token`; `listTeams` and `listChannels` (which requires `teamId`)
  * only need Graph access. An unknown `operation` silently falls back to
- * `sendWebhook`. A throwaway `TeamsNodeService` is initialized per execution and
+ * `sendWebhook`. A throwaway `TeamsService` is initialized per execution and
  * shut down in a `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -23,7 +23,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { TeamsNodeService } from "@decaf-ts/integrations/comms/teams";
+import { TeamsService } from "@decaf-ts/integrations/comms/teams";
 import {
   asNumber,
   resolveNodeCredential,
@@ -56,7 +56,7 @@ const OPERATIONS: TeamsOperation[] = [
 
 /**
  * Teams node (`core.comms.teams`): webhook posts and Graph channel messaging
- * through the Decaf `TeamsNodeService`.
+ * through the Decaf `TeamsService`.
  */
 @node("core.comms.teams", {
   kind: "core.comms.teams",
@@ -101,7 +101,7 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
       false,
       "Microsoft Teams"
     );
-    const service = new TeamsNodeService();
+    const service = new TeamsService();
     try {
       await service.boot({
         token: credentialValue(secret, "token", "Microsoft Teams"),

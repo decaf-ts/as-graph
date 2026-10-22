@@ -13,7 +13,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { AzureNodeService } from "@decaf-ts/integrations/blob/azure";
+import { AzureBlobStoreService } from "@decaf-ts/integrations/blob/azure";
 import type { AzureBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import {
@@ -34,10 +34,10 @@ function azureConnectionString(secret: string | Record<string, unknown> | undefi
 }
 
 /**
- * Azure Blob Storage node: object storage in an Azure container through `AzureNodeService`.
+ * Azure Blob Storage node: object storage in an Azure container through `AzureBlobStoreService`.
  */
 /**
- * Azure Storage node; builds `AzureNodeService` from the container name and connection-string credential.
+ * Azure Storage node; builds `AzureBlobStoreService` from the container name and connection-string credential.
  */
 @node("core.storage.azureStorage", {
   kind: "core.storage.azureStorage",
@@ -65,7 +65,7 @@ export class AzureStorageNode extends BlobNode {
    */
   protected async createService(
     credential: string | Record<string, unknown> | undefined
-  ): Promise<AzureNodeService> {
+  ): Promise<AzureBlobStoreService> {
     const container = asNonEmptyString(this.container);
     if (!container) {
       throw new GraphExecutionError(
@@ -82,7 +82,7 @@ export class AzureStorageNode extends BlobNode {
       prefix: asNonEmptyString(this.prefix),
       connectionString: azureConnectionString(credential),
     };
-    const service = new AzureNodeService();
+    const service = new AzureBlobStoreService();
     await service.boot(config);
     return service;
   }

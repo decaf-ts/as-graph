@@ -2,14 +2,14 @@
  * @module as-graph/nodes/io/google-sheets
  * @summary Google Sheets IO node declaration (Stage 3b; `core.io.googleSheets`).
  * @description Google Sheets — read/write/clear a range, append rows, or
- * create a spreadsheet through the Decaf `GoogleSheetsNodeService` REST API. The
+ * create a spreadsheet through the Decaf `GoogleSheetsService` REST API. The
  * `google-sheets` credential (resolved through the ctx-bound node credential
  * resolver) supplies an OAuth `token` or an `apiKey` (read-only).
  * `spreadsheetId` and `range` are required by everything except `create`,
  * which needs a `title` instead; `update`/`append` also require `values` as an
  * array of rows and honour `valueInputOption` (default `USER_ENTERED`). An
  * unknown `operation` silently falls back to `get`. A throwaway
- * `GoogleSheetsNodeService` is initialized per execution and shut down in a
+ * `GoogleSheetsService` is initialized per execution and shut down in a
  * `finally` block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,7 +22,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { GoogleSheetsNodeService } from "@decaf-ts/integrations/io/google-sheets";
+import { GoogleSheetsService } from "@decaf-ts/integrations/io/google-sheets";
 import { resolveNodeCredential } from "../../storage/support";
 import { credentialValue } from "../../credentials";
 
@@ -62,7 +62,7 @@ const OPERATIONS: GoogleSheetsOperation[] = [
 ];
 
 /**
- * Google Sheets IO node: spreadsheet read/write operations through `GoogleSheetsNodeService`.
+ * Google Sheets IO node: spreadsheet read/write operations through `GoogleSheetsService`.
  */
 @node("core.io.googleSheets", {
   kind: "core.io.googleSheets",
@@ -110,7 +110,7 @@ export class GoogleSheetsNode extends GraphNode<
       false,
       "Google Sheets"
     );
-    const service = new GoogleSheetsNodeService();
+    const service = new GoogleSheetsService();
     try {
       await service.boot({
         token: credentialValue(secret, "token", "Google Sheets"),

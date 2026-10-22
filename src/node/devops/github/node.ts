@@ -2,7 +2,7 @@
  * @module as-graph/nodes/devops/github
  * @summary GitHub DevOps node declaration (Stage 3b; `core.devops.github`).
  * @description GitHub — repository lookup, issue listing/creation/commenting,
- * and pull-request listing through the Decaf `GithubNodeService`. The `github`
+ * and pull-request listing through the Decaf `GithubService`. The `github`
  * credential (a bare personal-access token, resolved through the ctx-bound
  * node credential resolver) is optional only in the sense
  * that the service may operate on public repositories without it; tokenized
@@ -10,7 +10,7 @@
  * and unknown operations (falling back to `getRepo`) only need them, while
  * `createIssue` requires a `title` (body falls back to the `value` input) and
  * `commentIssue` requires an issue `number` and `body`. A throwaway
- * `GithubNodeService` is initialized per execution and shut down in a `finally`
+ * `GithubService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -23,7 +23,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { GithubNodeService } from "@decaf-ts/integrations/devops/github";
+import { GithubService } from "@decaf-ts/integrations/devops/github";
 import {
   asNumber,
   asStringArray,
@@ -63,7 +63,7 @@ const OPERATIONS: GithubOperation[] = [
 
 /**
  * GitHub node (`core.devops.github`): repository, issue, and pull-request
- * operations through the Decaf `GithubNodeService`.
+ * operations through the Decaf `GithubService`.
  */
 @node("core.devops.github", {
   kind: "core.devops.github",
@@ -108,7 +108,7 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
       false,
       "GitHub"
     );
-    const service = new GithubNodeService();
+    const service = new GithubService();
     try {
       await service.boot({
         token: credentialToken(secret, "GitHub"),

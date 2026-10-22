@@ -2,14 +2,14 @@
  * @module as-graph/nodes/devops/gitlab
  * @summary GitLab DevOps node declaration (Stage 3b; `core.devops.gitlab`).
  * @description GitLab — project lookup, issue listing/creation/commenting, and
- * merge-request listing through the Decaf `GitlabNodeService`. The `gitlab`
+ * merge-request listing through the Decaf `GitlabService`. The `gitlab`
  * credential (a bare personal-access token, resolved through the ctx-bound
  * node credential resolver) is optional; public projects can
  * be read without it. `projectId` scopes every operation; `getProject` and
  * unknown operations (falling back to `getProject`) only need it, while
  * `createIssue` requires a `title` (description falls back to the `value`
  * input) and `commentIssue` requires an issue `iid` and `body`. A throwaway
- * `GitlabNodeService` is initialized per execution and shut down in a `finally`
+ * `GitlabService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -22,7 +22,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { GitlabNodeService } from "@decaf-ts/integrations/devops/gitlab";
+import { GitlabService } from "@decaf-ts/integrations/devops/gitlab";
 import {
   asNumber,
   asStringArray,
@@ -62,7 +62,7 @@ const OPERATIONS: GitlabOperation[] = [
 
 /**
  * GitLab node (`core.devops.gitlab`): project, issue, and merge-request
- * operations through the Decaf `GitlabNodeService`.
+ * operations through the Decaf `GitlabService`.
  */
 @node("core.devops.gitlab", {
   kind: "core.devops.gitlab",
@@ -107,7 +107,7 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
       false,
       "GitLab"
     );
-    const service = new GitlabNodeService();
+    const service = new GitlabService();
     try {
       await service.boot({
         token: credentialToken(secret, "GitLab"),

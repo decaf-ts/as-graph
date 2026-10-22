@@ -2,7 +2,7 @@
  * @module as-graph/nodes/comms/email-send
  * @summary Email Send Comms node declaration (Stage 3b; `core.comms.emailSend`).
  * @description Email Send — send mail or list an inbox through the Decaf
- * `EmailNodeService`, which multiplexes SMTP, Microsoft Graph, and IMAP. The
+ * `EmailService`, which multiplexes SMTP, Microsoft Graph, and IMAP. The
  * `email` credential (resolved through the ctx-bound node credential resolver)
  * is a bare token or a JSON object whose fields (`provider`, `host`,
  * `port`, `secure`, `username`, `password`, `from`, `token`, `graphBaseUrl`)
@@ -10,7 +10,7 @@
  * always wins. `send` requires `to` and `subject` (text body falls back to the
  * `value` input); `listInbox` and `listImap` read a mailbox with optional
  * `limit`, `since`, and subject filter. An unknown `operation` silently falls
- * back to `send`. A throwaway `EmailNodeService` is initialized per execution and
+ * back to `send`. A throwaway `EmailService` is initialized per execution and
  * shut down in a `finally` block.
  */
 import { model, required } from "@decaf-ts/decorator-validation";
@@ -24,7 +24,7 @@ import type {
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
-  EmailNodeService,
+  EmailService,
   type EmailProvider,
 } from "@decaf-ts/integrations/comms/email";
 import {
@@ -53,7 +53,7 @@ const OPERATIONS: EmailSendOperation[] = ["send", "listInbox", "listImap"];
 
 /**
  * Email Send node (`core.comms.emailSend`): multi-provider mail send and inbox
- * listing through the Decaf `EmailNodeService`.
+ * listing through the Decaf `EmailService`.
  *
  * SMTP/Graph credentials and connection settings may live in the `email`
  * credential JSON so secrets never have to be written into node config.
@@ -107,7 +107,7 @@ export class EmailSendNode extends GraphNode<
     const credentials = credentialRecord(secret, "Email");
     const rawToken =
       secret && !credentials ? secret : undefined;
-    const service = new EmailNodeService();
+    const service = new EmailService();
     try {
       await service.boot({
         provider:

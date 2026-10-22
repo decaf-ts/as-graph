@@ -2,7 +2,7 @@
  * @module as-graph/nodes/comms/telegram
  * @summary Telegram Comms node declaration (Stage 3b; `core.comms.telegram`).
  * @description Telegram — bot messaging and updates through the Decaf
- * `TelegramNodeService` Bot API. The `telegram` credential (a bare bot token,
+ * `TelegramService` Bot API. The `telegram` credential (a bare bot token,
  * resolved through the ctx-bound node credential resolver) is optional;
  * unauthorized calls fail with the service's own Telegram API error.
  * `sendMessage` requires a `chatId` and `text` (text falls back to the `value`
@@ -10,7 +10,7 @@
  * reply/thread targeting; `sendChatAction` requires a `chatId` and defaults to
  * the `typing` action. `getMe` and `getUpdates` need no extra inputs. An
  * unknown `operation` silently falls back to `sendMessage`. A throwaway
- * `TelegramNodeService` is initialized per execution and shut down in a `finally`
+ * `TelegramService` is initialized per execution and shut down in a `finally`
  * block.
  */
 import { model } from "@decaf-ts/decorator-validation";
@@ -23,7 +23,7 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
-import { TelegramNodeService } from "@decaf-ts/integrations/comms/telegram";
+import { TelegramService } from "@decaf-ts/integrations/comms/telegram";
 import {
   asNumber,
   resolveNodeCredential,
@@ -61,7 +61,7 @@ const OPERATIONS: TelegramOperation[] = [
 
 /**
  * Telegram node (`core.comms.telegram`): bot messaging and updates through the
- * Decaf `TelegramNodeService`.
+ * Decaf `TelegramService`.
  */
 @node("core.comms.telegram", {
   kind: "core.comms.telegram",
@@ -110,7 +110,7 @@ export class TelegramNode extends GraphNode<
       "Telegram"
     );
     const token = credentialToken(secret, "Telegram");
-    const service = new TelegramNodeService();
+    const service = new TelegramService();
     try {
       await service.boot({ token, baseUrl: this.baseUrl });
       switch (operation) {

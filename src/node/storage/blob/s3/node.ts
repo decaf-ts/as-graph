@@ -16,7 +16,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { S3NodeService } from "@decaf-ts/integrations/blob/s3";
+import { S3BlobStoreService } from "@decaf-ts/integrations/blob/s3";
 import type { S3BlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
@@ -58,7 +58,7 @@ function s3Config(
 /**
  * Shared S3 implementation behind the `core.storage.s3` and `core.storage.awsS3` node kinds.
  *
- * Builds an `S3NodeService` from the bucket, endpoint/region/path-style
+ * Builds an `S3BlobStoreService` from the bucket, endpoint/region/path-style
  * config, and the parsed credential JSON.
  */
 export class S3Node extends BlobNode {
@@ -73,7 +73,7 @@ export class S3Node extends BlobNode {
    */
   protected async createService(
     credential: string | Record<string, unknown> | undefined
-  ): Promise<S3NodeService> {
+  ): Promise<S3BlobStoreService> {
     const bucket = asNonEmptyString(this.bucket);
     if (!bucket) {
       throw new GraphExecutionError(
@@ -81,7 +81,7 @@ export class S3Node extends BlobNode {
         "GRAPH_BLOB_BUCKET_REQUIRED"
       );
     }
-    const service = new S3NodeService();
+    const service = new S3BlobStoreService();
     await service.boot(
       s3Config(credential, {
         bucket,

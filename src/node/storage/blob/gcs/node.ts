@@ -12,16 +12,16 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node } from "../../../../shared/graph";
 import { BlobNode } from "../base";
-import { GcsNodeService } from "@decaf-ts/integrations/blob/gcp";
+import { GcsBlobStoreService } from "@decaf-ts/integrations/blob/gcp";
 import type { GcsBlobStoreServiceConfig } from "@decaf-ts/integrations/blob";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { asNonEmptyString, parseCredentialJson } from "../../support";
 
 /**
- * Google Cloud Storage blob node: object storage in a GCS bucket through `GcsNodeService`.
+ * Google Cloud Storage blob node: object storage in a GCS bucket through `GcsBlobStoreService`.
  */
 /**
- * Google Cloud Storage node; builds `GcsNodeService` from the bucket, project, and service-account credential.
+ * Google Cloud Storage node; builds `GcsBlobStoreService` from the bucket, project, and service-account credential.
  */
 @node("core.storage.googleCloudStorage", {
   kind: "core.storage.googleCloudStorage",
@@ -49,7 +49,7 @@ export class GoogleCloudStorageNode extends BlobNode {
    */
   protected async createService(
     credential: string | Record<string, unknown> | undefined
-  ): Promise<GcsNodeService> {
+  ): Promise<GcsBlobStoreService> {
     const bucket = asNonEmptyString(this.bucket);
     if (!bucket) {
       throw new GraphExecutionError(
@@ -68,7 +68,7 @@ export class GoogleCloudStorageNode extends BlobNode {
         ? parseCredentialJson(credential, "Google Cloud Storage")
         : undefined,
     };
-    const service = new GcsNodeService();
+    const service = new GcsBlobStoreService();
     await service.boot(config);
     return service;
   }
