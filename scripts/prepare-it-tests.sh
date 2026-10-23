@@ -9,6 +9,9 @@
 #   - Redis, MinIO (S3), fake-gcs-server (GCS), Azurite (Azure Blob)
 #   - SFTP (atmoz/sftp), Mailpit (SMTP sink)
 #   - the pinned Dagster gateway fixture (built by tests/integration/dagster)
+#   - the sibling integrations Postgres harness (decaf-postgres-integration on
+#     port 55435) required by the RLS credential suites when that checkout is
+#     present; `INTEGRATIONS_DIR` overrides its location.
 #
 # Every endpoint is probed from the test runner's network namespace before the
 # script succeeds. The resolved endpoints are written to the git-ignored
@@ -52,6 +55,21 @@ compose() {
   docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" "$@"
 }
 
+integrations_compose_file() {
+  echo "${INTEGRATIONS_DIR:-${ROOT_DIR}/../integrations}/docker/postgres-compose.yml"
+}
+
+boot_integrations_postgres() {
+  local compose_file
+  compose_file="$(integrations_compose_file)"
+  if [ ! -f "${compose_file}" ]; then
+    echo "==> sibling integrations harness not found; RLS credential suites need DECAF_PG_URL"
+    return
+  fi
+  echo "==> booting sibling integrations Postgres harness (decaf-postgres-integration, 55435)"
+  docker compose -f "${compose_file}" up -d --wait --wait-timeout 180
+}
+
 install_deps() {
   echo "==> installing released dependency versions (incl. dev tooling)"
   # `--include=dev` keeps the test tooling even when the environment sets
@@ -85,8 +103,7 @@ for (const dep of ['jest', 'ts-jest', 'typescript', '@nestjs/testing', 'supertes
   require.resolve(dep + (dep === 'typescript' ? '' : '/package.json'));
 }
 require('@mastra/core/workflows');
-require('gray-matter');
-console.log('@mastra/core@' + version + ' satisfies ' + range + '; test tooling + gray-matter load');
+console.log('@mastra/core@' + version + ' satisfies ' + range + '; test tooling + mastra workflows load');
 "
 }
 
@@ -203,8 +220,10 @@ SQL
 bootstrap_buckets() {
   echo "==> creating MinIO bucket test-bucket"
   docker run --rm --network "${NETWORK}" \
+    -e MC_CONFIG_DIR=/tmp/.mc \
     -e MC_HOST_local="http://minioadmin:minioadmin@minio:9000" \
-    quay.io/minio/mc:latest mb --ignore-existing local/test-bucket >/dev/null
+    --entrypoint /usr/bin/mc \
+    chainguard/minio:latest mb --ignore-existing local/test-bucket >/dev/null
 
   echo "==> creating fake-GCS bucket test-bucket"
   local status
@@ -298,6 +317,9 @@ verify_matrix() {
   wait_tcp "${SERVICE_HOST}" 52222 "sftp"
   wait_tcp "${SERVICE_HOST}" 1025 "mailpit-smtp"
   wait_tcp "${SERVICE_HOST}" 8025 "mailpit-http"
+  if [ -f "$(integrations_compose_file)" ]; then
+    wait_tcp "${SERVICE_HOST}" 55435 "integrations-postgres"
+  fi
 }
 
 read_dagster_url() {
@@ -313,6 +335,7 @@ ensure_build
 
 echo "==> booting service matrix from ${COMPOSE_FILE}"
 compose up -d --wait --wait-timeout 300
+boot_integrations_postgres
 
 MIGRATIONS_OK=0
 bootstrap_metadata_postgres
@@ -339,4 +362,7 @@ echo "    azurite        ${SERVICE_HOST}:10010 (account devstoreaccount1)"
 echo "    sftp           ${SERVICE_HOST}:52222 (testuser/testpass, /upload)"
 echo "    mailpit        ${SERVICE_HOST}:1025 SMTP, ${SERVICE_HOST}:8025 HTTP"
 [ -n "${DAGSTER_URL}" ] && echo "    dagster        ${DAGSTER_URL}"
+if [ -f "$(integrations_compose_file)" ]; then
+  echo "    integrations   ${SERVICE_HOST}:55435 (decaf-postgres-integration, db decaf_integration)"
+fi
 echo "==> prepare-it-tests complete: environment ready for \`npm run coverage\`"

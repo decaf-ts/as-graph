@@ -133,7 +133,9 @@ services:
       start_period: 5s
 
   minio:
-    image: quay.io/minio/minio:latest
+    # quay.io/minio/minio no longer resolves anonymously (401 on manifest HEAD);
+    # integrations uses the Chainguard build, which ships `mc` for the probes.
+    image: chainguard/minio:latest
     container_name: as-graph-it-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -144,7 +146,7 @@ services:
       - "59000:9000"
       - "59001:9001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/ready"]
+      test: ["CMD-SHELL", "MC_CONFIG_DIR=/tmp/.mc MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 /usr/bin/mc ls local >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 30

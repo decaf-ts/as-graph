@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * @module as-graph/tests/integration/graph/nodes/credentialsCrossTenantIsolation
  * @summary SAA-1151: cross-tenant credential isolation through the ctx-bound
@@ -203,12 +204,10 @@ function quoteLiteral(value: string): string {
 }
 
 function siblingRequire(relative: string): any {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(join(INTEGRATIONS_LIB, relative));
 }
 
 function typeormRequire(relative: string): any {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(join(FOR_TYPEORM_LIB, relative));
 }
 
@@ -267,10 +266,9 @@ function secretLeaked(value: unknown, markers: string[]): boolean {
  * ---------------------------------------------------------------------- */
 
 function dataSourceOptions(url: string, max: number): any {
-  const { DefaultNamingStrategy } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { DefaultNamingStrategy } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
 
   const snake = (value: string): string =>
     value
@@ -341,10 +339,9 @@ const NATIVE_COLUMN_TYPES: unknown[] = [
 ];
 
 function alignStructuredColumnsWithFixture(): void {
-  const { getMetadataArgsStorage } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { getMetadataArgsStorage } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
   const { tables, columns } = getMetadataArgsStorage();
   const targets = new Set<unknown>(
     tables
@@ -378,10 +375,9 @@ function alignStructuredColumnsWithFixture(): void {
 
 function ensureSecretTimestampColumns(): void {
   const { Secret } = siblingRequire("secrets/index.cjs");
-  const { getMetadataArgsStorage } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { getMetadataArgsStorage } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
   const storage = getMetadataArgsStorage();
   const target = Metadata.constr(Secret as never) as any;
   for (const [propertyName, mode] of [
@@ -449,9 +445,9 @@ function flavourModelsForTypeorm(): void {
  * their own options, or every read silently binds nothing.
  */
 function namespaceRlsTypeORMOptions(options?: any): any {
-  return siblingRequire("namespaces/rls/session-binding.cjs").namespaceRlsTypeORMOptions(
-    options
-  );
+  return siblingRequire(
+    "namespaces/rls/session-binding.cjs"
+  ).namespaceRlsTypeORMOptions(options);
 }
 
 async function createAdapter(
@@ -461,10 +457,9 @@ async function createAdapter(
   adapterOptions: any = {}
 ): Promise<any> {
   const { TypeORMAdapter, TypeORMFlavour } = typeormRequire("index.cjs");
-  const { DataSource } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { DataSource } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
 
   class Saa1151TypeormAdapter extends TypeORMAdapter {
     protected override isReserved(attr: string): boolean {
@@ -766,12 +761,9 @@ beforeAll(async () => {
   const { RlsBootstrapService } = siblingRequire(
     "namespaces/rls/rls-bootstrap.service.cjs"
   );
-  const { CredentialService } = siblingRequire(
-    "namespaces/services/index.cjs"
-  );
-  const { ModelSecretService, FsSecretService } = siblingRequire(
-    "secrets/index.cjs"
-  );
+  const { CredentialService } = siblingRequire("namespaces/services/index.cjs");
+  const { ModelSecretService, FsSecretService } =
+    siblingRequire("secrets/index.cjs");
   const { Secret } = siblingRequire("secrets/index.cjs");
   const { Credential } = siblingRequire("namespaces/models/index.cjs");
 
@@ -797,9 +789,7 @@ beforeAll(async () => {
   await adminClient.query(
     `DROP DATABASE IF EXISTS ${quoteIdentifier(DATABASE_NAME)} WITH (FORCE)`
   );
-  await adminClient.query(
-    `CREATE DATABASE ${quoteIdentifier(DATABASE_NAME)}`
-  );
+  await adminClient.query(`CREATE DATABASE ${quoteIdentifier(DATABASE_NAME)}`);
 
   setupClient = new pg.Client({
     connectionString: urlForDatabase(DATABASE_NAME),
@@ -821,12 +811,8 @@ beforeAll(async () => {
 
   const rlsDdl = ((rls as any).statements() as string[]).join("\n");
   for (const table of RLS_TABLES) {
-    expect(rlsDdl).toContain(
-      `ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`
-    );
-    expect(rlsDdl).toContain(
-      `ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`
-    );
+    expect(rlsDdl).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+    expect(rlsDdl).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
     for (const action of RLS_ACTIONS) {
       expect(rlsDdl).toContain(
         `CREATE POLICY ${table}_${action}_policy ON ${table} FOR ${action.toUpperCase()}`
@@ -1330,13 +1316,8 @@ describe("cross-tenant credential isolation through GraphNodeCredentialResolver"
   liveIt(
     "detects tenant-B leakage when the credential service ignores the context",
     async () => {
-      const leaked = await resolveAs(
-        P1,
-        CREDENTIAL.bModel,
-        vulnerableResolver
-      );
+      const leaked = await resolveAs(P1, CREDENTIAL.bModel, vulnerableResolver);
       expect(secretLeaked(leaked, [SECRET.bModel.marker])).toBe(true);
     }
   );
-
 });

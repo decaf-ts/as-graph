@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
+
 /**
  * @module as-graph/tests/integration/graph/nodes/credentialsPrincipalBinding
  * @summary SAA-1162: end-to-end assurance that `GraphNodeCredentialResolver`
@@ -50,13 +52,18 @@ const INTEGRATIONS_LIB = join(INTEGRATIONS_ROOT, "lib/cjs");
 const FOR_TYPEORM_ROOT = resolve(__dirname, "../../../../../for-typeorm");
 const FOR_TYPEORM_LIB = join(FOR_TYPEORM_ROOT, "lib/cjs");
 const RLS_TEMPLATE = join(INTEGRATIONS_LIB, "namespaces/rls/rls.template.cjs");
-const CREDENTIALS_MIGRATION = join(INTEGRATIONS_ROOT, "sql/004_credentials.sql");
+const CREDENTIALS_MIGRATION = join(
+  INTEGRATIONS_ROOT,
+  "sql/004_credentials.sql"
+);
 const RLS_FIXTURE = join(
   INTEGRATIONS_ROOT,
   "tests/integration/namespaces/fixtures/postgres-rls-schema.sql"
 );
 
-if (resolve(INTEGRATIONS_ROOT).startsWith(join(AS_GRAPH_ROOT, "node_modules"))) {
+if (
+  resolve(INTEGRATIONS_ROOT).startsWith(join(AS_GRAPH_ROOT, "node_modules"))
+) {
   throw new Error(
     "SAA-1162 must load the workspace integrations build, not the installed @decaf-ts/integrations package"
   );
@@ -146,20 +153,17 @@ function quoteLiteral(value: string): string {
 }
 
 function siblingRequire(relative: string): any {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(join(INTEGRATIONS_LIB, relative));
 }
 
 function typeormRequire(relative: string): any {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(join(FOR_TYPEORM_LIB, relative));
 }
 
 function dataSourceOptions(url: string, max: number): any {
-  const { DefaultNamingStrategy } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { DefaultNamingStrategy } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
 
   const snake = (value: string): string =>
     value
@@ -230,10 +234,9 @@ const NATIVE_COLUMN_TYPES: unknown[] = [
 ];
 
 function alignStructuredColumnsWithFixture(): void {
-  const { getMetadataArgsStorage } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { getMetadataArgsStorage } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
   const { tables, columns } = getMetadataArgsStorage();
   const targets = new Set<unknown>(
     tables
@@ -267,10 +270,9 @@ function alignStructuredColumnsWithFixture(): void {
 
 function ensureSecretTimestampColumns(): void {
   const { Secret } = siblingRequire("secrets/index.cjs");
-  const { getMetadataArgsStorage } = require(join(
-    FOR_TYPEORM_ROOT,
-    "node_modules/typeorm"
-  ));
+  const { getMetadataArgsStorage } = require(
+    join(FOR_TYPEORM_ROOT, "node_modules/typeorm")
+  );
   const storage = getMetadataArgsStorage();
   const target = Metadata.constr(Secret as never) as any;
   for (const [propertyName, mode] of [
@@ -337,9 +339,9 @@ function flavourModelsForTypeorm(): void {
  * `namespaceRlsTypeORMOptions()` into its own options.
  */
 function namespaceRlsTypeORMOptions(options?: any): any {
-  return siblingRequire("namespaces/rls/session-binding.cjs").namespaceRlsTypeORMOptions(
-    options
-  );
+  return siblingRequire(
+    "namespaces/rls/session-binding.cjs"
+  ).namespaceRlsTypeORMOptions(options);
 }
 
 async function createAdapter(
@@ -388,8 +390,7 @@ async function capture(
   principalId: string | undefined,
   credentialId: string
 ): Promise<
-  | { ok: true; value: GraphNodeCredentialSecret }
-  | { ok: false; error: any }
+  { ok: true; value: GraphNodeCredentialSecret } | { ok: false; error: any }
 > {
   try {
     return { ok: true, value: await resolveAs(principalId, credentialId) };
@@ -402,8 +403,7 @@ async function captureWithContext(
   context: Context,
   credentialId: string
 ): Promise<
-  | { ok: true; value: GraphNodeCredentialSecret }
-  | { ok: false; error: any }
+  { ok: true; value: GraphNodeCredentialSecret } | { ok: false; error: any }
 > {
   try {
     return {
@@ -757,7 +757,8 @@ describe("transaction-local principal binding for graph credential resolution", 
       await clearProbe();
       const cross = await capture(P1, CREDENTIAL.b);
       expect(cross.ok).toBe(false);
-      if (cross.ok) throw new Error("cross-tenant resolution unexpectedly succeeded");
+      if (cross.ok)
+        throw new Error("cross-tenant resolution unexpectedly succeeded");
       expect(cross.error.graphCode).toBe("GRAPH_CREDENTIAL_NOT_FOUND");
       expectNoSecretLeak(cross.error, SECRET_MARKER_B);
 
@@ -784,7 +785,8 @@ describe("transaction-local principal binding for graph credential resolution", 
       await clearProbe();
       const unbound = await capture(undefined, CREDENTIAL.a);
       expect(unbound.ok).toBe(false);
-      if (unbound.ok) throw new Error("unbound resolution unexpectedly succeeded");
+      if (unbound.ok)
+        throw new Error("unbound resolution unexpectedly succeeded");
       expect(unbound.error.graphCode).toBe("GRAPH_CREDENTIAL_NOT_FOUND");
       expectNoSecretLeak(unbound.error, SECRET_MARKER_A);
       const unboundProbes = await readProbe();
@@ -826,7 +828,9 @@ describe("transaction-local principal binding for graph credential resolution", 
       const outcome = await captureWithContext(context, CREDENTIAL.a);
       expect(outcome.ok).toBe(false);
       if (outcome.ok) {
-        throw new Error("resolution without a principal unexpectedly succeeded");
+        throw new Error(
+          "resolution without a principal unexpectedly succeeded"
+        );
       }
       expect(outcome.error.graphCode).toBe("GRAPH_CREDENTIAL_NOT_FOUND");
       expectNoSecretLeak(outcome.error, SECRET_MARKER_A);

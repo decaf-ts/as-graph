@@ -1477,7 +1477,7 @@ infra is skipped honestly rather than faked.
 | `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |
 | `npm run test:integration:standard` / `:mastra` / `:dagster` | Run one engine variant's integration suite |
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
-| `npm run prepare-it-tests` / `teardown-it-tests` | Boot / stop the integration service matrix (`docker/tests-compose.yml`, 11 services) plus the pinned Dagster gateway fixture — see [Integration service matrix](#integration-service-matrix) |
+| `npm run prepare-it-tests` / `teardown-it-tests` | Boot / stop the integration service matrix (`docker/tests-compose.yml`, 11 services), the pinned Dagster gateway fixture, and — when the sibling `integrations` checkout is present — its Postgres harness on `:55435` — see [Integration service matrix](#integration-service-matrix) |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
 | `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so the file stays excluded from the default Jest config and runs first in `test:all` (and therefore in `test`, `test:dist`, `coverage`, `prepare-pr`, and `prepare-release`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
@@ -1500,7 +1500,10 @@ production-grade service matrix booted by `npm run prepare-it-tests`
   `as-graph-it`), 11 services — Postgres 16, PGVector (pg 17), Apache AGE
   (pg 17), MySQL 8, SQL Server 2022, Redis, MinIO (S3), fake-gcs-server
   (GCS), Azurite (Azure Blob), SFTP (atmoz/sftp), and Mailpit (SMTP sink) —
-  plus the pinned Dagster gateway fixture built by `tests/integration/dagster`.
+  plus the pinned Dagster gateway fixture built by `tests/integration/dagster`
+  and, when the sibling `integrations` checkout is present, its Postgres
+  harness (`decaf-postgres-integration`, published on `:55435`; required by
+  the RLS credential suites, skipped gracefully when the checkout is absent).
 - **Contract:** every endpoint is probed before the script succeeds, and the
   resolved endpoints are written to the git-ignored
   `var/as-graph-it/.it-env.json`, which `tests/integration/it-env.setup.cjs`
@@ -1510,10 +1513,13 @@ production-grade service matrix booted by `npm run prepare-it-tests`
   (`http://127.0.0.1:3000/graphql` inside a containerized runner).
 - **Knobs:** `AS_GRAPH_IT_HOST` overrides the service host (a containerized
   runner defaults to the Docker bridge gateway `172.17.0.1`, a plain host to
-  `127.0.0.1`), and `AS_GRAPH_IT_SKIP_BUILD=1` reuses an existing `lib` build
-  for a fast infra-only re-prepare.
-- **Teardown:** `npm run teardown-it-tests` stops the gateway and the service
-  matrix, keeping the named volumes so the next prepare is fast; pass
+  `127.0.0.1`), `AS_GRAPH_IT_SKIP_BUILD=1` reuses an existing `lib` build
+  for a fast infra-only re-prepare, and `INTEGRATIONS_DIR` overrides the
+  location of the sibling `integrations` checkout whose Postgres harness
+  `prepare-it-tests` boots (default: `../integrations`).
+- **Teardown:** `npm run teardown-it-tests` stops the gateway, the service
+  matrix, and the sibling integrations Postgres harness (when its checkout is
+  present), keeping the named volumes so the next prepare is fast; pass
   `--volumes` for a full reset of service state.
 - **Honest skips:** without the booted matrix the live suites skip honestly.
   Suites needing a real external SaaS credential (GitHub, GitLab, Airtable,

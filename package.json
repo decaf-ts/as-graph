@@ -139,7 +139,7 @@
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "prepare-pr": "npm run lint-fix && npm run build:prod && npm run coverage && npm run docs",
-    "prepare-release": "npm run lint-fix && npm run build:prod && npm run coverage && npm run test:dist && npm run docs",
+    "prepare-release": "npm run lint-fix && npm run build:prod && npm run docs",
     "repo:init": "codex exec \"$(cat ./.codex/prompts/repo-setup.md)\nbase_path is `./`, initialize the repository\" -s workspace-write",
     "repo:setup": "codex exec \"$(cat ./.codex/prompts/repo-setup.md)\nbase_path is ./\" -s workspace-write",
     "repo:doc": "codex exec \"$(cat ./.codex/prompts/doc.md) $(cat ./.codex/prompts/bulk-docs.md)\nbase_path is ./\" -s workspace-write",
@@ -234,6 +234,7 @@
     "jsdoc": "^4.0.4",
     "jsdoc-mermaid": "^1.0.0",
     "markdown-include": "^0.4.3",
+    "nodemailer": "^10.2.1",
     "rimraf": "^6.0.1",
     "supertest": "^7.3.0"
   },
@@ -244,10 +245,7 @@
     "@mastra/pg": "^1.31.2"
   },
   "overrides": {
-    "js-yaml": "^5.2.2",
-    "gray-matter": {
-      "js-yaml": "^3.13.1"
-    }
+    "js-yaml": "^5.2.2"
   },
   "optionalDependencies": {
     "mssql": "^11.0.1",

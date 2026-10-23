@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Tears down everything `npm run prepare-it-tests` starts (SAA-1142).
 #
-# Default: stop and remove the service-matrix containers and the Dagster
-# gateway, keeping the named volumes so the next prepare is fast.
+# Default: stop and remove the service-matrix containers, the Dagster gateway,
+# and the sibling integrations Postgres harness (when its checkout is present),
+# keeping the named volumes so the next prepare is fast.
 # `--volumes`: also delete the volumes (full reset of service state).
 set -euo pipefail
 
@@ -31,6 +32,16 @@ if [ "${remove_volumes}" = "1" ]; then
   docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" down --volumes --remove-orphans
 else
   docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" down --remove-orphans
+fi
+
+INTEGRATIONS_COMPOSE="${INTEGRATIONS_DIR:-${ROOT_DIR}/../integrations}/docker/postgres-compose.yml"
+if [ -f "${INTEGRATIONS_COMPOSE}" ]; then
+  echo "==> stopping sibling integrations Postgres harness"
+  if [ "${remove_volumes}" = "1" ]; then
+    docker compose -f "${INTEGRATIONS_COMPOSE}" down --volumes --remove-orphans
+  else
+    docker compose -f "${INTEGRATIONS_COMPOSE}" down --remove-orphans
+  fi
 fi
 
 echo "==> removing generated integration environment"
