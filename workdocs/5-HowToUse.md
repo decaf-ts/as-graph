@@ -1196,6 +1196,34 @@ import { KeycloakAuthHandler } from "@decaf-ts/integrations/nest";
 export class AppModule {}
 ```
 
+##### Graph serving authentication (`@Public()` and the enforcement chain)
+
+All four graph serving controllers — `GraphRunController`, `GraphWorkflowController`,
+`GraphNodeCatalogueController`, and `GraphEngineController` — carry `@Public()` from
+`@decaf-ts/for-nest`, opting their routes out of the global `AuthInterceptor` that
+`DecafAuthModule.forRoot` installs when `authGlobal` is `true`. Without the marker, that
+interceptor's `authHandler.authorize(...)` gate ran before the controllers' own
+route-level policy could apply, and its `AuthorizationError` — a decaf error, not a Nest
+`HttpException` — surfaced the intended `401` as a generic `500`.
+
+`@Public()` is not an anonymous-access grant. The authoritative enforcement chain is:
+
+1. **Context priming** — the for-nest `AuthMiddleware` still runs and calls
+   `authHandler.prime(...)`, putting the authenticated `user`, `roles`, `namespaces`,
+   and `organization` on the `DecafRequestContext`.
+2. **Surface policy** — each controller's `requireAuthenticatedContext()` enforces the
+   per-API `auth` option: the `"required"` default rejects a request with no request
+   context or no resolved owner user with `401`; `"optional"` admits anonymous callers
+   for standalone runs.
+3. **Engine authorization** — `GraphAuthValidator` authorizes the workflow-level
+   requirements and every plan node's required namespaces/roles against the primed
+   principal and fails closed with `ForbiddenError` before any node executes.
+4. **Ownership checks** — service-level rules (never a controller option) gate the
+   data: the `allowAnonymousAccess` tolerance widens *read* visibility of owner-less
+   resources only, payload projection (`inputs`/`result`/`error` on run rows) is served
+   on owner equality, and writes (workflow overwrites, run cancellation) require strict
+   owner equality.
+
 #### Running each backend + UI combination
 
 The standalone host (`bin.as-graph-server`, `lib/cjs/nest/graph/main.cjs`) boots exactly one engine

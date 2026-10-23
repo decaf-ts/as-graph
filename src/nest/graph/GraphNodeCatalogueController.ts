@@ -23,7 +23,7 @@ import {
 import { SkipThrottle, Throttle } from "@nestjs/throttler";
 import { createHash } from "node:crypto";
 import { Context } from "@decaf-ts/core";
-import { DecafRequestContext } from "@decaf-ts/for-nest";
+import { DecafRequestContext, Public } from "@decaf-ts/for-nest";
 import type {
   GraphCredentialReference,
   GraphJsonValue,
@@ -123,7 +123,21 @@ function manifestDigest(payload: unknown): string {
  * instances, and invokes declared node methods. Enforces configured
  * authentication and `@nestjs/throttler` request-rate limits on the expensive
  * `resolve`/`methods` operations, and rejects non-JSON-safe request bodies.
+ *
+ * ### Authentication
+ *
+ * The class is annotated `@Public()` so the for-nest global `AuthInterceptor`
+ * (installed by `DecafAuthModule` when `authGlobal` is true) does not pre-empt
+ * these routes with its own model/role/namespace gate; it does not make the
+ * catalogue anonymous. The for-nest `AuthMiddleware` still primes the injected
+ * {@link DecafRequestContext}, and every route calls
+ * `requireAuthenticatedContext()`, whose `auth` option defaults to `"required"`
+ * (`401` without a request context) and admits anonymous callers only when
+ * `"optional"` is configured. Node namespace/role checks remain the execution
+ * engine's `GraphAuthValidator` responsibility at planning/execution time;
+ * this controller exposes no `allowAnonymousAccess` tolerance.
  */
+@Public()
 @Controller("graph")
 export class GraphNodeCatalogueController {
   constructor(

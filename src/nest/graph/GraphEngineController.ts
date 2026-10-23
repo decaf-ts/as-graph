@@ -21,7 +21,7 @@ import {
 } from "@nestjs/common";
 import { SkipThrottle, Throttle } from "@nestjs/throttler";
 import { NotFoundError } from "@decaf-ts/db-decorators";
-import { DecafRequestContext } from "@decaf-ts/for-nest";
+import { DecafRequestContext, Public } from "@decaf-ts/for-nest";
 import type { GraphWorkflowDocument } from "../../shared/graph";
 import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
 import { graphWorkflowOwnerOf } from "../../engine/services/GraphWorkflowService";
@@ -102,7 +102,22 @@ function graphEngineHttpErrorOf(
  *
  * All routes are read-only `GET`s, select engines by allowlisted id only, and
  * never reflect arbitrary query input.
+ *
+ * ### Authentication
+ *
+ * The class is annotated `@Public()` so the for-nest global `AuthInterceptor`
+ * (installed by `DecafAuthModule` when `authGlobal` is true) does not pre-empt
+ * these routes with its own model/role/namespace gate. This is a "the
+ * controller owns its auth policy" marker, not anonymous access: the for-nest
+ * `AuthMiddleware` still primes the injected {@link DecafRequestContext}, and
+ * every route calls `requireAuthenticatedContext()`, which defaults to
+ * `auth: "required"` (`401` without a request context or a resolved owner user)
+ * and admits anonymous callers only under the explicit `auth: "optional"`
+ * mode. Workflow and node namespace/role authorization remains the execution
+ * engine's `GraphAuthValidator` concern; these read routes expose no
+ * `allowAnonymousAccess` tolerance of their own.
  */
+@Public()
 @Controller("graph/engines")
 export class GraphEngineController {
   constructor(

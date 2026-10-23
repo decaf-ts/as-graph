@@ -26,7 +26,7 @@ import {
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import { AuthorizationError, ForbiddenError } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../shared/graph";
-import { DecafRequestContext } from "@decaf-ts/for-nest";
+import { DecafRequestContext, Public } from "@decaf-ts/for-nest";
 import type { GraphWorkflowValidationResult } from "../../";
 import {
   GraphWorkflowService,
@@ -137,7 +137,23 @@ function graphWorkflowHttpErrorOf(
  * - `POST /graph/workflows/validate` — run boundary validation and return
  *   structured issues (`code`, `path`, `nodeId`, `edgeId`, `message`,
  * safe `details`).
+ *
+ * ### Authentication
+ *
+ * The class is annotated `@Public()` so the for-nest global `AuthInterceptor`
+ * (installed by `DecafAuthModule` when `authGlobal` is true) does not pre-empt
+ * these routes with its own model/role/namespace gate; it is not a public or
+ * anonymous endpoint. The for-nest `AuthMiddleware` still primes the injected
+ * {@link DecafRequestContext}, and every route calls
+ * `requireAuthenticatedContext()`, which defaults to `auth: "required"` (`401`
+ * without a request context or a resolved owner user) and admits anonymous
+ * callers only under `auth: "optional"`. Per-user ownership is enforced by
+ * {@link GraphWorkflowService}: the service-level `allowAnonymousAccess`
+ * tolerance relaxes reads for owner-less resources only and never authorizes
+ * an overwrite. The execution engine's `GraphAuthValidator` still checks
+ * workflow and node namespaces when a document is run.
  */
+@Public()
 @Controller("graph")
 export class GraphWorkflowController {
   constructor(

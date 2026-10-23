@@ -30,7 +30,7 @@ import { Observable } from "rxjs";
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import { AuthorizationError, ForbiddenError } from "@decaf-ts/core";
 import type { GraphWorkflowDocument } from "../../shared/graph";
-import { DecafRequestContext } from "@decaf-ts/for-nest";
+import { DecafRequestContext, Public } from "@decaf-ts/for-nest";
 import type {
   GraphRunEventEnvelope,
   GraphRunLimits,
@@ -267,7 +267,24 @@ function graphRunEventMessage(
  * `GET /graph/runs/:runId/events` streams the run's sequenced event
  * envelopes over SSE until a terminal event closes the stream. Every
  * operation is ownership-checked against the requesting user.
+ *
+ * ### Authentication
+ *
+ * The class is annotated `@Public()` so the for-nest global `AuthInterceptor`
+ * (installed by `DecafAuthModule` when `authGlobal` is true) does not pre-empt
+ * the run routes with its own model/role/namespace gate; runs are not
+ * anonymous. The for-nest `AuthMiddleware` still primes the injected
+ * {@link DecafRequestContext}, and every route calls
+ * `requireAuthenticatedContext()`, which defaults to `auth: "required"` (`401`
+ * without a request context or a resolved owner user) and admits anonymous
+ * callers only under `auth: "optional"`. Runs stay ownership-checked, and the
+ * execution engine's `GraphAuthValidator` still enforces the workflow and
+ * per-node namespace/role requirements before any node executes. The
+ * service-level `allowAnonymousAccess` tolerance widens read visibility for
+ * owner-less runs only; it never authorizes a mutation or replaces
+ * authentication.
  */
+@Public()
 @Controller("graph")
 export class GraphRunController {
   constructor(
