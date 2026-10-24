@@ -1384,13 +1384,38 @@ infra is skipped honestly rather than faked.
 | `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so the file stays excluded from the default Jest config and runs first in `test:all` (and therefore in `test`, `test:dist`, `coverage`, `prepare-pr`, and `prepare-release`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
 | `npm run test:all` | Run the entire Jest suite (unit, integration, e2e) plus the `test:unit:pdf` lane |
-| `npm run test:dist` | Re-run the full suite against the compiled `lib` and `dist` outputs |
+| `npm run test:dist` | Re-run the full suite against the compiled artifacts: a `TEST_TARGET=lib` pass retargets every source-relative import to `lib/cjs` through `scripts/jest-target-resolver.cjs` (run `npm run build` first — a missing emitted file fails loudly), then a `TEST_TARGET=dist` pass exercises the rolled-up `dist/as-graph.cjs` bundle through `tests/unit/ts-workspace.test.ts` (the bundle exposes only the package barrel, so the deep-import suites stay on the lib pass). See [Test target selection](#test-target-selection) |
+| `npm run prepare-pr` / `prepare-release` | Lint-fix, production build, coverage, and the docs build; `prepare-release` additionally runs both `test:dist` target passes so the release is certified against `lib` and `dist`, not just the sources |
 | `npm run test:circular` | Check the source for circular dependencies |
 | `npm run coverage` | Test run with coverage into `workdocs/reports/coverage` |
 | `npm run lint` / `lint-fix` | ESLint |
 | `npm run docs` | Build the generated JSDoc site into `docs/` |
 | `npm run uml` / `drawings` | Render `workdocs/uml/*.puml` and `workdocs/drawings/*.drawio` into `workdocs/resources` |
 | `repo:readme` | Regenerate `README.md` from `workdocs/Readme.md` |
+
+##### Test target selection
+
+`TEST_TARGET` selects which build of the package a Jest run loads — the Decaf
+workspace convention `src | lib | dist`, resolved by
+`tests/workspace-target.ts`:
+
+- `src` (the default, and any unset value) resolves the TypeScript sources —
+  the historical source-mode resolution, unchanged.
+- `lib` retargets every source-relative import landing under `src/` to the
+  matching emitted file under `lib/cjs` through
+  `scripts/jest-target-resolver.cjs`, wired as the Jest `resolver` in
+  `jest.config.cjs` (with `cjs` added to `moduleFileExtensions`). Run
+  `npm run build` first: the resolver fails loudly instead of silently mixing
+  sources into the lib pass.
+- `dist` loads the rolled-up `dist/as-graph.cjs` / `dist/as-graph.js` bundle
+  through `tests/unit/ts-workspace.test.ts`. The bundle intentionally exposes
+  only the package barrel, so the deep-import suites cannot run against it —
+  the dist pass pins the public surface (exports, built-in kinds, engine
+  wiring) while the lib pass exercises the emitted modules.
+
+`npm run test:dist` runs the entire suite once per target (lib, then dist), and
+`npm run prepare-release` runs coverage plus both target passes before the docs
+build.
 
 #### Integration service matrix
 

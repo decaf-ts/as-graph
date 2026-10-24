@@ -283,7 +283,8 @@ describe("dagster fixture catalogue is read-only (SAA-721)", () => {
       (row) =>
         row.feature !== "list / inspect existing workflows" &&
         row.feature !== "execute existing workflow (launch run)" &&
-        row.feature !== "replay / re-execute existing run"
+        row.feature !== "replay / re-execute existing run" &&
+        row.feature !== "workflowRun"
     );
     expect(authoring.length).toBeGreaterThan(0);
     for (const row of authoring) expect(row.verdict).toBe("NOT_SUPPORTED");

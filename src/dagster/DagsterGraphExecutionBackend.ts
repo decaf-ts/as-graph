@@ -372,6 +372,14 @@ export class DagsterGraphExecutionBackend
   readonly local = false;
 
   /**
+   * Dagster serves deployment projections, not authorable canonical documents:
+   * `execute` binds the requested workflow id to the deployed job through
+   * `getJob` and validates that binding itself. Catalogue kind resolution and
+   * authoring topology rules therefore do not apply to the served documents.
+   */
+  readonly documentValidation = "deployment" as const;
+
+  /**
    * Dagster never authors code-mode surfaces; the facade rejects them before
    * delegating.
    */
@@ -453,6 +461,7 @@ export class DagsterGraphExecutionBackend
     ].map((document) => ({
       id: document.id,
       ...(document.name ? { name: document.name } : {}),
+      runnable: false,
     }));
 
     const client =
@@ -466,12 +475,17 @@ export class DagsterGraphExecutionBackend
       );
     }
     const jobs = await client.listJobs();
+    // Only an already-deployed job can be launched, and only behind the explicit
+    // execution gate; seeded canonical documents stay read-only.
+    const deploymentRunnable =
+      this.executionEnabled && typeof client.launchRun === "function";
     // The real deployment is authoritative on an id collision (F6): a deployment
     // job replaces a seeded fixture sharing its id.
     const deploymentJobs = jobs.map((job) => ({
       id: job.name,
       name: job.name,
       ...(job.updatedAt !== undefined ? { updatedAt: job.updatedAt } : {}),
+      runnable: deploymentRunnable,
     }));
     const deploymentIds = new Set(deploymentJobs.map((job) => job.id));
     const seededOnly = seeded.filter(
@@ -498,6 +512,7 @@ export class DagsterGraphExecutionBackend
       summaries.push({
         id: document.id,
         ...(document.name ? { name: document.name } : {}),
+        runnable: false,
       });
     }
     return summaries;

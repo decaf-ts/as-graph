@@ -6,9 +6,11 @@
  * order into Mastra builder calls: leaf nodes become steps via host-provided
  * handlers, `if`/`switch` nodes become branches over shared condition
  * predicates, loops nest a recursive sub-compilation, and human-approval nodes
- * become suspending steps with validated resume schemas. Compiled workflows are
- * cached by document id and fingerprint; translation fails closed on unsupported
- * kinds and cyclic documents.
+ * translate either to a suspending step with a validated, non-degraded resume
+ * schema (when the node declares one) or to a non-suspending inline approval
+ * that mirrors the reference engine (when it declares none). Compiled workflows
+ * are cached by document id and fingerprint; translation fails closed on
+ * unsupported kinds and cyclic documents.
  */
 import { z } from "zod";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
@@ -43,7 +45,10 @@ export const GRAPH_MASTRA_FOREACH_KIND = "core.loop.foreach";
 export const GRAPH_MASTRA_WHILE_KIND = "core.loop.while";
 /** Document kind translated into a Mastra `do-until` loop. */
 export const GRAPH_MASTRA_UNTIL_KIND = "core.loop.until";
-/** Document kind translated into a Mastra suspending approval step. */
+/**
+ * Document kind translated into a Mastra approval step: suspending when the
+ * node declares a resume schema, inline otherwise.
+ */
 export const GRAPH_MASTRA_HUMAN_APPROVAL_KIND = "core.flow.humanApproval";
 
 /**
@@ -539,9 +544,18 @@ export class MastraWorkflowCompiler {
   }
 
   /**
-   * Translates a human-approval node into a suspending Mastra step with a
-   * validated resume schema (C15); a non-approved resume is reported as a
-   * rejected outcome.
+   * Translates a human-approval node into a suspending or non-suspending Mastra
+   * step (C15; SAA-1360 D6).
+   *
+   * - When the node declares `parameters.resumeSchema`, the step suspends and
+   *   the schema passes through {@link assertMastraResumeSchemaSafe}, so a
+   *   missing, `any`, or otherwise degraded schema fails closed. The validated
+   *   schema is recorded in `resumeSchemas`, and a non-approved resume is
+   *   reported as a rejected outcome.
+   * - When the node declares no `resumeSchema`, the step is a non-suspending
+   *   inline approval that mirrors the reference engine: `parameters.approved
+   *   === false` yields `{ rejected: value }`, otherwise `{ approved: value }`,
+   *   and no resume schema is recorded.
    *
    * @param cursor - The builder position to extend.
    * @param node - The human-approval node to translate.
@@ -549,7 +563,8 @@ export class MastraWorkflowCompiler {
    * @param resumeSchemas - Accumulated resume schemas by node id.
    * @param degradedSchemas - Accumulated degraded-schema node ids.
    * @returns The extended builder position.
-   * @throws {GraphExecutionError} When the declared resume schema is unsafe.
+   * @throws {GraphExecutionError} When the node declares a resume schema that
+   *   is missing or degraded.
    */
   private applyHumanApproval(
     cursor: MastraWorkflowBuilderLike,
@@ -560,11 +575,31 @@ export class MastraWorkflowCompiler {
     degradedSchemas: string[]
   ): MastraWorkflowBuilderLike {
     const parameters = node.parameters ?? {};
+    const declaredResumeSchema = parameters["resumeSchema"];
+    if (declaredResumeSchema === undefined) {
+      const step = stampDecafNodeOrigin(
+        createStep({
+          id: node.id,
+          inputSchema: z.any(),
+          outputSchema: z.any(),
+          execute: async (args: { inputData?: unknown }) => {
+            const inputData = isRecord(args.inputData) ? args.inputData : {};
+            const value = inputData["value"] ?? inputData;
+            return parameters["approved"] === false
+              ? { rejected: value }
+              : { approved: value };
+          },
+        }),
+        node
+      );
+      steps.set(node.id, step);
+      return cursor.then(step);
+    }
     const suspendSchema = toMastraZodSchema(
       parameters["suspendSchema"] as never
     );
     const resumeSchema = assertMastraResumeSchemaSafe(
-      parameters["resumeSchema"] as never
+      declaredResumeSchema as never
     );
     resumeSchemas.set(node.id, resumeSchema);
     const step = stampDecafNodeOrigin(

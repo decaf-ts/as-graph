@@ -139,7 +139,7 @@
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "prepare-pr": "npm run lint-fix && npm run build:prod && npm run coverage && npm run docs",
-    "prepare-release": "npm run lint-fix && npm run build:prod && npm run docs",
+    "prepare-release": "npm run lint-fix && npm run build:prod && npm run coverage && npm run test:dist && npm run docs",
     "repo:init": "codex exec \"$(cat ./.codex/prompts/repo-setup.md)\nbase_path is `./`, initialize the repository\" -s workspace-write",
     "repo:setup": "codex exec \"$(cat ./.codex/prompts/repo-setup.md)\nbase_path is ./\" -s workspace-write",
     "repo:doc": "codex exec \"$(cat ./.codex/prompts/doc.md) $(cat ./.codex/prompts/bulk-docs.md)\nbase_path is ./\" -s workspace-write",
@@ -167,10 +167,7 @@
   "files": [
     "lib",
     "dist",
-    "assets",
-    "!lib/cjs/workflows",
-    "!lib/esm/workflows",
-    "!lib/types/workflows"
+    "assets"
   ],
   "keywords": [
     "graph",

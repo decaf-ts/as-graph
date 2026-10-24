@@ -32,6 +32,7 @@ import {
   GraphWorkflowService,
   graphWorkflowOwnerOf,
 } from "../../engine/services/GraphWorkflowService";
+import { GraphExecutionEngine } from "../../engine/execution/GraphExecutionEngine";
 import { GraphWorkflowDocumentRejectedError } from "../../engine/errors/GraphWorkflowErrors";
 import type { GraphWorkflowDocumentLimits } from "../../engine/validation/GraphWorkflowDocumentLimits";
 import { toIsoDateString } from "./servingDates";
@@ -134,7 +135,8 @@ function graphWorkflowHttpErrorOf(
  *   editor state is preserved verbatim for lossless round trips).
  * - `GET  /graph/workflows/{workflowId}` — load the canonical document;
  *   legacy persisted snapshots are converted losslessly on the read path.
- * - `POST /graph/workflows/validate` — run boundary validation and return
+ * - `POST /graph/workflows/validate` — run the execution engine's nine-stage
+ *   validation gate (the same gate `POST /graph/runs` applies) and return
  *   structured issues (`code`, `path`, `nodeId`, `edgeId`, `message`,
  * safe `details`).
  *
@@ -161,7 +163,9 @@ export class GraphWorkflowController {
     @Optional() @Inject(DecafRequestContext)
     private readonly requestContext?: DecafRequestContext,
     @Optional() @Inject(GRAPH_WORKFLOW_OPTIONS)
-    private readonly options: GraphWorkflowControllerOptions = {}
+    private readonly options: GraphWorkflowControllerOptions = {},
+    @Optional()
+    private readonly executionEngine?: GraphExecutionEngine
   ) {}
 
   /**
@@ -282,7 +286,12 @@ export class GraphWorkflowController {
   }
 
   /**
-   * Validates a workflow document against the boundary gate without persisting.
+   * Validates a workflow document without persisting it. When the execution
+   * engine is available the run path's own nine-stage validator is used, so
+   * this endpoint accepts and rejects exactly what `POST /graph/runs` will
+   * (SAA-1357 D2); the resolved workflow is never returned over the wire.
+   * Without a wired engine (standalone controller use) the persistence
+   * boundary gate remains the fallback.
    *
    * @param {unknown} body - Bare `GraphWorkflowDocument` or canonical snapshot wrapper.
    * @return {Promise<GraphWorkflowValidationResult>} Structured validation result.
@@ -294,7 +303,14 @@ export class GraphWorkflowController {
   ): Promise<GraphWorkflowValidationResult> {
     this.requireAuthenticatedContext();
     const document = this.documentOf(body);
-    return this.workflowService.validateDocument(document, this.requestContext);
+    if (!this.executionEngine) {
+      return this.workflowService.validateDocument(document, this.requestContext);
+    }
+    const result = await this.executionEngine.validateWorkflowDocument(
+      document,
+      this.requestContext
+    );
+    return { valid: result.valid, issues: result.issues };
   }
 
   /**

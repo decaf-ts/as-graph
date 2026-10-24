@@ -73,7 +73,11 @@ describe("DagsterGraphExecutionBackend id shadowing (SAA-798 F6)", () => {
     const listed = await backend.listWorkflows();
     const collide = listed.filter((summary) => summary.id === "collide");
     expect(collide).toHaveLength(1);
-    expect(collide[0]).toEqual({ id: "collide", name: "collide" });
+    expect(collide[0]).toEqual({
+      id: "collide",
+      name: "collide",
+      runnable: false,
+    });
   });
 
   it("F6.8 a seeded fixture not defined by the deployment is still served and listed", async () => {

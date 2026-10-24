@@ -131,7 +131,7 @@ describe("DagsterGraphExecutionBackend (read-only)", () => {
       workflows: { list: "supported", get: "supported" },
     });
     await expect(backend.listWorkflows()).resolves.toEqual([
-      { id: "dagsterwf_job", name: "dagsterwf_job" },
+      { id: "dagsterwf_job", name: "dagsterwf_job", runnable: false },
     ]);
   });
 

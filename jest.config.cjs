@@ -47,7 +47,10 @@ const config = {
   moduleNameMapper: {
     "^@decaf-ts/([^/]+)$": "<rootDir>/node_modules/@decaf-ts/$1",
   },
-  moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
+  // `TEST_TARGET=lib` retargets the source-relative imports to `lib/cjs`;
+  // unset (and `dist`) keep the source-mode graph. See the resolver module.
+  resolver: "<rootDir>/scripts/jest-target-resolver.cjs",
+  moduleFileExtensions: ["ts", "tsx", "js", "jsx", "cjs", "json", "node"],
   collectCoverage: false,
   coverageDirectory: "./workdocs/reports/coverage",
   collectCoverageFrom: ["src/**/*.{js,jsx,ts,tsx}", "!src/bin"],

@@ -18,6 +18,16 @@
  *
  * Nested loop-body documents are scanned recursively, so a code-mode surface
  * buried inside a loop body is caught before any remote launch.
+ *
+ * {@link detectGraphCodeModeSurfaces} remains the full diagnostic authority: it
+ * reports every surface, including `value-template`, so callers that need a
+ * complete inventory keep seeing them. The non-local launch gate instead uses
+ * the blocking projection, {@link detectGraphCodeModeBlockingSurfaces}, which
+ * drops `value-template` surfaces. A {@link GraphValueTemplate} is persisted
+ * declarative node configuration; a translated backend receives it as inert JSON
+ * and evaluates none of its expressions, so it cannot execute code remotely
+ * (SAA-1360 D7). Executable surfaces — a code node, a code condition, and an
+ * expression binding — remain launch-blocking.
  */
 import type {
   GraphNodeInstance,
@@ -187,6 +197,12 @@ function scanCodeModeDocument(
 /**
  * Detects every code-mode surface in a canonical workflow document (SAA-193 C1).
  *
+ * This is the full diagnostic authority: it reports `value-template` surfaces
+ * as well as executable ones. Use
+ * {@link detectGraphCodeModeBlockingSurfaces} when deciding whether a non-local
+ * backend may launch the document, because value templates do not execute code
+ * on a translated backend (SAA-1360 D7).
+ *
  * @param document - The canonical document to inspect.
  * @returns One entry per code-mode surface found; empty when the workflow is
  *   fully graphical and host-executable.
@@ -209,4 +225,46 @@ export function graphDocumentHasCodeMode(
   document: GraphWorkflowDocument
 ): boolean {
   return detectGraphCodeModeSurfaces(document).length > 0;
+}
+
+/**
+ * Reports whether a detected code-mode surface must block a non-local backend
+ * launch (SAA-1360 D7).
+ *
+ * `value-template` surfaces are non-blocking: a {@link GraphValueTemplate} is
+ * persisted declarative configuration, and a translated backend receives it as
+ * inert JSON without evaluating its expressions. Every other surface kind
+ * executes code and therefore blocks a launch on a backend that cannot run it.
+ *
+ * @param surface - The detected code-mode surface to classify.
+ * @returns `true` when the surface is executable and must gate a non-local
+ *   launch; `false` for a declarative `value-template` surface.
+ */
+export function isGraphCodeModeBlockingSurface(
+  surface: GraphCodeModeSurface
+): boolean {
+  return surface.kind !== "value-template";
+}
+
+/**
+ * Detects the code-mode surfaces that must gate a non-local backend launch
+ * (SAA-1360 D7).
+ *
+ * This is the projection used by `GraphExecutionEngine.assertCodeModeSupported`.
+ * It derives from {@link detectGraphCodeModeSurfaces} — still the full
+ * diagnostic authority — and drops `value-template` surfaces, which are
+ * persisted declarative parameters rather than executable code. Executable
+ * surfaces (code node, code condition, and expression binding) remain blocking,
+ * so a document that mixes both still fails closed before any remote launch.
+ *
+ * @param document - The canonical document to inspect.
+ * @returns The executable code-mode surfaces; empty when a non-local backend
+ *   can launch the workflow without host-side code execution.
+ */
+export function detectGraphCodeModeBlockingSurfaces(
+  document: GraphWorkflowDocument
+): GraphCodeModeSurface[] {
+  return detectGraphCodeModeSurfaces(document).filter(
+    isGraphCodeModeBlockingSurface
+  );
 }

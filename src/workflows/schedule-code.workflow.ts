@@ -18,7 +18,7 @@ export const scheduleCodeDocument = document({
   outputs: [port("computed")],
   nodes: [
     node("schedule", "core.trigger.schedule", {
-      cron: { expression: "0 * * * *" },
+      cron: "0 * * * *",
     }),
     node(
       "compute",

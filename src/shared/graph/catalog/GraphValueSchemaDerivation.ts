@@ -46,6 +46,15 @@ const GRAPH_DATE_TYPE_NAME_FORMATS: Record<string, string> = {
   duration: "duration",
 };
 
+const GRAPH_BUILT_IN_CONSTRUCTOR_TYPE_NAMES: Record<string, string> = {
+  string: "string",
+  number: "number",
+  boolean: "boolean",
+  array: "array",
+  object: "object",
+  date: "date",
+};
+
 export { GRAPH_DATE_TYPE_NAME_FORMATS };
 
 /**
@@ -90,7 +99,7 @@ export function graphEnumValuesFromValidation(
 
 function customTypeNameFromValidation(validation: GraphValidationRecord): string | undefined {
   const typeEntry = validation[ValidationKeys.TYPE] as
-    | { customTypes?: Array<{ name?: string } | string> }
+    | { customTypes?: Array<{ name?: string } | string | (new (...args: never[]) => unknown)> }
     | undefined;
   const custom = typeEntry?.customTypes?.[0];
   const name =
@@ -112,8 +121,16 @@ export function graphValueSchemaFromValidation(
   const v = validation ?? {};
   const enumValues = graphEnumValuesFromValidation(v);
   if (enumValues) return { type: "enum", values: enumValues };
-  const customTypeName = customTypeNameFromValidation(v) ?? modelName;
-  if (customTypeName) return { type: "model", name: customTypeName };
+  const customTypeName = customTypeNameFromValidation(v);
+  if (customTypeName) {
+    const builtInTypeName =
+      GRAPH_BUILT_IN_CONSTRUCTOR_TYPE_NAMES[customTypeName.toLowerCase()];
+    if (!builtInTypeName) return { type: "model", name: customTypeName };
+    const format = graphDateTypeNameToFormat(builtInTypeName);
+    if (format !== undefined) return { type: "string", format };
+    return baseSchemaForType(builtInTypeName, v);
+  }
+  if (modelName) return { type: "model", name: modelName };
   return baseSchemaForType(typeName, v);
 }
 

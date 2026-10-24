@@ -190,6 +190,7 @@ dagsterIntegrationDescribe("Dagster read-only surface (SAA-306)", () => {
         "execute existing workflow (launch run)",
         "list / inspect existing workflows",
         "replay / re-execute existing run",
+        "workflowRun",
       ].sort()
     );
 
@@ -213,7 +214,8 @@ dagsterIntegrationDescribe("Dagster read-only surface (SAA-306)", () => {
       (row) =>
         row.feature !== "list / inspect existing workflows" &&
         row.feature !== "execute existing workflow (launch run)" &&
-        row.feature !== "replay / re-execute existing run"
+        row.feature !== "replay / re-execute existing run" &&
+        row.feature !== "workflowRun"
     );
     expect(authoringRows.length).toBeGreaterThan(0);
     for (const row of authoringRows) {

@@ -93,6 +93,12 @@ export const DAGSTER_CAPABILITY_TABLE: DagsterCapabilityRow[] = [
       "Lists and inspects already-deployed Dagster jobs through the read-only client port.",
   },
   {
+    feature: "workflowRun",
+    verdict: "supported",
+    detail:
+      "Graph UI Run is available per workflow: already-deployed Dagster jobs are runnable when `executionEnabled` is on, while read-only canonical demo documents are listed with `runnable: false` and their Run action stays disabled. The per-workflow `runnable` flag gates the UI only; the launch itself is bound to a deployed job by the backend.",
+  },
+  {
     feature: "execute existing workflow (launch run)",
     verdict: "supported",
     detail:

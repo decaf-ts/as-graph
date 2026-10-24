@@ -462,4 +462,64 @@ describe("GraphEngineController (SAA-197)", () => {
       }
     });
   });
+
+  describe("per-workflow runnable forwarding (SAA-1359 D5)", () => {
+    let app: INestApplication;
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        controllers: [GraphEngineController],
+        providers: [
+          {
+            provide: GraphEngineCapabilityService,
+            useValue: {
+              isKnownEngine: jest.fn(() => true),
+              manifestSnapshot: jest.fn(() => ({
+                engines: [],
+                defaultEngineId: "local",
+              })),
+              descriptor: jest.fn(() => undefined),
+              listWorkflows: jest.fn(async () => [
+                { id: "seeded-doc", name: "Seeded doc", runnable: false },
+                { id: "deployed-job", name: "Deployed job", runnable: true },
+                { id: "unflagged", name: "Unflagged" },
+              ]),
+              getWorkflow: jest.fn(async () => undefined),
+            },
+          },
+          {
+            provide: GRAPH_ENGINE_CAPABILITY_OPTIONS,
+            useValue: { auth: "optional" },
+          },
+        ],
+      }).compile();
+      app = moduleRef.createNestApplication();
+      await app.init();
+    });
+
+    afterAll(async () => {
+      try {
+        await app.close();
+      } catch {
+        // already closed
+      }
+    });
+
+    it("preserves runnable true/false and omits it when the backend leaves it undefined", async () => {
+      const res = await request(app.getHttpServer()).get(
+        "/graph/engines/local/workflows"
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        { workflowId: "seeded-doc", name: "Seeded doc", runnable: false },
+        { workflowId: "deployed-job", name: "Deployed job", runnable: true },
+        { workflowId: "unflagged", name: "Unflagged" },
+      ]);
+      // An undefined backend flag must not materialize as `runnable: undefined`.
+      expect(
+        Object.keys((res.body as Array<Record<string, unknown>>)[2]).sort()
+      ).toEqual(["name", "workflowId"]);
+    });
+  });
 });

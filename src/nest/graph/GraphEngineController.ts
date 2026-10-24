@@ -49,6 +49,11 @@ export interface GraphEngineWorkflowSummary {
   name?: string;
   /** ISO timestamp of the last update, when the backend exposes one. */
   updatedAt?: string;
+  /**
+   * Whether a run of this listed workflow can be launched through the facade.
+   * Omitted when the backend declares no per-workflow restriction.
+   */
+  runnable?: boolean;
 }
 
 /**
@@ -226,6 +231,9 @@ export class GraphEngineController {
           workflowId: summary.id,
           ...(summary.name !== undefined ? { name: summary.name } : {}),
           ...(updatedAt !== undefined ? { updatedAt } : {}),
+          ...(summary.runnable !== undefined
+            ? { runnable: summary.runnable }
+            : {}),
         };
       });
     } catch (e: unknown) {

@@ -114,6 +114,7 @@ describe("Dagster read-only surface", () => {
         "execute existing workflow (launch run)",
         "list / inspect existing workflows",
         "replay / re-execute existing run",
+        "workflowRun",
       ].sort()
     );
 
@@ -135,12 +136,22 @@ describe("Dagster read-only surface", () => {
       DAGSTER_ERROR.EXECUTION_NOT_ENABLED
     );
 
+    // SAA-1359 D5: the UI's per-workflow Run gate is its own supported
+    // capability row; the row-level `runnable` flag is authoritative.
+    const workflowRunRow = DAGSTER_CAPABILITY_TABLE.find(
+      (row) => row.feature === "workflowRun"
+    );
+    expect(workflowRunRow?.verdict).toBe("supported");
+    expect(workflowRunRow?.detail).toContain("runnable");
+    expect(workflowRunRow?.detail).toContain("executionEnabled");
+
     // Every authoring/translation row stays not_supported.
     const authoringRows = DAGSTER_CAPABILITY_TABLE.filter(
       (row) =>
         row.feature !== "list / inspect existing workflows" &&
         row.feature !== "execute existing workflow (launch run)" &&
-        row.feature !== "replay / re-execute existing run"
+        row.feature !== "replay / re-execute existing run" &&
+        row.feature !== "workflowRun"
     );
     expect(authoringRows.length).toBeGreaterThan(0);
     for (const row of authoringRows) {

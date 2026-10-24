@@ -52,6 +52,16 @@ export type GraphCodeMode = "hostSide" | "unsupported";
 export type GraphBackendCapabilityStatus = "supported" | "not_supported";
 
 /**
+ * How a backend's submitted workflow documents must be validated before the
+ * facade plans or delegates them. `canonical` is the default authoring contract
+ * (every node kind and edge resolved against the trusted catalogue).
+ * `deployment` is for backends that serve an opaque deployment projection: the
+ * backend re-reads and binds the authoritative deployment artifact itself, so
+ * catalogue kind resolution and authoring topology rules do not apply.
+ */
+export type GraphDocumentValidationMode = "canonical" | "deployment";
+
+/**
  * Engine-agnostic capability metadata a backend declares. Hosts and servers read
  * this to surface what the active backend can do without probing it.
  */
@@ -73,6 +83,13 @@ export interface GraphBackendWorkflowSummary {
   name?: string;
   /** Last update timestamp, when the backing store exposes one. */
   updatedAt?: Date;
+  /**
+   * Whether a run of this listed workflow can be launched through the facade.
+   * Undeclared means "no per-workflow restriction beyond the engine capability";
+   * an explicit `false` blocks the UI Run action for this row only (e.g. a
+   * read-only canonical document that the deployment does not define as a job).
+   */
+  runnable?: boolean;
 }
 
 /**
@@ -235,6 +252,11 @@ export interface GraphExecutionBackend<
   readonly config?: CONFIG;
   /** Whether this backend executes locally (in-process). */
   readonly local: boolean;
+  /**
+   * The document validation contract this backend requires. Omitted means
+   * `canonical`; a deployment-projection backend declares `deployment`.
+   */
+  readonly documentValidation?: GraphDocumentValidationMode;
   /**
    * How this backend handles code-mode surfaces (SAA-193 C1). Required so the
    * facade can fail closed before delegating a code-mode workflow to a non-local

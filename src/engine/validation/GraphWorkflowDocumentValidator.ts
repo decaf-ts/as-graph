@@ -120,6 +120,13 @@ export interface GraphWorkflowDocumentValidatorOptions {
    * literal+edge bindings are rejected).
    */
   allowLiteralAndEdgeBindings?: boolean;
+  /**
+   * Validate a backend-served deployment projection instead of an authorable
+   * canonical document: unknown node kinds resolve leniently and the
+   * authoring-only loose-node rule does not apply. Structural, JSON-safety,
+   * limit, and forbidden-field checks still run.
+   */
+  deploymentProjection?: boolean;
 }
 
 /**
@@ -209,7 +216,9 @@ export class GraphWorkflowDocumentValidator {
   private readonly credentialValidator: GraphCredentialReferenceValidator;
 
   constructor(private readonly options: GraphWorkflowDocumentValidatorOptions) {
-    this.nodeValidator = new GraphNodeInstanceValidator(options.catalogue);
+    this.nodeValidator = new GraphNodeInstanceValidator(options.catalogue, {
+      deploymentProjection: options.deploymentProjection === true,
+    });
     this.credentialValidator = new GraphCredentialReferenceValidator(
       options.credentialAuthorizer
     );
@@ -340,7 +349,9 @@ export class GraphWorkflowDocumentValidator {
     // and are therefore independently acyclic.
     // ------------------------------------------------------------------
     this.validateAcyclicity(resolvedNodes, edges, document, issues);
-    collectLooseNodeIssues(document, issues);
+    if (this.options.deploymentProjection !== true) {
+      collectLooseNodeIssues(document, issues);
+    }
     for (const node of resolvedNodes) {
       this.parameterValidator.validateBindingSatisfaction(
         node.instance,

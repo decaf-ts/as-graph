@@ -15,15 +15,55 @@ import type {
   GraphNodeResolutionContext,
   GraphResolvedNodeManifest,
 } from "../../shared/graph";
+import { GraphExecutionError } from "../errors/GraphExecutionError";
+import type { GraphNodeExecutor } from "../execution/GraphNodeExecutor";
 import type { GraphValidationIssue } from "./GraphValidationIssue";
 import type { GraphResolvedNodeInstance } from "./GraphResolvedWorkflow";
+
+/** Options controlling kind resolution. */
+export interface GraphNodeInstanceValidatorOptions {
+  /**
+   * Resolve unknown kinds and their reference-only edges for a backend that
+   * serves an opaque deployment projection and binds the authoritative artifact
+   * itself. The synthetic manifest is lenient and its executor fails closed.
+   */
+  deploymentProjection?: boolean;
+}
+
+const DEPLOYMENT_PROJECTION_EXECUTOR: GraphNodeExecutor = {
+  execute: () => {
+    throw new GraphExecutionError(
+      "A deployment-projection node cannot be executed by the facade; the backend must bind and run the authoritative deployment artifact",
+      "GRAPH_DEPLOYMENT_PROJECTION_NOT_EXECUTABLE"
+    );
+  },
+};
+
+function deploymentProjectionManifest(
+  kind: string
+): GraphResolvedNodeManifest {
+  return {
+    kind,
+    display: { name: kind },
+    inputs: [],
+    outputs: [],
+    parameters: [],
+    policies: {
+      allowUndeclaredParameters: true,
+      allowUnknownOutputs: true,
+    },
+  };
+}
 
 /**
  * Resolves node instances against the backend catalogue and validates the
  * resolved dynamic-port surface.
  */
 export class GraphNodeInstanceValidator {
-  constructor(private readonly catalogue: GraphNodeCatalogue) {}
+  constructor(
+    private readonly catalogue: GraphNodeCatalogue,
+    private readonly options: GraphNodeInstanceValidatorOptions = {}
+  ) {}
 
   /**
    * Stage 2 — kind resolution. Every node kind must exist in the backend
@@ -42,6 +82,14 @@ export class GraphNodeInstanceValidator {
     for (const [index, node] of nodes.entries()) {
       const path = `nodes[${index}]`;
       if (!this.catalogue.has(node.kind, ...args)) {
+        if (this.options.deploymentProjection === true) {
+          resolved.set(node.id, {
+            instance: node,
+            manifest: deploymentProjectionManifest(node.kind),
+            executor: DEPLOYMENT_PROJECTION_EXECUTOR,
+          });
+          continue;
+        }
         issues.push({
           code: "kind.unknown",
           path: `${path}.kind`,

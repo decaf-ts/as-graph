@@ -63,6 +63,7 @@ import {
   type GraphWorkflowDocumentValidationLimits,
 } from "../validation/GraphWorkflowDocumentValidator";
 import type { GraphCredentialAuthorizer } from "../validation/GraphCredentialReferenceValidator";
+import type { GraphWorkflowValidationResult } from "../validation/GraphValidationIssue";
 import { GraphDocumentValidationError } from "../validation/GraphValidationErrors";
 import { createGraphValueRepository } from "../store/GraphValueRepository";
 import { GraphPinningService } from "../pinning/GraphPinningService";
@@ -83,7 +84,7 @@ import {
   type GraphBackendWorkflowSummary,
   type GraphExecutionBackend,
 } from "./GraphExecutionBackend";
-import { detectGraphCodeModeSurfaces } from "./GraphCodeMode";
+import { detectGraphCodeModeBlockingSurfaces } from "./GraphCodeMode";
 import { GraphExecutionBackendRegistry } from "./GraphExecutionBackendRegistry";
 import { LocalGraphExecutionBackend } from "./LocalGraphExecutionBackend";
 import {
@@ -336,6 +337,12 @@ export class GraphExecutionEngine
       config.backend ??
       GraphExecutionBackendRegistry.current ??
       new LocalGraphExecutionBackend();
+    if (backend.documentValidation === "deployment" && backend.local) {
+      throw new GraphExecutionError(
+        "A local execution backend cannot declare deployment document validation: deployment projection relaxes catalogue kind resolution and must stay bound to the remote backend that owns the authoritative deployment artifact",
+        "GRAPH_DEPLOYMENT_PROJECTION_REQUIRES_REMOTE_BACKEND"
+      );
+    }
     const client: GraphExecutionEngineClient = {
       registry: config.registry,
       catalogue,
@@ -349,6 +356,7 @@ export class GraphExecutionEngine
           catalogue,
           limits: config.documentLimits,
           credentialAuthorizer: config.credentialAuthorizer,
+          deploymentProjection: backend.documentValidation === "deployment",
         }),
       authValidator: new GraphAuthValidator({
         enabled: config.authEnabled === true,
@@ -500,6 +508,30 @@ export class GraphExecutionEngine
 
   private get documentValidator(): GraphWorkflowDocumentValidator {
     return this.client.documentValidator;
+  }
+
+  /**
+   * Runs the engine's own document validation gate without planning or
+   * executing the workflow.
+   *
+   * This is the same nine-stage validator the run path applies, so a caller
+   * (for example the workflow controller's validate endpoint) accepts and
+   * rejects exactly what a launch of the same document would (SAA-1357 D2).
+   * The resolved workflow is not returned; only the structural validation
+   * result is.
+   *
+   * @param document - The canonical workflow document to validate.
+   * @param args - Optional contextual arguments supplying the operation context.
+   * @returns The validation result with `valid` and the accumulated `issues`.
+   */
+  async validateWorkflowDocument(
+    document: GraphWorkflowDocument,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphWorkflowValidationResult> {
+    const { ctx } = (await this.logCtx(args, "validateWorkflowDocument", true)).for(
+      this.validateWorkflowDocument
+    );
+    return this.documentValidator.validate(document, 0, ctx);
   }
 
   /**
@@ -852,9 +884,18 @@ export class GraphExecutionEngine
   }
 
   /**
-   * SAA-193 C1 fail-closed gate. A non-local backend must not launch a
-   * workflow carrying any code-mode surface unless it declares
-   * `codeMode: "hostSide"` and the facade has a configured sandbox evaluator.
+   * SAA-193 C1 / SAA-1360 D7 fail-closed gate. A non-local backend must not
+   * launch a workflow carrying an executable code-mode surface unless it
+   * declares `codeMode: "hostSide"` and the facade has a configured sandbox
+   * evaluator.
+   *
+   * The gate evaluates {@link detectGraphCodeModeBlockingSurfaces}, not the full
+   * {@link detectGraphCodeModeSurfaces} inventory: `value-template` surfaces are
+   * excluded because a value template is persisted declarative configuration
+   * that a translated backend receives as inert JSON and never evaluates, so it
+   * cannot execute code remotely. Code nodes, code conditions, and expression
+   * bindings still block the launch, so a mixed document fails closed.
+   *
    * Local backends are not gated: their code-mode surfaces fail naturally
    * through the existing per-surface `GRAPH_CODE_SANDBOX_NOT_CONFIGURED` path.
    */
@@ -863,7 +904,7 @@ export class GraphExecutionEngine
   ): void {
     const backend = this.client.backend;
     if (backend.local) return;
-    const surfaces = detectGraphCodeModeSurfaces(document);
+    const surfaces = detectGraphCodeModeBlockingSurfaces(document);
     if (surfaces.length === 0) return;
     if (backend.codeMode === "unsupported") {
       throw new GraphExecutionError(

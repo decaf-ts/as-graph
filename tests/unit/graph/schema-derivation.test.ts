@@ -172,6 +172,71 @@ describe("schema derivation from validation", () => {
   });
 });
 
+/**
+ * SAA-1357 D1: Decaf auto-injects a built-in constructor into
+ * `TYPE.customTypes` for every property (for example `@input()` on a `string`
+ * property records `String`). Those constructors are primitives, not models:
+ * deriving `{type:"model",name:"String"}` made a string port accept any object
+ * and rejected every string literal. This pins the primitive mapping and keeps
+ * genuine model custom types on the model branch.
+ */
+describe("built-in constructor custom types derive primitive schemas (SAA-1357 D1)", () => {
+  const primitiveCases: Array<[string, unknown, Record<string, unknown>]> = [
+    ["String", String, { type: "string" }],
+    ["Number", Number, { type: "number" }],
+    ["Boolean", Boolean, { type: "boolean" }],
+    ["Array", Array, { type: "array", items: { type: "any" } }],
+    ["Object", Object, { type: "object", properties: {} }],
+    ["Date", Date, { type: "string", format: "date" }],
+  ];
+
+  it.each(primitiveCases)(
+    "maps the %s constructor to its primitive schema",
+    (_name, constructor, expected) => {
+      const record = {
+        type: { customTypes: [constructor] },
+      } as never as GraphValidationRecord;
+      expect(graphValueSchemaFromValidation(record)).toEqual(expected);
+    }
+  );
+
+  it("maps built-in names from customTypes to primitives too", () => {
+    for (const [name, , expected] of primitiveCases) {
+      const record = {
+        type: { customTypes: [{ name }] },
+      } as never as GraphValidationRecord;
+      expect({ name, schema: graphValueSchemaFromValidation(record) }).toEqual({
+        name,
+        schema: expected,
+      });
+    }
+  });
+
+  it("never leaks a built-in constructor as a model schema", () => {
+    for (const [name, constructor] of primitiveCases) {
+      const schema = graphValueSchemaFromValidation({
+        type: { customTypes: [constructor] },
+      } as never as GraphValidationRecord);
+      expect({ name, type: schema.type }).not.toEqual({ name, type: "model" });
+    }
+  });
+
+  it("keeps real model custom types on the model branch", () => {
+    class Order {}
+    const fromConstructor = {
+      type: { customTypes: [Order] },
+    } as never as GraphValidationRecord;
+    expect(graphValueSchemaFromValidation(fromConstructor)).toEqual({
+      type: "model",
+      name: "Order",
+    });
+    expect(graphValueSchemaFromValidation(undefined, "string", "Order")).toEqual({
+      type: "model",
+      name: "Order",
+    });
+  });
+});
+
 describe("visibility expressions", () => {
   it("accepts the full operator grammar with exact key sets", () => {
     expect(GRAPH_VISIBILITY_OPS).toEqual([

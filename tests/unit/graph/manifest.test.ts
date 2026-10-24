@@ -130,7 +130,11 @@ describe("manifest compilation", () => {
       "retries",
     ]);
     const [script, notes, snippet, retries] = manifest.parameters;
-    expect(script.type).toBe("object");
+    // SAA-1357 D1: `ManifestTransformNode.script` is a `string` property, so
+    // Decaf's auto-injected `TYPE.customTypes` entry is the `String`
+    // constructor and must derive the primitive string schema. The previous
+    // `"object"` expectation encoded the misderivation bug.
+    expect(script.type).toBe("string");
     expect(script.required).toBe(true);
     expect(script.defaultValue).toBe("echo");
     expect(notes.type).toBe("string");
