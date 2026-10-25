@@ -7,10 +7,16 @@
  * utility nodes (§22.2.2–22.2.3), the Agent node (§21.3), the three loop kinds
  * (`core.loop.foreach/while/until`, §5.9), the workflow input/output value
  * boundary nodes, and the Stage 2/3 service families — Storage
- * (`core.storage.*`: SQL databases, Redis, and S3/GCS/Azure blob), DevOps
- * (`core.devops.*`: crypto, JWT, shell command, FTP, GitHub/GitLab), Comms
- * (`core.comms.*`: Slack, Telegram, Teams, Gmail, Email), and the newer IO
- * kinds (`core.io.*`: Airtable, Google Sheets, GraphQL, Spreadsheet File).
+ * (`core.storage.*`: SQL databases, Redis, RabbitMQ, and S3/GCS/Azure blob),
+ * DevOps (`core.devops.*`: crypto, JWT, shell command, FTP, GitHub/GitLab),
+ * Comms (`core.comms.*`: Slack, Telegram, Teams, Gmail, Email, Discord,
+ * WhatsApp, Microsoft Outlook), the newer IO kinds (`core.io.*`: Airtable,
+ * Google Sheets, GraphQL, Spreadsheet File, Confluence, Jira, Google Docs,
+ * Google Calendar, Microsoft Excel, Microsoft SharePoint, Convert to File,
+ * HTML, HTML Extract, Markdown, XML, and the binary file readers/writer), the
+ * Stage 5a Data kinds (`core.data.*`: Aggregate, Item Lists, Compare Datasets,
+ * Summarize, Remove Duplicates), and the Stage 5b eventing triggers
+ * (`core.trigger.*`: Error, Workflow, RabbitMQ, Redis, SSE, Postgres).
  * Shared non-node support (the base class and manifests) lives in
  * sibling files under the same tree; category styles remain in
  * `@decaf-ts/ui-decorators` (`graph/category-styles`). Consumers
@@ -37,6 +43,11 @@ export * from "./data/rename-keys/node";
 export * from "./data/set/node";
 export * from "./data/sort/node";
 export * from "./data/split-out/node";
+export * from "./data/aggregate/node";
+export * from "./data/item-lists/node";
+export * from "./data/compare-datasets/node";
+export * from "./data/summarize/node";
+export * from "./data/remove-duplicates/node";
 export * from "./io/extract-from-file/node";
 export * from "./io/http-request/node";
 export * from "./io/read-pdf/node";
@@ -46,6 +57,7 @@ export * from "./storage/database/postgres/node";
 export * from "./storage/database/mysql/node";
 export * from "./storage/database/mssql/node";
 export * from "./storage/redis/node";
+export * from "./storage/rabbitmq/node";
 export * from "./storage/blob/s3/node";
 export * from "./storage/blob/gcs/node";
 export * from "./storage/blob/azure/node";
@@ -54,10 +66,27 @@ export * from "./comms/telegram/node";
 export * from "./comms/teams/node";
 export * from "./comms/gmail/node";
 export * from "./comms/email-send/node";
+export * from "./comms/discord/node";
+export * from "./comms/whatsapp/node";
+export * from "./comms/outlook/node";
 export * from "./io/google-sheets/node";
 export * from "./io/airtable/node";
 export * from "./io/spreadsheet-file/node";
 export * from "./io/graphql/node";
+export * from "./io/microsoft-excel/node";
+export * from "./io/confluence/node";
+export * from "./io/jira/node";
+export * from "./io/google-docs/node";
+export * from "./io/microsoft-sharepoint/node";
+export * from "./io/google-calendar/node";
+export * from "./io/convert-to-file/node";
+export * from "./io/html/node";
+export * from "./io/html-extract/node";
+export * from "./io/markdown/node";
+export * from "./io/xml/node";
+export * from "./io/read-binary-file/node";
+export * from "./io/read-binary-files/node";
+export * from "./io/write-binary-file/node";
 export * from "./devops/github/node";
 export * from "./devops/gitlab/node";
 export * from "./devops/crypto/node";
@@ -72,6 +101,12 @@ export * from "./triggers/form/node";
 export * from "./triggers/manual/node";
 export * from "./triggers/schedule/node";
 export * from "./triggers/webhook/node";
+export * from "./triggers/error/node";
+export * from "./triggers/workflow/node";
+export * from "./triggers/rabbitmq/node";
+export * from "./triggers/redis/node";
+export * from "./triggers/sse/node";
+export * from "./triggers/postgres/node";
 export * from "./agents/agent/node";
 export * from "./agents/zones";
 export * from "./agents/tools/tool/node";
@@ -174,6 +209,12 @@ import { FormTriggerNode } from "./triggers/form/node";
 import { ManualTriggerNode } from "./triggers/manual/node";
 import { ScheduleTriggerNode } from "./triggers/schedule/node";
 import { WebhookTriggerNode } from "./triggers/webhook/node";
+import { ErrorTriggerNode } from "./triggers/error/node";
+import { WorkflowTriggerNode } from "./triggers/workflow/node";
+import { RabbitMqTriggerNode } from "./triggers/rabbitmq/node";
+import { RedisTriggerNode } from "./triggers/redis/node";
+import { SseTriggerNode } from "./triggers/sse/node";
+import { PostgresTriggerNode } from "./triggers/postgres/node";
 import { GraphForeachLoopNode } from "./flow/loop/foreach/node";
 import { GraphUntilLoopNode } from "./flow/loop/until/node";
 import { GraphWhileLoopNode } from "./flow/loop/while/node";
@@ -188,6 +229,11 @@ import { RenameKeysNode } from "./data/rename-keys/node";
 import { SetNode } from "./data/set/node";
 import { SortNode } from "./data/sort/node";
 import { SplitOutNode } from "./data/split-out/node";
+import { AggregateNode } from "./data/aggregate/node";
+import { ItemListsNode } from "./data/item-lists/node";
+import { CompareDatasetsNode } from "./data/compare-datasets/node";
+import { SummarizeNode } from "./data/summarize/node";
+import { RemoveDuplicatesNode } from "./data/remove-duplicates/node";
 import { ExtractFromFileNode } from "./io/extract-from-file/node";
 import { HttpRequestNode } from "./io/http-request/node";
 import { ReadPDFNode } from "./io/read-pdf/node";
@@ -199,6 +245,7 @@ import { PostgresNode } from "./storage/database/postgres/node";
 import { MySqlNode } from "./storage/database/mysql/node";
 import { MicrosoftSqlNode } from "./storage/database/mssql/node";
 import { RedisNode } from "./storage/redis/node";
+import { RabbitMqNode } from "./storage/rabbitmq/node";
 import { S3StorageNode, AwsS3StorageNode } from "./storage/blob/s3/node";
 import { GoogleCloudStorageNode } from "./storage/blob/gcs/node";
 import { AzureStorageNode } from "./storage/blob/azure/node";
@@ -211,10 +258,27 @@ import { TelegramNode } from "./comms/telegram/node";
 import { TeamsNode } from "./comms/teams/node";
 import { GmailNode } from "./comms/gmail/node";
 import { EmailSendNode } from "./comms/email-send/node";
+import { DiscordNode } from "./comms/discord/node";
+import { WhatsAppNode } from "./comms/whatsapp/node";
+import { MicrosoftOutlookNode } from "./comms/outlook/node";
 import { GoogleSheetsNode } from "./io/google-sheets/node";
 import { AirtableNode } from "./io/airtable/node";
 import { SpreadsheetFileNode } from "./io/spreadsheet-file/node";
 import { GraphqlNode } from "./io/graphql/node";
+import { MicrosoftExcelNode } from "./io/microsoft-excel/node";
+import { ConfluenceNode } from "./io/confluence/node";
+import { JiraNode } from "./io/jira/node";
+import { GoogleDocsNode } from "./io/google-docs/node";
+import { MicrosoftSharePointNode } from "./io/microsoft-sharepoint/node";
+import { GoogleCalendarNode } from "./io/google-calendar/node";
+import { ConvertToFileNode } from "./io/convert-to-file/node";
+import { HtmlNode } from "./io/html/node";
+import { HtmlExtractNode } from "./io/html-extract/node";
+import { MarkdownNode } from "./io/markdown/node";
+import { XmlNode } from "./io/xml/node";
+import { ReadBinaryFileNode } from "./io/read-binary-file/node";
+import { ReadBinaryFilesNode } from "./io/read-binary-files/node";
+import { WriteBinaryFileNode } from "./io/write-binary-file/node";
 import { GithubNode } from "./devops/github/node";
 import { GitlabNode } from "./devops/gitlab/node";
 
@@ -370,6 +434,11 @@ export const GRAPH_DATA_NODES = [
   LimitNode,
   SortNode,
   RenameKeysNode,
+  AggregateNode,
+  ItemListsNode,
+  CompareDatasetsNode,
+  SummarizeNode,
+  RemoveDuplicatesNode,
 ] as const;
 
 /**
@@ -381,6 +450,14 @@ export const GRAPH_IO_NODES = [
   ExtractFromFileNode,
   ReadPDFNode,
   ReadWriteFileNode,
+  ConvertToFileNode,
+  HtmlNode,
+  HtmlExtractNode,
+  MarkdownNode,
+  XmlNode,
+  ReadBinaryFileNode,
+  ReadBinaryFilesNode,
+  WriteBinaryFileNode,
 ] as const;
 
 /**
@@ -450,6 +527,11 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.data.merge": MergeNode,
   "core.data.filter": FilterNode,
   "core.data.splitOut": SplitOutNode,
+  "core.data.aggregate": AggregateNode,
+  "core.data.itemLists": ItemListsNode,
+  "core.data.compareDatasets": CompareDatasetsNode,
+  "core.data.summarize": SummarizeNode,
+  "core.data.removeDuplicates": RemoveDuplicatesNode,
   "core.data.dateTime": DateTimeNode,
   "core.data.dataTable": DataTableNode,
   "core.data.limit": LimitNode,
@@ -464,6 +546,7 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.storage.mySql": MySqlNode,
   "core.storage.microsoftSql": MicrosoftSqlNode,
   "core.storage.redis": RedisNode,
+  "core.storage.rabbitmq": RabbitMqNode,
   "core.storage.s3": S3StorageNode,
   "core.storage.awsS3": AwsS3StorageNode,
   "core.storage.googleCloudStorage": GoogleCloudStorageNode,
@@ -479,12 +562,35 @@ export const GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass>
   "core.comms.teams": TeamsNode,
   "core.comms.gmail": GmailNode,
   "core.comms.emailSend": EmailSendNode,
+  "core.comms.discord": DiscordNode,
+  "core.comms.whatsApp": WhatsAppNode,
+  "core.comms.microsoftOutlook": MicrosoftOutlookNode,
   "core.io.googleSheets": GoogleSheetsNode,
   "core.io.airtable": AirtableNode,
   "core.io.spreadsheetFile": SpreadsheetFileNode,
   "core.io.graphql": GraphqlNode,
+  "core.io.microsoftExcel": MicrosoftExcelNode,
+  "core.io.confluence": ConfluenceNode,
+  "core.io.jira": JiraNode,
+  "core.io.googleDocs": GoogleDocsNode,
+  "core.io.microsoftSharePoint": MicrosoftSharePointNode,
+  "core.io.googleCalendar": GoogleCalendarNode,
+  "core.io.convertToFile": ConvertToFileNode,
+  "core.io.html": HtmlNode,
+  "core.io.htmlExtract": HtmlExtractNode,
+  "core.io.markdown": MarkdownNode,
+  "core.io.xml": XmlNode,
+  "core.io.readBinaryFile": ReadBinaryFileNode,
+  "core.io.readBinaryFiles": ReadBinaryFilesNode,
+  "core.io.writeBinaryFile": WriteBinaryFileNode,
   "core.flow.executeSubWorkflow": ExecuteSubWorkflowNode,
   "core.trigger.executeWorkflow": ExecuteWorkflowTriggerNode,
+  "core.trigger.error": ErrorTriggerNode,
+  "core.trigger.workflow": WorkflowTriggerNode,
+  "core.trigger.rabbitmq": RabbitMqTriggerNode,
+  "core.trigger.redis": RedisTriggerNode,
+  "core.trigger.sse": SseTriggerNode,
+  "core.trigger.postgres": PostgresTriggerNode,
   "core.loop.foreach": GraphForeachLoopNode,
   "core.loop.while": GraphWhileLoopNode,
   "core.loop.until": GraphUntilLoopNode,

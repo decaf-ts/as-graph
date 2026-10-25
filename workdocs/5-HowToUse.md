@@ -172,13 +172,13 @@ The built-in kinds are declared one folder per node under
 
 | Group | Kinds |
 | --- | --- |
-| Triggers | `core.trigger.manual`, `core.trigger.webhook`, `core.trigger.schedule`, `core.trigger.event`, `core.trigger.form`, `core.trigger.chat`, `core.trigger.executeWorkflow` |
+| Triggers | `core.trigger.manual`, `core.trigger.webhook`, `core.trigger.schedule`, `core.trigger.event`, `core.trigger.form`, `core.trigger.chat`, `core.trigger.executeWorkflow`, `core.trigger.error`, `core.trigger.workflow`, `core.trigger.rabbitmq`, `core.trigger.redis`, `core.trigger.sse`, `core.trigger.postgres` |
 | Flow | `core.flow.if`, `core.flow.switch`, `core.flow.delay`, `core.flow.errorBoundary`, `core.flow.humanApproval`, `core.flow.log`, `core.flow.break`, `core.flow.executeSubWorkflow` |
-| Data | `core.data.set`, `core.data.merge`, `core.data.filter`, `core.data.splitOut`, `core.data.dateTime`, `core.data.dataTable`, `core.data.limit`, `core.data.sort`, `core.data.renameKeys` |
-| IO | `core.io.httpRequest`, `core.io.respondToWebhook`, `core.io.extractFromFile`, `core.io.readPDF`, `core.io.readWriteFile`, `core.io.googleSheets`, `core.io.airtable`, `core.io.spreadsheetFile`, `core.io.graphql` |
-| Storage | `core.storage.postgres`, `core.storage.mySql`, `core.storage.microsoftSql`, `core.storage.redis`, `core.storage.s3`, `core.storage.awsS3`, `core.storage.googleCloudStorage`, `core.storage.azureStorage` |
+| Data | `core.data.set`, `core.data.merge`, `core.data.filter`, `core.data.splitOut`, `core.data.dateTime`, `core.data.dataTable`, `core.data.limit`, `core.data.sort`, `core.data.renameKeys`, `core.data.aggregate`, `core.data.itemLists`, `core.data.compareDatasets`, `core.data.summarize`, `core.data.removeDuplicates` |
+| IO | `core.io.httpRequest`, `core.io.respondToWebhook`, `core.io.extractFromFile`, `core.io.readPDF`, `core.io.readWriteFile`, `core.io.googleSheets`, `core.io.airtable`, `core.io.spreadsheetFile`, `core.io.graphql`, `core.io.convertToFile`, `core.io.html`, `core.io.htmlExtract`, `core.io.markdown`, `core.io.xml`, `core.io.readBinaryFile`, `core.io.readBinaryFiles`, `core.io.writeBinaryFile`, `core.io.microsoftExcel`, `core.io.confluence`, `core.io.jira`, `core.io.googleDocs`, `core.io.microsoftSharePoint`, `core.io.googleCalendar` |
+| Storage | `core.storage.postgres`, `core.storage.mySql`, `core.storage.microsoftSql`, `core.storage.redis`, `core.storage.rabbitmq`, `core.storage.s3`, `core.storage.awsS3`, `core.storage.googleCloudStorage`, `core.storage.azureStorage` |
 | DevOps | `core.devops.crypto`, `core.devops.jwt`, `core.devops.executeCommand`, `core.devops.ftp`, `core.devops.github`, `core.devops.gitlab` |
-| Comms | `core.comms.slack`, `core.comms.telegram`, `core.comms.teams`, `core.comms.gmail`, `core.comms.emailSend` |
+| Comms | `core.comms.slack`, `core.comms.telegram`, `core.comms.teams`, `core.comms.gmail`, `core.comms.emailSend`, `core.comms.discord`, `core.comms.whatsApp`, `core.comms.microsoftOutlook` |
 | Utility | `core.utility.code`, `core.utility.map`, `core.utility.log` |
 | Loops | `core.loop.foreach`, `core.loop.while`, `core.loop.until` |
 | Agent | `core.agent` (the agent node) and its `core.agent.*` family kinds: `core.agent.tool|toolSelector` (tools), `core.agent.hook|toolDeny|delegationHook` (hooks), `core.agent.skill|skillSelector` (skills), `core.agent.sandbox` (sandbox), `core.agent.scorer|scorerSelector` (scorers), `core.agent.memory|memorySelector` (memory), `core.agent.embedding|vectorStore|retriever|rerank|chunking` (RAG), `core.agent.chain.basic|qa|summarization` (RAG chains), `core.agent.inputProcessor|outputProcessor|guardrail|structuredOutputParser|informationExtractor|langchainCode` (processors), `core.agent.hitl` (human-in-the-loop), `core.agent.voice` (voice), `core.agent.trigger.mcp|slack|discord|telegram|teams` (triggers), `core.agent.response.slack|discord|telegram|teams` (channel responses). Every `core.agent[.*]` kind requires the mastra engine — the general (local) engine fails closed with `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` |
@@ -190,7 +190,7 @@ secret services. A node's `credentialRef` parameter holds a `{ credentialId, cre
 credential record, validates its type, enabled state and expiry, then retrieves the secret by `secretName` through the model-backed
 or filesystem-backed secret service. A missing/unconfigured resolver fails closed with `GRAPH_CREDENTIAL_SERVICE_UNAVAILABLE` and an
 unsupported provider with `GRAPH_CREDENTIAL_PROVIDER_UNSUPPORTED`; secrets are never stored in workflow documents. The
-PostgreSQL, MySQL, and Microsoft SQL kinds require the matching TypeORM driver (`pg`, `mysql2`, `mssql`), all three declared as optional dependencies. The Comms, DevOps, and IO kinds delegate to the service classes in `@decaf-ts/integrations` where applicable (`comms/{slack,telegram,teams,gmail,email}`, `devops/{github,gitlab}`, `core.devops.ftp` via `@decaf-ts/integrations/sftp`, `io/{google-sheets,airtable,graphql}`); `core.devops.crypto` and `core.devops.jwt` use `@decaf-ts/crypto`, `core.devops.executeCommand` runs a local `child_process`, and `core.io.spreadsheetFile` is local parsing/writing with no network service.
+PostgreSQL, MySQL, and Microsoft SQL kinds require the matching TypeORM driver (`pg`, `mysql2`, `mssql`), all three declared as optional dependencies. The Comms, DevOps, and IO kinds delegate to the service classes in `@decaf-ts/integrations` where applicable (`comms/{slack,telegram,teams,gmail,email,discord,whatsapp,outlook}`, `devops/{github,gitlab}`, `core.devops.ftp` via `@decaf-ts/integrations/sftp`, `io/{google-sheets,airtable,graphql,confluence,jira,google-docs,microsoft-excel,microsoft-sharepoint}`, and `core.io.googleCalendar` via `@decaf-ts/integrations/calendar/google-calendar`); the Stage 5 stream triggers connect directly through their thin client libraries — `core.trigger.rabbitmq`/`core.storage.rabbitmq` over `amqplib`, `core.trigger.redis` over the `@decaf-ts/integrations/redis` adapter (same connection handling as `core.storage.redis`), `core.trigger.sse` over the `eventsource` client, and `core.trigger.postgres` over `pg` with the same TLS policy as `core.storage.postgres`. `core.devops.crypto` and `core.devops.jwt` use `@decaf-ts/crypto`, `core.devops.executeCommand` runs a local `child_process`, and `core.io.spreadsheetFile` is local parsing/writing with no network service.
 
 There is no structural `parallel` node kind: the graph itself parallelizes on multiple connections
 to an output port (native fan-out) and syncs on multiple connections into an input port (native
@@ -221,6 +221,28 @@ persists cross-run rows through the engine's data-table repository, and
   bottom-right, `hooks`/`sandbox` top-middle, `tools`/`skill` bottom-middle, and the processor
   zones `inputProcessors`/`outputProcessors` — each accepting only
   the matching family node's connection (same-category rule).
+- Stream triggers (`core.trigger.rabbitmq`, `core.trigger.redis`, `core.trigger.sse`,
+  `core.trigger.postgres`) — wait for exactly one event inside the executor: the run
+  service starts the run, the trigger subscribes (queue consume, pub/sub channel
+  patterns, SSE endpoint, Postgres `LISTEN`), and the run continues on the first
+  event. The wait honours `timeoutMs` (default 30 s) and the run's abort signal
+  (`GRAPH_TRIGGER_ABORTED`), the subscription is always cleaned up, and one
+  message per run is consumed and acknowledged immediately.
+- `core.storage.rabbitmq` — the producer pairing node for `core.trigger.rabbitmq`:
+  publishes a message to a queue or a topic exchange (exchange type defaults to
+  `topic`) over `amqplib`; a message published to the same queue/exchange fires
+  the trigger. `core.storage.redis` with `operation: "publish"` is the producer
+  side of `core.trigger.redis` (same channel prefix scoping).
+- `core.trigger.error` — payloadless entrypoint of an error workflow; normalizes
+  the failure payload delivered through the run/event boundary into the
+  `execution`/`workflow`/`error` blocks. `core.trigger.workflow` — starts a run
+  on the workflow's own `activate`/`update` lifecycle events; a delivered event
+  outside the configured list fails closed.
+- `core.io.readBinaryFile` / `core.io.readBinaryFiles` (glob) / `core.io.writeBinaryFile` —
+  binary payloads (`base64` data + mime type, `utf8`/`base64`/`auto` decoding)
+  confined to the same `GRAPH_FILE_IO_BASE` root as `core.io.readWriteFile`
+  (traversal and forbidden-directory escapes fail closed with
+  `GRAPH_FILE_PATH_FORBIDDEN`).
 
 `@uielement` labels and placeholders are locale keys, not hardcoded strings: the strings live in
 `assets/i18n/en.json`, shipped in the published package.
@@ -1379,7 +1401,7 @@ infra is skipped honestly rather than faked.
 | `npm run start:backend:dagster` | Boot the standalone host with the Dagster engine (`GRAPH_BACKEND_ENGINE=dagster`) |
 | `npm run test:integration:standard` / `:mastra` / `:dagster` | Run one engine variant's integration suite |
 | `npm run test:integration:backend` | Run the host-boot integration suite (all variants + standalone binary) |
-| `npm run prepare-it-tests` / `teardown-it-tests` | Boot / stop the integration service matrix (`docker/tests-compose.yml`, 11 services), the pinned Dagster gateway fixture, and — when the sibling `integrations` checkout is present — its Postgres harness on `:55435` — see [Integration service matrix](#integration-service-matrix) |
+| `npm run prepare-it-tests` / `teardown-it-tests` | Boot / stop the integration service matrix (`docker/tests-compose.yml`, 12 services), the pinned Dagster gateway fixture, and — when the sibling `integrations` checkout is present — its Postgres harness on `:55435` — see [Integration service matrix](#integration-service-matrix) |
 | `npm run test:unit` / `test:integration` / `test:e2e` | Run the Jest unit / integration / e2e suites |
 | `npm run test:unit:pdf` | Run the `ReadPDFNode` unit suite through `jest.pdf.config.cjs`; `pdf-parse`'s `pdfjs-dist` fake worker needs the Node `--experimental-vm-modules` runtime, so the file stays excluded from the default Jest config and runs first in `test:all` (and therefore in `test`, `test:dist`, `coverage`, `prepare-pr`, and `prepare-release`) |
 | `npm run test:evals` | Run the standalone eval suite (`jest -c jest.eval.config.cjs` over `tests/evals/*.eval.ts`; never picked up by the main Jest config) |
@@ -1424,8 +1446,9 @@ production-grade service matrix booted by `npm run prepare-it-tests`
 (SAA-1142):
 
 - **Compose file:** `docker/tests-compose.yml` (compose project
-  `as-graph-it`), 11 services — Postgres 16, PGVector (pg 17), Apache AGE
-  (pg 17), MySQL 8, SQL Server 2022, Redis, MinIO (S3), fake-gcs-server
+  `as-graph-it`), 12 services — Postgres 16, PGVector (pg 17), Apache AGE
+  (pg 17), MySQL 8, SQL Server 2022, Redis, RabbitMQ 3.13 (AMQP on `55672`,
+  `asgraph`/`asgraph`, management plugin), MinIO (S3), fake-gcs-server
   (GCS), Azurite (Azure Blob), SFTP (atmoz/sftp), and Mailpit (SMTP sink) —
   plus the pinned Dagster gateway fixture built by `tests/integration/dagster`
   and, when the sibling `integrations` checkout is present, its Postgres
@@ -1450,10 +1473,14 @@ production-grade service matrix booted by `npm run prepare-it-tests`
   `--volumes` for a full reset of service state.
 - **Honest skips:** without the booted matrix the live suites skip honestly.
   Suites needing a real external SaaS credential (GitHub, GitLab, Airtable,
-  Gmail, Slack, Teams, Telegram, Google Sheets) stay skipped until that
+  Gmail, Slack, Teams, Telegram, Google Sheets, and the Stage 5c vendor live
+  cases — Discord, WhatsApp, Outlook, Confluence, Jira, Google Docs, Google
+  Calendar, Microsoft Excel, Microsoft SharePoint) stay skipped until that
   credential is configured — the harness never fabricates one and never
   starts a vendor stub in place of live infrastructure, and each skip title
-  names the exact missing env var.
+  names the exact missing env var. The Stage 5c vendor suites' behavioural
+  cases always run against process-local loopback HTTP stubs (no provider is
+  ever contacted), so only their read-only live cases depend on a credential.
 
 Docker (with a reachable daemon) and devDependencies are the only
 prerequisites.

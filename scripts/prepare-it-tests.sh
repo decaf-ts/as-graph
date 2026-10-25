@@ -269,6 +269,10 @@ const env = {
   SAA1032_MSSQL_PORT: "51433",
   SAA1032_REDIS_HOST: host,
   SAA1032_REDIS_PORT: "56379",
+  SAA1032_RABBITMQ_HOST: host,
+  SAA1032_RABBITMQ_PORT: "55672",
+  SAA1032_RABBITMQ_USER: "asgraph",
+  SAA1032_RABBITMQ_PASSWORD: "asgraph",
   SAA1032_S3_HOST: host,
   SAA1032_S3_PORT: "59000",
   SAA1032_GCS_HOST: host,
@@ -311,6 +315,7 @@ verify_matrix() {
   wait_tcp "${SERVICE_HOST}" 53306 "mysql"
   wait_tcp "${SERVICE_HOST}" 51433 "mssql"
   wait_tcp "${SERVICE_HOST}" 56379 "redis"
+  wait_tcp "${SERVICE_HOST}" 55672 "rabbitmq"
   wait_tcp "${SERVICE_HOST}" 59000 "minio"
   wait_tcp "${SERVICE_HOST}" 54444 "fake-gcs"
   wait_tcp "${SERVICE_HOST}" 10010 "azurite"
@@ -356,6 +361,7 @@ echo "    age            ${SERVICE_HOST}:55442 (db test; age extension)"
 echo "    mysql          ${SERVICE_HOST}:53306 (db test)"
 echo "    mssql          ${SERVICE_HOST}:51433 (db master)"
 echo "    redis          ${SERVICE_HOST}:56379"
+echo "    rabbitmq       ${SERVICE_HOST}:55672 (asgraph/asgraph)"
 echo "    minio          ${SERVICE_HOST}:59000 (bucket test-bucket)"
 echo "    fake-gcs       ${SERVICE_HOST}:54444 (bucket test-bucket)"
 echo "    azurite        ${SERVICE_HOST}:10010 (account devstoreaccount1)"

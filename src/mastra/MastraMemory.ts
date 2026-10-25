@@ -558,7 +558,7 @@ export async function resolveMastraMemoryStorage(
         id,
         password,
       };
-      return new PostgresStore(options as PostgresStoreConfig);
+      return new PostgresStore(options as unknown as PostgresStoreConfig);
     }
     default: {
       if (!isMastraNativeMemoryProvider(config.provider)) {

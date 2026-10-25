@@ -78,6 +78,11 @@ import { RenameKeysNode } from "./data/rename-keys/node";
 import { SetNode } from "./data/set/node";
 import { SortNode } from "./data/sort/node";
 import { SplitOutNode } from "./data/split-out/node";
+import { AggregateNode } from "./data/aggregate/node";
+import { ItemListsNode } from "./data/item-lists/node";
+import { CompareDatasetsNode } from "./data/compare-datasets/node";
+import { SummarizeNode } from "./data/summarize/node";
+import { RemoveDuplicatesNode } from "./data/remove-duplicates/node";
 import { ExtractFromFileNode } from "./io/extract-from-file/node";
 import { HttpRequestNode } from "./io/http-request/node";
 import { ReadPDFNode } from "./io/read-pdf/node";
@@ -95,10 +100,17 @@ import { FormTriggerNode } from "./triggers/form/node";
 import { ManualTriggerNode } from "./triggers/manual/node";
 import { ScheduleTriggerNode } from "./triggers/schedule/node";
 import { WebhookTriggerNode } from "./triggers/webhook/node";
+import { ErrorTriggerNode } from "./triggers/error/node";
+import { WorkflowTriggerNode } from "./triggers/workflow/node";
+import { RabbitMqTriggerNode } from "./triggers/rabbitmq/node";
+import { RedisTriggerNode } from "./triggers/redis/node";
+import { SseTriggerNode } from "./triggers/sse/node";
+import { PostgresTriggerNode } from "./triggers/postgres/node";
 import { PostgresNode } from "./storage/database/postgres/node";
 import { MySqlNode } from "./storage/database/mysql/node";
 import { MicrosoftSqlNode } from "./storage/database/mssql/node";
 import { RedisNode } from "./storage/redis/node";
+import { RabbitMqNode } from "./storage/rabbitmq/node";
 import { S3StorageNode, AwsS3StorageNode } from "./storage/blob/s3/node";
 import { GoogleCloudStorageNode } from "./storage/blob/gcs/node";
 import { AzureStorageNode } from "./storage/blob/azure/node";
@@ -111,10 +123,27 @@ import { TelegramNode } from "./comms/telegram/node";
 import { TeamsNode } from "./comms/teams/node";
 import { GmailNode } from "./comms/gmail/node";
 import { EmailSendNode } from "./comms/email-send/node";
+import { DiscordNode } from "./comms/discord/node";
+import { WhatsAppNode } from "./comms/whatsapp/node";
+import { MicrosoftOutlookNode } from "./comms/outlook/node";
 import { GoogleSheetsNode } from "./io/google-sheets/node";
 import { AirtableNode } from "./io/airtable/node";
 import { SpreadsheetFileNode } from "./io/spreadsheet-file/node";
 import { GraphqlNode } from "./io/graphql/node";
+import { MicrosoftExcelNode } from "./io/microsoft-excel/node";
+import { ConfluenceNode } from "./io/confluence/node";
+import { JiraNode } from "./io/jira/node";
+import { GoogleDocsNode } from "./io/google-docs/node";
+import { MicrosoftSharePointNode } from "./io/microsoft-sharepoint/node";
+import { GoogleCalendarNode } from "./io/google-calendar/node";
+import { ConvertToFileNode } from "./io/convert-to-file/node";
+import { HtmlNode } from "./io/html/node";
+import { HtmlExtractNode } from "./io/html-extract/node";
+import { MarkdownNode } from "./io/markdown/node";
+import { XmlNode } from "./io/xml/node";
+import { ReadBinaryFileNode } from "./io/read-binary-file/node";
+import { ReadBinaryFilesNode } from "./io/read-binary-files/node";
+import { WriteBinaryFileNode } from "./io/write-binary-file/node";
 import { GithubNode } from "./devops/github/node";
 import { GitlabNode } from "./devops/gitlab/node";
 
@@ -436,6 +465,11 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
   compile(SetNode),
   compile(SortNode),
   compile(SplitOutNode),
+  compile(AggregateNode),
+  compile(ItemListsNode),
+  compile(CompareDatasetsNode),
+  compile(SummarizeNode),
+  compile(RemoveDuplicatesNode),
   compile(ExtractFromFileNode),
   compile(HttpRequestNode),
   compile(ReadPDFNode),
@@ -458,6 +492,11 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
   withCredential(
     compile(RedisNode),
     "redis",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(RabbitMqNode),
+    "rabbitmq",
     "graph.node.storage.common.fields.credentialRef.label"
   ),
   withCredential(
@@ -537,6 +576,21 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
     "graph.node.comms.common.fields.credentialRef.label"
   ),
   withCredential(
+    compile(DiscordNode),
+    "discord",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(WhatsAppNode),
+    "whatsapp",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(MicrosoftOutlookNode),
+    "microsoft-outlook",
+    "graph.node.comms.common.fields.credentialRef.label"
+  ),
+  withCredential(
     compile(GoogleSheetsNode),
     "google-sheets",
     "graph.node.io.common.fields.credentialRef.label"
@@ -551,10 +605,70 @@ export const GRAPH_BUILT_IN_NODE_MANIFESTS: GraphNodeManifest[] = [
     "graphql",
     "graph.node.io.common.fields.credentialRef.label"
   ),
+  withCredential(
+    compile(MicrosoftExcelNode),
+    "microsoft-excel",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(ConfluenceNode),
+    "confluence",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(JiraNode),
+    "jira",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GoogleDocsNode),
+    "google-docs",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(MicrosoftSharePointNode),
+    "microsoft-sharepoint",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(GoogleCalendarNode),
+    "google-calendar",
+    "graph.node.io.common.fields.credentialRef.label"
+  ),
   compile(SpreadsheetFileNode),
+  compile(ConvertToFileNode),
+  compile(HtmlNode),
+  compile(HtmlExtractNode),
+  compile(MarkdownNode),
+  compile(XmlNode),
+  compile(ReadBinaryFileNode),
+  compile(ReadBinaryFilesNode),
+  compile(WriteBinaryFileNode),
   compile(RespondToWebhookNode),
   compile(ExecuteSubWorkflowNode),
   compile(ExecuteWorkflowTriggerNode),
+  compile(ErrorTriggerNode),
+  compile(WorkflowTriggerNode),
+  withCredential(
+    compile(RabbitMqTriggerNode),
+    "rabbitmq",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(RedisTriggerNode),
+    "redis",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(SseTriggerNode),
+    "token",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
+  withCredential(
+    compile(PostgresTriggerNode),
+    "postgres",
+    "graph.node.storage.common.fields.credentialRef.label"
+  ),
   compile(ManualTriggerNode),
   compile(WebhookTriggerNode),
   compile(ScheduleTriggerNode),

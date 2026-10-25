@@ -95,7 +95,7 @@ All automated test scripts live in `package.json`:
 - `test:all` – executes the entire Jest test suite under `tests`.
 - `test:dist` – runs the full suite twice, once against the compiled `lib` output and once against the `dist` bundle (via the `TEST_TARGET` environment variable).
 - `test:circular` – checks the source for circular dependencies using `dpdm`.
-- `prepare-it-tests` – no-op hook called by the shared CI workflows (`npm run prepare-it-tests --if-present`) before any test/coverage run; repositories whose integration tests need backing infrastructure implement it to boot that infra.
+- `prepare-it-tests` – no-op hook called by the shared CI workflows (`npm run prepare-it-tests --if-present`) before any test/coverage run; repositories whose integration tests need backing infrastructure implement it to boot that infra. This repo implements it: it boots the Dockerized integration service matrix (`docker/tests-compose.yml`) and the Dagster gateway fixture — see [Integration service matrix](../5-HowToUse.md#integration-service-matrix).
 - `coverage` – wipes previous coverage JSON files and runs the full test suite with the coverage-specific Jest config to emit reports and badges.
 
 ## Linting

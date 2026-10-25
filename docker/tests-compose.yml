@@ -1,7 +1,7 @@
 # as-graph integration-test service matrix (SAA-1142, Phase B.2).
 #
 # Boots EVERY external service the as-graph node integration suites need:
-# relational engines, Redis, object stores, SFTP, SMTP, and the PGVector/AGE
+# relational engines, Redis, RabbitMQ, object stores, SFTP, SMTP, and the PGVector/AGE
 # backends used by the Mastra breadth suites. Dagster is booted separately by
 # `tests/integration/dagster/run.sh` (it needs a built image); `prepare-it-tests`
 # orchestrates both.
@@ -211,6 +211,22 @@ services:
       start_period: 10s
     volumes:
       - as-graph-it-azurite:/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: as-graph-it-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: asgraph
+      RABBITMQ_DEFAULT_PASS: asgraph
+    ports:
+      - "55672:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
 
   sftp:
     image: atmoz/sftp:latest

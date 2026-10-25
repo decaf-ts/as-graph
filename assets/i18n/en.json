@@ -155,6 +155,252 @@
               "placeholder": "Declared payload shape"
             }
           }
+        },
+        "error": {
+          "name": "Error trigger",
+          "description": "Starts an error workflow when another workflow fails, carrying the failing execution, workflow, and error context.",
+          "ports": {
+            "input": {
+              "payload": {
+                "label": "Failure context"
+              }
+            },
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "execution": {
+                "label": "Execution"
+              },
+              "workflow": {
+                "label": "Workflow"
+              },
+              "error": {
+                "label": "Error"
+              }
+            }
+          }
+        },
+        "workflow": {
+          "name": "Workflow trigger",
+          "description": "Starts the workflow when this workflow is activated or updated.",
+          "ports": {
+            "input": {
+              "event": {
+                "label": "Event"
+              },
+              "payload": {
+                "label": "Payload"
+              },
+              "timestamp": {
+                "label": "Timestamp"
+              },
+              "workflowId": {
+                "label": "Workflow id"
+              }
+            },
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "event": {
+                "label": "Event"
+              },
+              "timestamp": {
+                "label": "Timestamp"
+              },
+              "workflowId": {
+                "label": "Workflow id"
+              }
+            }
+          },
+          "fields": {
+            "events": {
+              "label": "Events"
+            }
+          }
+        },
+        "rabbitmq": {
+          "name": "RabbitMQ trigger",
+          "description": "Starts the workflow when a message is received on the configured RabbitMQ queue.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "message": {
+                "label": "Message"
+              },
+              "queue": {
+                "label": "Queue"
+              },
+              "properties": {
+                "label": "Properties"
+              }
+            }
+          },
+          "fields": {
+            "queue": {
+              "label": "Queue",
+              "placeholder": "queue-name"
+            },
+            "exchange": {
+              "label": "Exchange"
+            },
+            "exchangeType": {
+              "label": "Exchange type"
+            },
+            "routingKey": {
+              "label": "Routing key"
+            },
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "vhost": {
+              "label": "Virtual host"
+            },
+            "ssl": {
+              "label": "TLS"
+            },
+            "jsonParseBody": {
+              "label": "JSON parse body"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
+        },
+        "redis": {
+          "name": "Redis trigger",
+          "description": "Starts the workflow when a message is published on the configured Redis channel.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "message": {
+                "label": "Message"
+              },
+              "channel": {
+                "label": "Channel"
+              }
+            }
+          },
+          "fields": {
+            "channels": {
+              "label": "Channels",
+              "placeholder": "channel-name, other-*"
+            },
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "database": {
+              "label": "Database index"
+            },
+            "tls": {
+              "label": "TLS"
+            },
+            "prefix": {
+              "label": "Channel prefix"
+            },
+            "jsonParseBody": {
+              "label": "JSON parse body"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
+        },
+        "sse": {
+          "name": "SSE trigger",
+          "description": "Starts the workflow when a Server-Sent Events stream emits its first event.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "message": {
+                "label": "Message"
+              },
+              "event": {
+                "label": "Event"
+              },
+              "id": {
+                "label": "Event id"
+              }
+            }
+          },
+          "fields": {
+            "url": {
+              "label": "URL",
+              "placeholder": "http://example.com/events"
+            },
+            "jsonParseBody": {
+              "label": "JSON parse body"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
+        },
+        "postgres": {
+          "name": "Postgres trigger",
+          "description": "Starts the workflow when a Postgres LISTEN/NOTIFY channel receives its first notification.",
+          "ports": {
+            "output": {
+              "payload": {
+                "label": "Payload"
+              },
+              "message": {
+                "label": "Message"
+              },
+              "channel": {
+                "label": "Channel"
+              }
+            }
+          },
+          "fields": {
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "database": {
+              "label": "Database"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "channel": {
+              "label": "Channel",
+              "placeholder": "n8n_channel"
+            },
+            "ssl": {
+              "label": "TLS"
+            },
+            "acceptSelfSigned": {
+              "label": "Accept self-signed certificate"
+            },
+            "jsonParseBody": {
+              "label": "JSON parse body"
+            },
+            "timeoutMs": {
+              "label": "Timeout (ms)"
+            }
+          }
         }
       },
       "flow_control": {
@@ -2162,6 +2408,293 @@
               "placeholder": "Defaults to the field name"
             }
           }
+        },
+        "aggregate": {
+          "name": "Aggregate",
+          "description": "Combine a field from many items into a list in a single item.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input items",
+                "placeholder": "Items to aggregate"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Aggregated item"
+              }
+            }
+          },
+          "fields": {
+            "aggregate": {
+              "label": "Aggregate"
+            },
+            "fieldsToAggregate": {
+              "label": "Fields to aggregate",
+              "placeholder": "Add field specifications"
+            },
+            "destinationFieldName": {
+              "label": "Put output in field"
+            },
+            "include": {
+              "label": "Include"
+            },
+            "fieldsToInclude": {
+              "label": "Fields to include",
+              "placeholder": "e.g. email, name"
+            },
+            "fieldsToExclude": {
+              "label": "Fields to exclude",
+              "placeholder": "e.g. created_at"
+            },
+            "mergeLists": {
+              "label": "Merge lists"
+            },
+            "keepMissing": {
+              "label": "Keep missing and null values"
+            },
+            "disableDotNotation": {
+              "label": "Disable dot notation"
+            }
+          }
+        },
+        "item_lists": {
+          "name": "Item Lists",
+          "description": "Concatenate, limit, dedupe, sort, split out, or summarize a list of items.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input items"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "discarded": {
+                "label": "Discarded items"
+              }
+            }
+          },
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "aggregate": {
+              "label": "Aggregate"
+            },
+            "fieldsToAggregate": {
+              "label": "Fields to aggregate",
+              "placeholder": "Add field specifications"
+            },
+            "destinationFieldName": {
+              "label": "Put output in field"
+            },
+            "include": {
+              "label": "Include"
+            },
+            "fieldsToInclude": {
+              "label": "Fields to include",
+              "placeholder": "e.g. email, name"
+            },
+            "fieldsToExclude": {
+              "label": "Fields to exclude",
+              "placeholder": "e.g. created_at"
+            },
+            "mergeLists": {
+              "label": "Merge lists"
+            },
+            "keepMissing": {
+              "label": "Keep missing and null values"
+            },
+            "maxItems": {
+              "label": "Max items"
+            },
+            "keep": {
+              "label": "Keep"
+            },
+            "fieldsToCompare": {
+              "label": "Fields to compare",
+              "placeholder": "e.g. id, email"
+            },
+            "removeOtherFields": {
+              "label": "Remove other fields"
+            },
+            "sortFields": {
+              "label": "Sort fields",
+              "placeholder": "Add field/direction pairs"
+            },
+            "sortValueType": {
+              "label": "Sort value type"
+            },
+            "field": {
+              "label": "Field to split out",
+              "placeholder": "Field name or dotted path"
+            },
+            "splitOutInclude": {
+              "label": "Include other fields"
+            },
+            "destinationField": {
+              "label": "Destination field",
+              "placeholder": "Defaults to the field name"
+            },
+            "fieldsToSummarize": {
+              "label": "Fields to summarize",
+              "placeholder": "Add aggregation specifications"
+            },
+            "fieldsToSplitBy": {
+              "label": "Fields to split by",
+              "placeholder": "e.g. country, city"
+            },
+            "outputFormat": {
+              "label": "Output format"
+            },
+            "skipEmptySplitFields": {
+              "label": "Skip empty split fields"
+            },
+            "continueIfFieldNotFound": {
+              "label": "Continue if field not found"
+            },
+            "disableDotNotation": {
+              "label": "Disable dot notation"
+            },
+            "compareMode": {
+              "label": "Compare"
+            }
+          }
+        },
+        "compare_datasets": {
+          "name": "Compare Datasets",
+          "description": "Compare two inputs for changes.",
+          "ports": {
+            "input": {
+              "input": {
+                "label": "Input A"
+              },
+              "input2": {
+                "label": "Input B"
+              }
+            },
+            "output": {
+              "onlyInA": {
+                "label": "In A only"
+              },
+              "same": {
+                "label": "Same"
+              },
+              "different": {
+                "label": "Different"
+              },
+              "onlyInB": {
+                "label": "In B only"
+              }
+            }
+          },
+          "fields": {
+            "fieldsToMatch": {
+              "label": "Fields to match",
+              "placeholder": "Add field pairs"
+            },
+            "resolve": {
+              "label": "When there are differences"
+            },
+            "multipleMatches": {
+              "label": "Multiple matches"
+            },
+            "fuzzyCompare": {
+              "label": "Fuzzy compare"
+            },
+            "preferWhenMix": {
+              "label": "Prefer"
+            },
+            "exceptWhenMix": {
+              "label": "For everything except",
+              "placeholder": "e.g. id, country"
+            },
+            "skipFields": {
+              "label": "Fields to skip comparing",
+              "placeholder": "e.g. updated_at"
+            },
+            "disableDotNotation": {
+              "label": "Disable dot notation"
+            }
+          }
+        },
+        "summarize": {
+          "name": "Summarize",
+          "description": "Sum, count, average, min, max and more across items.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input items"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Summary"
+              }
+            }
+          },
+          "fields": {
+            "fieldsToSummarize": {
+              "label": "Fields to summarize",
+              "placeholder": "Add aggregation specifications"
+            },
+            "fieldsToSplitBy": {
+              "label": "Fields to split by",
+              "placeholder": "e.g. country, city"
+            },
+            "outputFormat": {
+              "label": "Output format"
+            },
+            "skipEmptySplitFields": {
+              "label": "Skip empty split fields"
+            },
+            "disableDotNotation": {
+              "label": "Disable dot notation"
+            },
+            "continueIfFieldNotFound": {
+              "label": "Continue if field not found"
+            }
+          }
+        },
+        "remove_duplicates": {
+          "name": "Remove Duplicates",
+          "description": "Delete items with matching field values.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input items"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Kept items"
+              },
+              "discarded": {
+                "label": "Discarded items"
+              }
+            }
+          },
+          "fields": {
+            "fieldsToCompare": {
+              "label": "Fields to compare",
+              "placeholder": "e.g. id, email"
+            },
+            "fieldsToExclude": {
+              "label": "Fields to exclude",
+              "placeholder": "e.g. updated_at"
+            },
+            "removeOtherFields": {
+              "label": "Remove other fields"
+            },
+            "disableDotNotation": {
+              "label": "Disable dot notation"
+            },
+            "compareMode": {
+              "label": "Compare"
+            }
+          }
         }
       },
       "io": {
@@ -2499,6 +3032,640 @@
               "label": "Operation name"
             }
           }
+        },
+        "convert_to_file": {
+          "name": "Convert to File",
+          "description": "Convert JSON data to a file payload (CSV, HTML, JSON, text, or base64 binary).",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input data"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "File payload"
+              },
+              "content": {
+                "label": "Text content"
+              },
+              "bytes": {
+                "label": "Byte length"
+              }
+            }
+          },
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "binaryPropertyName": {
+              "label": "Put output file in field"
+            },
+            "sourceProperty": {
+              "label": "Source property",
+              "placeholder": "Field name or dotted path"
+            },
+            "mode": {
+              "label": "Mode"
+            },
+            "fileName": {
+              "label": "File name",
+              "placeholder": "e.g. report.csv"
+            },
+            "mimeType": {
+              "label": "MIME type"
+            },
+            "delimiter": {
+              "label": "Delimiter"
+            },
+            "headerRow": {
+              "label": "Header row"
+            },
+            "sheetName": {
+              "label": "Sheet name"
+            },
+            "addBOM": {
+              "label": "Add byte order mark (BOM)"
+            },
+            "format": {
+              "label": "Format JSON"
+            },
+            "dataIsBase64": {
+              "label": "Data is base64"
+            },
+            "caption": {
+              "label": "Caption"
+            },
+            "customStyling": {
+              "label": "Custom styling"
+            },
+            "capitalize": {
+              "label": "Capitalize headers"
+            }
+          }
+        },
+        "html": {
+          "name": "HTML",
+          "description": "Generate HTML templates, extract HTML content, or convert data to an HTML table.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input data"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "table": {
+                "label": "HTML table"
+              }
+            }
+          },
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "html": {
+              "label": "HTML template"
+            },
+            "sourceData": {
+              "label": "Source data"
+            },
+            "dataPropertyName": {
+              "label": "Data property",
+              "placeholder": "data"
+            },
+            "extractionValues": {
+              "label": "Extraction values",
+              "placeholder": "Add extraction value"
+            },
+            "trimValues": {
+              "label": "Trim values"
+            },
+            "cleanUpText": {
+              "label": "Clean up text"
+            },
+            "caption": {
+              "label": "Caption"
+            },
+            "tableAttributes": {
+              "label": "Table attributes"
+            },
+            "headerAttributes": {
+              "label": "Header attributes"
+            },
+            "rowAttributes": {
+              "label": "Row attributes"
+            },
+            "cellAttributes": {
+              "label": "Cell attributes"
+            },
+            "customStyling": {
+              "label": "Custom styling"
+            },
+            "capitalize": {
+              "label": "Capitalize headers"
+            }
+          }
+        },
+        "html_extract": {
+          "name": "HTML Extract",
+          "description": "Extract data from HTML using CSS selectors.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "HTML content"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Extracted values"
+              }
+            }
+          },
+          "fields": {
+            "sourceData": {
+              "label": "Source data"
+            },
+            "dataPropertyName": {
+              "label": "Data property",
+              "placeholder": "data"
+            },
+            "extractionValues": {
+              "label": "Extraction values",
+              "placeholder": "Add extraction value"
+            },
+            "trimValues": {
+              "label": "Trim values"
+            },
+            "cleanUpText": {
+              "label": "Clean up text"
+            }
+          }
+        },
+        "markdown": {
+          "name": "Markdown",
+          "description": "Convert data between Markdown and HTML.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input content"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Converted content"
+              },
+              "content": {
+                "label": "Converted content"
+              }
+            }
+          },
+          "fields": {
+            "mode": {
+              "label": "Mode"
+            },
+            "markdown": {
+              "label": "Markdown"
+            },
+            "html": {
+              "label": "HTML"
+            },
+            "destinationKey": {
+              "label": "Destination key",
+              "placeholder": "Leave blank for a plain result"
+            },
+            "headingStyle": {
+              "label": "Heading style"
+            },
+            "hr": {
+              "label": "Horizontal rule"
+            },
+            "bulletMarker": {
+              "label": "Bullet marker"
+            },
+            "codeBlockFence": {
+              "label": "Code block fence"
+            },
+            "emDelimiter": {
+              "label": "Emphasis delimiter"
+            },
+            "strongDelimiter": {
+              "label": "Strong delimiter"
+            },
+            "linkStyle": {
+              "label": "Link style"
+            },
+            "ignore": {
+              "label": "Ignored elements",
+              "placeholder": "e.g. h1, p"
+            }
+          }
+        },
+        "xml": {
+          "name": "XML",
+          "description": "Convert data from and to XML.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Input data"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Converted data"
+              }
+            }
+          },
+          "fields": {
+            "mode": {
+              "label": "Mode"
+            },
+            "dataPropertyName": {
+              "label": "Property name",
+              "placeholder": "data"
+            },
+            "destinationField": {
+              "label": "Destination field",
+              "placeholder": "Dotted path wrapping the result; empty returns it unwrapped"
+            },
+            "attrkey": {
+              "label": "Attribute key"
+            },
+            "charkey": {
+              "label": "Character key"
+            },
+            "explicitArray": {
+              "label": "Explicit array"
+            },
+            "explicitRoot": {
+              "label": "Explicit root"
+            },
+            "ignoreAttrs": {
+              "label": "Ignore attributes"
+            },
+            "mergeAttrs": {
+              "label": "Merge attributes"
+            },
+            "normalize": {
+              "label": "Normalize"
+            },
+            "normalizeTags": {
+              "label": "Normalize tags"
+            },
+            "trim": {
+              "label": "Trim"
+            },
+            "cdata": {
+              "label": "CDATA"
+            },
+            "headless": {
+              "label": "Headless"
+            },
+            "rootName": {
+              "label": "Root name"
+            },
+            "allowSurrogateChars": {
+              "label": "Allow surrogate chars"
+            }
+          }
+        },
+        "read_binary_file": {
+          "name": "Read Binary File",
+          "description": "Read a binary file from disk as a base64 file payload.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Optional input"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "File payload"
+              },
+              "fileName": {
+                "label": "File name"
+              },
+              "mimeType": {
+                "label": "MIME type"
+              },
+              "bytes": {
+                "label": "Byte length"
+              }
+            }
+          },
+          "fields": {
+            "filePath": {
+              "label": "File path",
+              "placeholder": "/data/example.jpg"
+            },
+            "path": {
+              "label": "File path",
+              "placeholder": "/data/example.jpg"
+            }
+          }
+        },
+        "read_binary_files": {
+          "name": "Read Binary Files",
+          "description": "Read binary files matching a glob pattern from disk.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Optional input"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "File payloads"
+              },
+              "files": {
+                "label": "File count"
+              },
+              "bytes": {
+                "label": "Total bytes"
+              }
+            }
+          },
+          "fields": {
+            "fileSelector": {
+              "label": "File selector",
+              "placeholder": "*.jpg"
+            },
+            "pattern": {
+              "label": "File selector",
+              "placeholder": "*.jpg"
+            }
+          }
+        },
+        "write_binary_file": {
+          "name": "Write Binary File",
+          "description": "Write a binary file payload to disk.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "File payload"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Written file"
+              },
+              "bytes": {
+                "label": "Byte length"
+              }
+            }
+          },
+          "fields": {
+            "fileName": {
+              "label": "File name",
+              "placeholder": "/data/example.jpg"
+            },
+            "path": {
+              "label": "File name",
+              "placeholder": "/data/example.jpg"
+            },
+            "dataPropertyName": {
+              "label": "Data property"
+            },
+            "encoding": {
+              "label": "Encoding"
+            },
+            "append": {
+              "label": "Append"
+            },
+            "createDirectories": {
+              "label": "Create directories"
+            }
+          }
+        },
+        "microsoft_excel": {
+          "name": "Microsoft Excel",
+          "description": "Read and write Excel workbook ranges and table rows in OneDrive or SharePoint.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "itemId": {
+              "label": "Workbook item ID"
+            },
+            "driveId": {
+              "label": "Drive ID"
+            },
+            "worksheet": {
+              "label": "Worksheet"
+            },
+            "range": {
+              "label": "Range"
+            },
+            "values": {
+              "label": "Values (JSON)"
+            },
+            "tableId": {
+              "label": "Table ID"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "confluence": {
+          "name": "Confluence",
+          "description": "Read, create, update, and search Confluence pages and spaces.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "pageId": {
+              "label": "Page ID"
+            },
+            "spaceKey": {
+              "label": "Space key"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "body": {
+              "label": "Body"
+            },
+            "parentId": {
+              "label": "Parent page ID"
+            },
+            "version": {
+              "label": "Version"
+            },
+            "cql": {
+              "label": "CQL query"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "jira": {
+          "name": "Jira",
+          "description": "Create, read, update, transition, and search Jira issues.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "projectKey": {
+              "label": "Project key"
+            },
+            "issueType": {
+              "label": "Issue type"
+            },
+            "summary": {
+              "label": "Summary"
+            },
+            "description": {
+              "label": "Description"
+            },
+            "issueKey": {
+              "label": "Issue key"
+            },
+            "fields": {
+              "label": "Fields (JSON)"
+            },
+            "comment": {
+              "label": "Comment"
+            },
+            "transitionId": {
+              "label": "Transition ID"
+            },
+            "jql": {
+              "label": "JQL query"
+            },
+            "maxResults": {
+              "label": "Max results"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "google_docs": {
+          "name": "Google Docs",
+          "description": "Create and edit Google Docs documents, including batch updates.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "documentId": {
+              "label": "Document ID"
+            },
+            "title": {
+              "label": "Title"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "findText": {
+              "label": "Find text"
+            },
+            "replaceText": {
+              "label": "Replace with"
+            },
+            "matchCase": {
+              "label": "Match case"
+            },
+            "requests": {
+              "label": "Requests (JSON)"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "microsoft_sharepoint": {
+          "name": "Microsoft SharePoint",
+          "description": "Browse SharePoint sites, lists, list items, and drive items through Microsoft Graph.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "siteId": {
+              "label": "Site ID"
+            },
+            "listId": {
+              "label": "List ID"
+            },
+            "itemId": {
+              "label": "Drive item ID"
+            },
+            "search": {
+              "label": "Search"
+            },
+            "top": {
+              "label": "Limit"
+            },
+            "filter": {
+              "label": "Filter"
+            },
+            "fields": {
+              "label": "Fields (JSON)"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "google_calendar": {
+          "name": "Google Calendar",
+          "description": "List calendars and create, read, update, or delete Google Calendar events.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "calendarId": {
+              "label": "Calendar ID"
+            },
+            "eventId": {
+              "label": "Event ID"
+            },
+            "summary": {
+              "label": "Summary"
+            },
+            "description": {
+              "label": "Description"
+            },
+            "location": {
+              "label": "Location"
+            },
+            "start": {
+              "label": "Start"
+            },
+            "end": {
+              "label": "End"
+            },
+            "timeZone": {
+              "label": "Time zone"
+            },
+            "attendees": {
+              "label": "Attendees"
+            },
+            "timeMin": {
+              "label": "Earliest time"
+            },
+            "timeMax": {
+              "label": "Latest time"
+            },
+            "maxResults": {
+              "label": "Max results"
+            },
+            "q": {
+              "label": "Search text"
+            },
+            "singleEvents": {
+              "label": "Expand recurring events"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
         }
       },
       "storage": {
@@ -2669,6 +3836,60 @@
         "azure_storage": {
           "name": "Azure Storage",
           "description": "Read, write, list, copy, or delete blobs in an Azure Storage container."
+        },
+        "rabbitmq": {
+          "name": "RabbitMQ",
+          "description": "Publish a message to a RabbitMQ queue or topic exchange.",
+          "ports": {
+            "input": {
+              "value": {
+                "label": "Message"
+              }
+            },
+            "output": {
+              "result": {
+                "label": "Result"
+              },
+              "target": {
+                "label": "Target"
+              }
+            }
+          },
+          "fields": {
+            "mode": {
+              "label": "Mode"
+            },
+            "queue": {
+              "label": "Queue"
+            },
+            "exchange": {
+              "label": "Exchange"
+            },
+            "exchangeType": {
+              "label": "Exchange type"
+            },
+            "routingKey": {
+              "label": "Routing key"
+            },
+            "host": {
+              "label": "Host"
+            },
+            "port": {
+              "label": "Port"
+            },
+            "username": {
+              "label": "Username"
+            },
+            "vhost": {
+              "label": "Virtual host"
+            },
+            "ssl": {
+              "label": "TLS"
+            },
+            "value": {
+              "label": "Message"
+            }
+          }
         }
       },
       "devops": {
@@ -3090,6 +4311,174 @@
             },
             "graphBaseUrl": {
               "label": "Graph base URL"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "discord": {
+          "name": "Discord",
+          "description": "Send and read Discord messages, channels, and reactions as a bot.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "channelId": {
+              "label": "Channel ID"
+            },
+            "guildId": {
+              "label": "Server ID"
+            },
+            "messageId": {
+              "label": "Message ID"
+            },
+            "content": {
+              "label": "Content"
+            },
+            "embeds": {
+              "label": "Embeds (JSON)"
+            },
+            "tts": {
+              "label": "Text to speech"
+            },
+            "name": {
+              "label": "Channel name"
+            },
+            "channelType": {
+              "label": "Channel type"
+            },
+            "topic": {
+              "label": "Channel topic"
+            },
+            "parentId": {
+              "label": "Parent category ID"
+            },
+            "emoji": {
+              "label": "Emoji"
+            },
+            "limit": {
+              "label": "Limit"
+            },
+            "before": {
+              "label": "Before message ID"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "whatsapp": {
+          "name": "WhatsApp",
+          "description": "Send WhatsApp Business Cloud messages and read media metadata.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "phoneNumberId": {
+              "label": "Phone number ID"
+            },
+            "to": {
+              "label": "Recipient"
+            },
+            "text": {
+              "label": "Text"
+            },
+            "previewUrl": {
+              "label": "Preview links"
+            },
+            "templateName": {
+              "label": "Template name"
+            },
+            "languageCode": {
+              "label": "Language code"
+            },
+            "components": {
+              "label": "Template components (JSON)"
+            },
+            "mediaType": {
+              "label": "Media type"
+            },
+            "mediaId": {
+              "label": "Media ID"
+            },
+            "mediaUrl": {
+              "label": "Media URL"
+            },
+            "caption": {
+              "label": "Caption"
+            },
+            "filename": {
+              "label": "File name"
+            },
+            "messageId": {
+              "label": "Message ID"
+            },
+            "baseUrl": {
+              "label": "Base URL"
+            }
+          }
+        },
+        "microsoft_outlook": {
+          "name": "Microsoft Outlook",
+          "description": "Send and read Outlook mail and calendar events through Microsoft Graph.",
+          "fields": {
+            "operation": {
+              "label": "Operation"
+            },
+            "to": {
+              "label": "To"
+            },
+            "cc": {
+              "label": "CC"
+            },
+            "bcc": {
+              "label": "BCC"
+            },
+            "subject": {
+              "label": "Subject"
+            },
+            "body": {
+              "label": "Body"
+            },
+            "contentType": {
+              "label": "Content type"
+            },
+            "saveToSentItems": {
+              "label": "Save to sent items"
+            },
+            "folderId": {
+              "label": "Folder ID"
+            },
+            "messageId": {
+              "label": "Message ID"
+            },
+            "eventId": {
+              "label": "Event ID"
+            },
+            "start": {
+              "label": "Start"
+            },
+            "end": {
+              "label": "End"
+            },
+            "timeZone": {
+              "label": "Time zone"
+            },
+            "location": {
+              "label": "Location"
+            },
+            "attendees": {
+              "label": "Attendees"
+            },
+            "top": {
+              "label": "Limit"
+            },
+            "filter": {
+              "label": "Filter"
+            },
+            "search": {
+              "label": "Search"
             },
             "baseUrl": {
               "label": "Base URL"

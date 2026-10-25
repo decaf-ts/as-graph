@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 98 built-in kinds as manifest+executor pairs,
+ * @description Validates the 127 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -57,6 +57,12 @@ const GRAPH_3B_BRAND_IO_COLORS: Record<string, string> = {
   "core.io.airtable": "#fcb400",
   "core.io.graphql": "#e10098",
   "core.io.spreadsheetFile": "#217346",
+  "core.io.microsoftExcel": "#217346",
+  "core.io.confluence": "#0052cc",
+  "core.io.jira": "#0052cc",
+  "core.io.googleDocs": "#4285f4",
+  "core.io.microsoftSharePoint": "#036c70",
+  "core.io.googleCalendar": "#4285f4",
 };
 
 const GRAPH_M6_AGENT_SUPPLIER_ICONS: Record<string, string> = {
@@ -84,7 +90,7 @@ async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
 describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(98);
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(127);
     for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
@@ -93,15 +99,15 @@ describe("GraphBuiltInRegistrations", () => {
         Function
       );
     }
-    expect(catalogue.size).toBe(98);
+    expect(catalogue.size).toBe(127);
   });
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
-    // registerBuiltInGraphNodes registers all 98 built-ins with no engine
+    // registerBuiltInGraphNodes registers all 127 built-ins with no engine
     // argument: each executor is derived from the node class's static execute.
     await registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(98);
+    expect(catalogue.size).toBe(127);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
       expect(await catalogue.has(kind)).toBe(true);
       expect((await catalogue.getManifest(kind)).kind).toBe(kind);
@@ -127,7 +133,7 @@ describe("GraphBuiltInRegistrations", () => {
     await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
     ).resolves.toBeDefined();
-    expect(catalogue.size).toBe(98);
+    expect(catalogue.size).toBe(127);
   });
 
   it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
@@ -183,6 +189,11 @@ describe("GraphBuiltInRegistrations", () => {
       "core.data.set",
       "core.data.sort",
       "core.data.splitOut",
+      "core.data.aggregate",
+      "core.data.itemLists",
+      "core.data.compareDatasets",
+      "core.data.summarize",
+      "core.data.removeDuplicates",
       "core.io.extractFromFile",
       "core.io.httpRequest",
       "core.io.readPDF",
@@ -191,6 +202,7 @@ describe("GraphBuiltInRegistrations", () => {
       "core.storage.mySql",
       "core.storage.microsoftSql",
       "core.storage.redis",
+      "core.storage.rabbitmq",
       "core.storage.s3",
       "core.storage.awsS3",
       "core.storage.googleCloudStorage",
@@ -206,13 +218,36 @@ describe("GraphBuiltInRegistrations", () => {
       "core.comms.teams",
       "core.comms.gmail",
       "core.comms.emailSend",
+      "core.comms.discord",
+      "core.comms.whatsApp",
+      "core.comms.microsoftOutlook",
       "core.io.googleSheets",
       "core.io.airtable",
       "core.io.graphql",
+      "core.io.microsoftExcel",
+      "core.io.confluence",
+      "core.io.jira",
+      "core.io.googleDocs",
+      "core.io.microsoftSharePoint",
+      "core.io.googleCalendar",
       "core.io.spreadsheetFile",
+      "core.io.convertToFile",
+      "core.io.html",
+      "core.io.htmlExtract",
+      "core.io.markdown",
+      "core.io.xml",
+      "core.io.readBinaryFile",
+      "core.io.readBinaryFiles",
+      "core.io.writeBinaryFile",
       "core.io.respondToWebhook",
       "core.flow.executeSubWorkflow",
       "core.trigger.executeWorkflow",
+      "core.trigger.error",
+      "core.trigger.workflow",
+      "core.trigger.rabbitmq",
+      "core.trigger.redis",
+      "core.trigger.sse",
+      "core.trigger.postgres",
       "core.trigger.manual",
       "core.trigger.webhook",
       "core.trigger.schedule",
@@ -296,7 +331,7 @@ describe("GraphBuiltInRegistrations", () => {
 
     const cases: Array<{
       kind: string;
-      category: "Comms" | "IO" | "DevOps";
+      category: "Comms" | "IO" | "DevOps" | "Storage" | "Trigger";
       credentialType?: string;
       i18n: [string, string];
     }> = [
@@ -365,13 +400,55 @@ describe("GraphBuiltInRegistrations", () => {
         category: "IO",
         i18n: ["io", "spreadsheet_file"],
       },
+      {
+        kind: "core.storage.rabbitmq",
+        category: "Storage",
+        credentialType: "rabbitmq",
+        i18n: ["storage", "rabbitmq"],
+      },
+      {
+        kind: "core.trigger.error",
+        category: "Trigger",
+        i18n: ["trigger", "error"],
+      },
+      {
+        kind: "core.trigger.workflow",
+        category: "Trigger",
+        i18n: ["trigger", "workflow"],
+      },
+      {
+        kind: "core.trigger.rabbitmq",
+        category: "Trigger",
+        credentialType: "rabbitmq",
+        i18n: ["trigger", "rabbitmq"],
+      },
+      {
+        kind: "core.trigger.redis",
+        category: "Trigger",
+        credentialType: "redis",
+        i18n: ["trigger", "redis"],
+      },
+      {
+        kind: "core.trigger.sse",
+        category: "Trigger",
+        credentialType: "token",
+        i18n: ["trigger", "sse"],
+      },
+      {
+        kind: "core.trigger.postgres",
+        category: "Trigger",
+        credentialType: "postgres",
+        i18n: ["trigger", "postgres"],
+      },
     ];
 
-    expect(cases).toHaveLength(11);
+    expect(cases).toHaveLength(18);
     expect(i18n.graph.node.categories).toMatchObject({
       comms: "Comms",
       io: "IO",
       devops: "DevOps",
+      storage: "Storage",
+      trigger: "Trigger",
     });
 
     const catalogue = await buildBuiltInCatalogue();
@@ -457,7 +534,7 @@ describe("GraphBuiltInRegistrations", () => {
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
   it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(98);
+    expect(registrations.length).toBe(127);
     const catalogue = await buildBuiltInCatalogue();
     expect(() => catalogue.register(registrations[0] as never)).toThrow(
       GraphNodeRegistrationError
@@ -728,7 +805,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 98 built-ins present exactly these eleven families
+    // the 127 built-ins present exactly these eleven families
     expect([...families].sort()).toEqual([
       "Agent",
       "Boundary",

@@ -87,6 +87,12 @@ export const ENDPOINTS = {
     host: process.env["SAA1032_REDIS_HOST"] ?? HOST,
     port: Number(process.env["SAA1032_REDIS_PORT"] ?? 56379),
   },
+  rabbitmq: {
+    host: process.env["SAA1032_RABBITMQ_HOST"] ?? HOST,
+    port: Number(process.env["SAA1032_RABBITMQ_PORT"] ?? 55672),
+    username: process.env["SAA1032_RABBITMQ_USER"] ?? "asgraph",
+    password: process.env["SAA1032_RABBITMQ_PASSWORD"] ?? "asgraph",
+  },
   s3: {
     host: process.env["SAA1032_S3_HOST"] ?? HOST,
     port: Number(process.env["SAA1032_S3_PORT"] ?? 59000),

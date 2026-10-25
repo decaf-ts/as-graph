@@ -28,6 +28,10 @@ export type GraphDataSetValueType =
   | "array"
   | "object";
 
+/**
+ * Keys that would reach an object's prototype chain and are therefore rejected
+ * by every path accessor.
+ */
 const RESERVED_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
@@ -101,7 +105,10 @@ export function assertGraphDataPath(path: string): string[] {
  * @throws {GraphExecutionError} with code `GRAPH_DATA_UNSAFE_PATH` when the key
  *   is `__proto__`, `constructor`, or `prototype`.
  */
-function assertGraphDataSegment(path: string, segment: string): void {
+export function assertGraphDataSegment(
+  path: string,
+  segment: string
+): void {
   if (RESERVED_PATH_SEGMENTS.has(segment)) {
     throw new GraphExecutionError(
       `Graph data path '${path}' contains the reserved segment '${segment}'`,
