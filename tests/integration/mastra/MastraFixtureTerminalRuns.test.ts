@@ -9,14 +9,7 @@
  * `@mastra/core` runtime executing the runs. The only host-injected piece is the
  * frame-bound event sink `GraphExecutionEngine` normally supplies.
  */
-import {
-  describe,
-  it,
-  expect,
-  afterEach,
-  beforeAll,
-  afterAll,
-} from "@jest/globals";
+import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { Mastra } from "@mastra/core/mastra";
 import {
   GraphExecutionEventType,
@@ -129,7 +122,9 @@ describe("mastra fixture terminal runs (SAA-1360 D6)", () => {
       expect.arrayContaining(["expressionLog", "templateLog"])
     );
     expect(
-      completed.every((event) => event.status === GraphExecutionStatus.SUCCEEDED)
+      completed.every(
+        (event) => event.status === GraphExecutionStatus.SUCCEEDED
+      )
     ).toBe(true);
   }, 30_000);
 });

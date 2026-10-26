@@ -195,8 +195,84 @@
     "source": "https://pypi.org/pypi/dagster/json",
     "note": "Dagster is a Python orchestration engine with no official JavaScript runtime. This pin records the engine contract the generated ./dagster artifacts target; execution is driven through the host-injected DagsterClient port."
   },
-  "dependencies": {
+  "devDependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.62",
+    "@aws-sdk/client-s3": "^3.1075.0",
+    "@aws-sdk/s3-request-presigner": "^3.1075.0",
+    "@azure/identity": "^4.13.0",
+    "@azure/storage-blob": "^12.33.0",
     "@decaf-ts/as-zod": "latest",
+    "@decaf-ts/core": "latest",
+    "@decaf-ts/crypto": "latest",
+    "@decaf-ts/db-decorators": "latest",
+    "@decaf-ts/decoration": "latest",
+    "@decaf-ts/decorator-validation": "latest",
+    "@decaf-ts/for-http": "latest",
+    "@decaf-ts/for-nest": "latest",
+    "@decaf-ts/for-typeorm": "latest",
+    "@decaf-ts/injectable-decorators": "latest",
+    "@decaf-ts/integrations": "latest",
+    "@decaf-ts/logging": "latest",
+    "@decaf-ts/ui-decorators": "latest",
+    "@decaf-ts/utils": "^1.14.0",
+    "@google-cloud/storage": "^7.21.0",
+    "@jest/globals": "^30.0.0",
+    "@mastra/core": "^1.77.0",
+    "@mastra/langfuse": "^1.6.1",
+    "@mastra/libsql": "^1.26.2",
+    "@mastra/memory": "^1.38.0",
+    "@mastra/observability": "^1.20.1",
+    "@mastra/pg": "^1.31.2",
+    "@nestjs/common": "^11.2.6",
+    "@nestjs/core": "^11.2.6",
+    "@nestjs/platform-express": "^11.2.6",
+    "@nestjs/swagger": "^11.4.7",
+    "@nestjs/testing": "^11.2.6",
+    "@nestjs/throttler": "^6.7.1",
+    "@types/amqplib": "^0.10.8",
+    "@types/html-to-text": "^9.0.4",
+    "@types/jest": "^30.0.0",
+    "@types/marked": "^5.0.2",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^6.0.3",
+    "@types/turndown": "^5.0.6",
+    "@types/xml2js": "^0.4.14",
+    "acorn": "^8.18.0",
+    "acorn-walk": "^8.3.5",
+    "amqplib": "^0.10.9",
+    "cheerio": "^1.2.0",
+    "elkjs": "^0.12.0",
+    "eventsource": "^3.0.7",
+    "html-to-text": "^9.0.5",
+    "isolated-vm": "^6.2.0",
+    "jsdoc": "^4.0.4",
+    "jsdoc-mermaid": "^1.0.0",
+    "markdown-include": "^0.4.3",
+    "marked": "^4.3.0",
+    "mssql": "^11.0.1",
+    "mysql2": "^3.14.0",
+    "nodemailer": "^10.2.1",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.16.3",
+    "redis": "^6.3.0",
+    "rimraf": "^6.0.1",
+    "rxjs": "^7.8.2",
+    "ssh2": "^1.16.0",
+    "supertest": "^7.3.0",
+    "turndown": "^7.2.4",
+    "typeorm": "^0.3.27",
+    "typescript": "^5.9.3",
+    "xml2js": "^0.6.2",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.1075.0",
+    "@aws-sdk/s3-request-presigner": "^3.1075.0",
+    "@azure/identity": "^4.13.0",
+    "@azure/storage-blob": "^12.33.0",
+    "@decaf-ts/as-zod": "latest",
+    "@decaf-ts/core": "latest",
     "@decaf-ts/crypto": "latest",
     "@decaf-ts/db-decorators": "latest",
     "@decaf-ts/decoration": "latest",
@@ -205,9 +281,15 @@
     "@decaf-ts/for-nest": "latest",
     "@decaf-ts/for-typeorm": "latest",
     "@decaf-ts/integrations": "latest",
+    "@decaf-ts/logging": "latest",
     "@decaf-ts/ui-decorators": "latest",
+    "@google-cloud/storage": "^7.21.0",
+    "@mastra/core": "^1.77.0",
     "@mastra/langfuse": "^1.6.1",
+    "@mastra/libsql": "^1.26.2",
+    "@mastra/memory": "^1.38.0",
     "@mastra/observability": "^1.20.1",
+    "@mastra/pg": "^1.31.2",
     "@nestjs/common": "^11.2.6",
     "@nestjs/core": "^11.2.6",
     "@nestjs/platform-express": "^11.2.6",
@@ -222,44 +304,174 @@
     "html-to-text": "^9.0.5",
     "isolated-vm": "^6.2.0",
     "marked": "^4.3.0",
-    "pdf-parse": "^2.4.5",
-    "rxjs": "^7.8.2",
-    "turndown": "^7.2.4",
-    "typeorm": "^0.3.27",
-    "xml2js": "^0.6.2"
-  },
-  "devDependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.62",
-    "@decaf-ts/utils": "^1.14.0",
-    "@nestjs/testing": "^11.2.6",
-    "@types/amqplib": "^0.10.8",
-    "@types/html-to-text": "^9.0.4",
-    "@types/jest": "^30.0.0",
-    "@types/marked": "^5.0.2",
-    "@types/node": "^24.0.0",
-    "@types/pg": "^8.23.1",
-    "@types/supertest": "^6.0.3",
-    "@types/turndown": "^5.0.6",
-    "@types/xml2js": "^0.4.14",
-    "jsdoc": "^4.0.4",
-    "jsdoc-mermaid": "^1.0.0",
-    "markdown-include": "^0.4.3",
-    "nodemailer": "^10.2.1",
-    "rimraf": "^6.0.1",
-    "supertest": "^7.3.0"
-  },
-  "peerDependencies": {
-    "@mastra/core": "^1.77.0",
-    "@mastra/libsql": "^1.26.2",
-    "@mastra/memory": "^1.38.0",
-    "@mastra/pg": "^1.31.2"
-  },
-  "overrides": {
-    "js-yaml": "^5.2.2"
-  },
-  "optionalDependencies": {
     "mssql": "^11.0.1",
     "mysql2": "^3.14.0",
-    "pg": "^8.16.3"
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.16.3",
+    "redis": "^6.3.0",
+    "rxjs": "^7.8.2",
+    "ssh2": "^1.16.0",
+    "turndown": "^7.2.4",
+    "typeorm": "^0.3.27",
+    "typescript": "^5.9.3",
+    "xml2js": "^0.6.2",
+    "zod": "^4.4.3"
+  },
+  "overrides": {
+    "js-yaml": "^5.2.2",
+    "multer": "^2.5.0",
+    "@azure/msal-node": "^7.1.1",
+    "typeorm": {
+      "redis": "^6.3.0"
+    }
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
+    "@azure/identity": {
+      "optional": true
+    },
+    "@azure/storage-blob": {
+      "optional": true
+    },
+    "@decaf-ts/as-zod": {
+      "optional": true
+    },
+    "@decaf-ts/core": {
+      "optional": true
+    },
+    "@decaf-ts/crypto": {
+      "optional": true
+    },
+    "@decaf-ts/db-decorators": {
+      "optional": true
+    },
+    "@decaf-ts/decoration": {
+      "optional": true
+    },
+    "@decaf-ts/decorator-validation": {
+      "optional": true
+    },
+    "@decaf-ts/for-http": {
+      "optional": true
+    },
+    "@decaf-ts/for-nest": {
+      "optional": true
+    },
+    "@decaf-ts/for-typeorm": {
+      "optional": true
+    },
+    "@decaf-ts/integrations": {
+      "optional": true
+    },
+    "@decaf-ts/logging": {
+      "optional": true
+    },
+    "@decaf-ts/ui-decorators": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
+      "optional": true
+    },
+    "@mastra/core": {
+      "optional": true
+    },
+    "@mastra/langfuse": {
+      "optional": true
+    },
+    "@mastra/libsql": {
+      "optional": true
+    },
+    "@mastra/memory": {
+      "optional": true
+    },
+    "@mastra/observability": {
+      "optional": true
+    },
+    "@mastra/pg": {
+      "optional": true
+    },
+    "@nestjs/common": {
+      "optional": true
+    },
+    "@nestjs/core": {
+      "optional": true
+    },
+    "@nestjs/platform-express": {
+      "optional": true
+    },
+    "@nestjs/swagger": {
+      "optional": true
+    },
+    "@nestjs/throttler": {
+      "optional": true
+    },
+    "acorn": {
+      "optional": true
+    },
+    "acorn-walk": {
+      "optional": true
+    },
+    "amqplib": {
+      "optional": true
+    },
+    "cheerio": {
+      "optional": true
+    },
+    "elkjs": {
+      "optional": true
+    },
+    "eventsource": {
+      "optional": true
+    },
+    "html-to-text": {
+      "optional": true
+    },
+    "isolated-vm": {
+      "optional": true
+    },
+    "marked": {
+      "optional": true
+    },
+    "mssql": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "pdf-parse": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "redis": {
+      "optional": true
+    },
+    "rxjs": {
+      "optional": true
+    },
+    "ssh2": {
+      "optional": true
+    },
+    "turndown": {
+      "optional": true
+    },
+    "typeorm": {
+      "optional": true
+    },
+    "typescript": {
+      "optional": true
+    },
+    "xml2js": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
   }
 }

@@ -604,7 +604,25 @@ beforeAll(async () => {
   // NOSUPERUSER app role can record its own observations. The write goes
   // through `dblink` (autonomous session) because the resolver rolls its
   // transaction back on a denial, which would erase a same-session probe.
-  const probeConnection = quoteLiteral(urlForDatabase(DATABASE_NAME));
+  // `dblink` runs inside PostgreSQL, so the host-mapped endpoint used by this
+  // test process (for example 172.17.0.1:55435) may not be reachable from the
+  // database container itself. Reuse the address and port PostgreSQL reports
+  // for this connection; that is the server-side route back to this database.
+  const serverEndpoint = (
+    await setupClient.query<{
+      server_address: string | null;
+      server_port: number | null;
+    }>(
+      `SELECT inet_server_addr()::text AS server_address,
+              inet_server_port() AS server_port`
+    )
+  ).rows[0];
+  const probeUrl = new URL(urlForDatabase(DATABASE_NAME));
+  if (serverEndpoint?.server_address && serverEndpoint.server_port) {
+    probeUrl.hostname = serverEndpoint.server_address;
+    probeUrl.port = String(serverEndpoint.server_port);
+  }
+  const probeConnection = quoteLiteral(probeUrl.toString());
   await setupClient.query(`
     CREATE OR REPLACE FUNCTION app_rls_principal_id()
     RETURNS uuid

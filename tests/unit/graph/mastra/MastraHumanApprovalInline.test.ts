@@ -36,6 +36,7 @@ async function compileAndRun(
     compiled.workflow as unknown as CompiledWorkflowLike
   ).createRun({ runId: `${source.id}-run` });
   const stream = await run.stream({ inputData });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _event of stream.fullStream) {
     // Drain the real stream so the run reaches its terminal state.
   }

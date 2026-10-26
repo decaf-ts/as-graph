@@ -6,8 +6,8 @@
  * prove the shared service-order contract: explicit-then-environment config,
  * the documented decaf error mapping for 404/409/5xx/transport/vendor
  * failures, and that `imapflow` stays a dynamic optional import with no hard
- * package dependency (optionalDependencies is allowed; dependencies and
- * devDependencies are not).
+ * runtime dependency. It may be installed for development tests, while
+ * consumers opt in through its optional peer dependency.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import { readFileSync } from "node:fs";
@@ -188,7 +188,7 @@ describe("SAA-1027 Stage 3b service order", () => {
     await unreachable.shutdown();
   });
 
-  it("keeps imapflow dynamic and out of the hard dependency manifest", async () => {
+  it("keeps imapflow dynamic and optional at runtime", async () => {
     const packageJson = JSON.parse(
       readFileSync(
         resolve(__dirname, "../../../../../integrations/package.json"),
@@ -198,9 +198,15 @@ describe("SAA-1027 Stage 3b service order", () => {
       dependencies?: Record<string, string>;
       optionalDependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>;
     };
     expect(packageJson.dependencies?.["imapflow"]).toBeUndefined();
-    expect(packageJson.devDependencies?.["imapflow"]).toBeUndefined();
+    expect(packageJson.optionalDependencies?.["imapflow"]).toBeUndefined();
+    expect(packageJson.peerDependencies?.["imapflow"]).toBeDefined();
+    expect(packageJson.peerDependenciesMeta?.["imapflow"]?.optional).toBe(
+      true
+    );
 
     const source = readFileSync(
       resolve(
