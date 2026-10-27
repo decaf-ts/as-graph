@@ -66,7 +66,7 @@ describe("MastraGraphExecutionBackend — run-level terminal bound (SAA-824 F1)"
 
     const result = await backend.execute({
       document: hangingDocument(),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
@@ -92,7 +92,7 @@ describe("MastraGraphExecutionBackend — run-level terminal bound (SAA-824 F1)"
 
     const result = await backend.execute({
       document: hangingDocument(),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: { abortSignal: controller.signal } as never,
       events: harness.sink,

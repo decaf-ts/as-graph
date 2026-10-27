@@ -1,19 +1,20 @@
 /**
  * @module as-graph/tests/unit/graph/mastra/MastraAgentFamilyStepHandlers
- * @summary Unit tests for the SAA-836 M3 mastra default step-handler coverage of
- * the ten AI-family leaf kinds.
- * @description Pins `MASTRA_AGENT_FAMILY_STEP_KINDS` (the ten family kinds), that
- * every family kind is covered by `MASTRA_DEFAULT_STEP_HANDLER_KINDS` with exactly
- * one handler, and that each compiled family step resolves the node's
- * configuration into a `resource` descriptor on its output while forwarding the
- * input — the R9 real-mastra-step contract.
+ * @summary Unit tests for the SAA-1545 registry coverage of the ten AI-family
+ * leaf kinds.
+ * @description Pins `MASTRA_AGENT_FAMILY_STEP_KINDS` (the ten family kinds) and
+ * proves the Mastra node registry — not the neutral default handler set —
+ * produces exactly one step per family kind. Each compiled step reaches the
+ * node class's own `execute()`: the config-only kinds emit their real R9
+ * resource/selection output, and the service-backed sandbox kind fails closed
+ * with `GRAPH_MASTRA_RAG_UNAVAILABLE` when the run injected no RAG service.
  */
 import { describe, it, expect } from "@jest/globals";
 import {
-  createMastraDefaultStepHandlers,
   MASTRA_AGENT_FAMILY_STEP_KINDS,
   MASTRA_DEFAULT_STEP_HANDLER_KINDS,
 } from "../../../../src/mastra/MastraDefaultStepHandlers";
+import { createMastraNodeStepHandlers } from "../../../../src/mastra/nodes";
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import { document, node } from "../../../../src/workflows/builders";
 
@@ -47,6 +48,43 @@ function nodeIdOf(kind: string): string {
   return `family-${FAMILY_KINDS.indexOf(kind as (typeof FAMILY_KINDS)[number])}`;
 }
 
+/** The real R9 output each config-only family kind produces for `{probe}`. */
+function expectedOutputOf(kind: string, index: number): Record<string, unknown> {
+  const input = { probe: index };
+  switch (kind) {
+    case "core.agent.tool":
+      return { resource: { type: "mastra.tool", input } };
+    case "core.agent.toolSelector":
+    case "core.agent.skillSelector":
+    case "core.agent.scorerSelector":
+      // `selected` stays undefined (and is dropped by the JSON-safe step
+      // output sanitizer) when the selector has no decision/candidates.
+      return { resource: null };
+    case "core.agent.hook":
+    case "core.agent.delegationHook":
+      return { value: input };
+    case "core.agent.toolDeny":
+      return { proceed: false, denied: true };
+    case "core.agent.skill":
+      return { resource: { type: "mastra.skill", input } };
+    case "core.agent.scorer":
+      return { resource: { type: "mastra.scorer", input } };
+    case "core.agent.sandbox":
+      return {
+        probe: index,
+        resource: {
+          kind: "core.agent.sandbox",
+          nodeId: `family-${index}`,
+          parameters: input,
+          type: "mastra.sandbox",
+          timeoutMs: 1000,
+        },
+      };
+    default:
+      throw new Error(`no expected output for ${kind}`);
+  }
+}
+
 describe("MASTRA_AGENT_FAMILY_STEP_KINDS (SAA-836 M3)", () => {
   it("lists exactly the ten family kinds, unique and in declaration order", () => {
     expect(MASTRA_AGENT_FAMILY_STEP_KINDS).toEqual([...FAMILY_KINDS]);
@@ -55,27 +93,32 @@ describe("MASTRA_AGENT_FAMILY_STEP_KINDS (SAA-836 M3)", () => {
     );
   });
 
-  it("is a subset of the default handler kinds", () => {
+  it("is no longer part of the engine-neutral default handler set", () => {
     const defaults = new Set<string>(MASTRA_DEFAULT_STEP_HANDLER_KINDS);
     for (const kind of MASTRA_AGENT_FAMILY_STEP_KINDS) {
-      expect(defaults.has(kind)).toBe(true);
+      expect({ kind, default: defaults.has(kind) }).toEqual({
+        kind,
+        default: false,
+      });
     }
   });
 });
 
-describe("mastra default step handlers — family coverage (SAA-836 M3)", () => {
-  it("returns exactly one handler per family kind", () => {
-    const handlers = createMastraDefaultStepHandlers();
+describe("mastra node registry — family coverage (SAA-1545)", () => {
+  it("returns exactly one registry handler per family kind", () => {
+    const handlers = createMastraNodeStepHandlers();
     const byKind = new Map(handlers.map((handler) => [handler.kind, handler]));
     for (const kind of MASTRA_AGENT_FAMILY_STEP_KINDS) {
       expect(byKind.has(kind)).toBe(true);
     }
-    expect(handlers).toHaveLength(MASTRA_DEFAULT_STEP_HANDLER_KINDS.length);
+    expect(new Set(handlers.map((handler) => handler.kind)).size).toBe(
+      handlers.length
+    );
   });
 
   it("compiles a step keyed by the node id for every family kind", () => {
     const compiler = new MastraWorkflowCompiler({
-      stepHandlers: createMastraDefaultStepHandlers(),
+      stepHandlers: createMastraNodeStepHandlers(),
     });
     const { steps } = compiler.compile(familyDocument());
     for (const kind of FAMILY_KINDS) {
@@ -90,33 +133,29 @@ describe("mastra default step handlers — family coverage (SAA-836 M3)", () => 
     }
   });
 
-  it("executes each family step forwarding input and resolving the resource", async () => {
+  it("executes each family node's real output or typed fail-closed result", async () => {
     const compiler = new MastraWorkflowCompiler({
-      stepHandlers: createMastraDefaultStepHandlers(),
+      stepHandlers: createMastraNodeStepHandlers(),
     });
     const { steps } = compiler.compile(familyDocument());
-    const input = { alpha: 1, nested: { beta: 2 } };
 
     for (const [index, kind] of FAMILY_KINDS.entries()) {
-      const nodeId = `family-${index}`;
-      const step = steps.get(nodeId) as {
+      const step = steps.get(`family-${index}`) as {
         execute: (args: { inputData?: unknown }) => Promise<unknown>;
       };
-      const output = await step.execute({ inputData: input });
-      expect(output).toEqual({
-        ...input,
-        resource: {
-          kind,
-          nodeId,
-          parameters: { probe: index },
-        },
+      const output = await step.execute({
+        inputData: { probe: index },
+      });
+      expect({ kind, output }).toEqual({
+        kind,
+        output: expectedOutputOf(kind, index),
       });
     }
   });
 
   it("sanitizes non-record step input to an empty record before forwarding", async () => {
     const compiler = new MastraWorkflowCompiler({
-      stepHandlers: createMastraDefaultStepHandlers(),
+      stepHandlers: createMastraNodeStepHandlers(),
     });
     const { steps } = compiler.compile(familyDocument());
     const step = steps.get("family-0") as {
@@ -124,11 +163,7 @@ describe("mastra default step handlers — family coverage (SAA-836 M3)", () => 
     };
     const output = await step.execute({ inputData: undefined });
     expect(output).toEqual({
-      resource: {
-        kind: "core.agent.tool",
-        nodeId: "family-0",
-        parameters: { probe: 0 },
-      },
+      resource: { type: "mastra.tool", input: {} },
     });
   });
 });

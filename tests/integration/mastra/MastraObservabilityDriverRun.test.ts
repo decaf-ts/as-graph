@@ -184,7 +184,7 @@ liveDescribe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
     const harness = frameSinkHarness("saa-891-observability-run");
     const result = await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { in: 1 },
       options: {} as never,
       events: harness.sink,
@@ -245,7 +245,7 @@ liveDescribe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
     const harness = frameSinkHarness("saa-891-isolation-run");
     const result = await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { in: 1 },
       options: {} as never,
       events: harness.sink,
@@ -266,12 +266,28 @@ liveDescribe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
       recorder.events,
       (span) => span.type === "workflow_step"
     );
-    expect(stepSpans.length).toBeGreaterThanOrEqual(2);
-    for (const span of stepSpans) {
+    // The compiler also emits internal routing/mapping steps around each
+    // layer. They are not graph nodes, so they must never receive a
+    // `decafNode` origin; only the document's node steps are attributed.
+    const nodeIds = new Set((source.nodes ?? []).map((entry) => entry.id));
+    const nodeStepSpans = stepSpans.filter((span) =>
+      nodeIds.has(workflowStepIdOf(span))
+    );
+    const routingStepSpans = stepSpans.filter(
+      (span) => !nodeIds.has(workflowStepIdOf(span))
+    );
+    expect(nodeStepSpans.map(workflowStepIdOf)).toEqual(
+      expect.arrayContaining(["first", "second"])
+    );
+    for (const span of nodeStepSpans) {
       expect(exporter.originOf(span)).toEqual({
         id: workflowStepIdOf(span),
         kind: NODE_KIND,
       });
+    }
+    expect(routingStepSpans.length).toBeGreaterThan(0);
+    for (const span of routingStepSpans) {
+      expect(exporter.originOf(span)).toBeUndefined();
     }
 
     // The root span stays engine-scoped: no OUR-node origin.
@@ -296,7 +312,7 @@ liveDescribe("mastra observability driver run (SAA-836 O1, SAA-891)", () => {
     const harness = frameSinkHarness("saa-891-binding-run");
     const result = await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { in: 1 },
       options: {} as never,
       events: harness.sink,

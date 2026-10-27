@@ -173,7 +173,7 @@ describe("mastra processor/guardrail driver run (SAA-836 M5)", () => {
 
     const result = await backend.execute({
       document: processorPairDocument("saa-836-processor-pair-run"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "summarise the brief" },
       options: {} as never,
       events: harness.sink,
@@ -221,7 +221,7 @@ describe("mastra processor/guardrail driver run (SAA-836 M5)", () => {
           edge("e1", ["node", "chat", "message"], ["node", "agent", "prompt"]),
         ],
       }),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "plain run" },
       options: {} as never,
       events: harness.sink,
@@ -247,7 +247,7 @@ describe("mastra processor/guardrail driver run (SAA-836 M5)", () => {
         "saa-836-guardrail-tripwire",
         "output for"
       ),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "echo the secret" },
       options: {} as never,
       events: harness.sink,
@@ -278,7 +278,7 @@ describe("mastra processor/guardrail driver run (SAA-836 M5)", () => {
         "saa-836-guardrail-pass",
         "NEVER-MATCHES"
       ),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "echo the secret" },
       options: {} as never,
       events: harness.sink,

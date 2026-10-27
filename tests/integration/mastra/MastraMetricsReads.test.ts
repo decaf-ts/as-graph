@@ -438,7 +438,7 @@ liveDescribe(
       await backend.execute(
         {
           document: source,
-          plan: {} as never,
+          plan: undefined as never,
           inputs: { in: 1 },
           options: {} as never,
           events: (await import("./helpers")).frameSinkHarness(

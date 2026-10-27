@@ -16,6 +16,7 @@
  */
 import { describe, expect, it } from "@jest/globals";
 import {
+  MASTRA_NODE_CLASSES_BY_KIND,
   MASTRA_NODE_IMPLEMENTATION_BY_KIND,
   MASTRA_NODE_IMPLEMENTATIONS,
   MASTRA_ONLY_NODE_KINDS,
@@ -24,14 +25,11 @@ import {
   createMastraNodeStepHandlers,
 } from "../../../../src/mastra/nodes";
 import { graphNodeRequiresMastraEngine } from "../../../../src/engine/execution/GraphNodeEngineRequirements";
-import { GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND } from "../../../../src/node";
 
-/** Every registered built-in kind the mastra engine is the only executor for. */
+/** Every registered mastra-owned kind the mastra engine is the only executor for. */
 const REGISTERED_MASTRA_KINDS: readonly string[] = Object.keys(
-  GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND
-)
-  .filter(graphNodeRequiresMastraEngine)
-  .sort();
+  MASTRA_NODE_CLASSES_BY_KIND
+).sort();
 
 /** Representative general-engine kinds that must never leak into the registry. */
 const LOCAL_KINDS = [
@@ -77,7 +75,7 @@ describe("MastraNodeRegistry coverage (SAA-1143)", () => {
     );
     for (const implementation of MASTRA_NODE_IMPLEMENTATIONS) {
       expect(implementation.nodeClass).toBe(
-        GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND[implementation.kind]
+        MASTRA_NODE_CLASSES_BY_KIND[implementation.kind]
       );
       expect(typeof implementation.nodeClass.instantiate).toBe("function");
     }

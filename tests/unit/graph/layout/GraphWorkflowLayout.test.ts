@@ -20,7 +20,7 @@ import {
 } from "../../../../src/shared/graph";
 import type { GraphWorkflowDocument } from "../../../../src/shared/graph";
 import { document, edge, node } from "../../../../src/workflows/builders";
-import { loopsWhileUntilDocument } from "../../../../src/workflows/loops-while-until.workflow";
+import { loopsWhileUntilDocument } from "../../../../src/workflows/basic/loops-while-until.workflow";
 
 /** A→B→C→D linear chain. */
 function linearChain(): GraphWorkflowDocument {

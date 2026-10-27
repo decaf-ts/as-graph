@@ -9,14 +9,16 @@ authoritative contract instead of two drifting copies. The same manifest a UI re
 is the manifest the backend validator resolves against, and the same workflow document a UI saves is the
 document the backend executes.
 
-The module is split into three public entry points:
+The module is split into multiple public entry points:
 
 | Entry point | Contents | Audience |
 | --- | --- | --- |
-| `@decaf-ts/as-graph` | Engine, planning, validation, auth, loops, pinning, run lifecycle, value store, and the built-in node classes | Backend / Node.js |
+| `@decaf-ts/as-graph` | Engine, planning, validation, auth, loops, pinning, run lifecycle, value store, and the engine-neutral built-in node classes (Mastra-dependent node classes ship only from `@decaf-ts/as-graph/mastra/nodes`) | Backend / Node.js |
 | `@decaf-ts/as-graph/shared` | Decorated-node/workflow metadata contracts, the canonical workflow document and its (de)serialization, manifest catalogue types, frontend-safe execution-state contracts | UI + backend |
 | `@decaf-ts/as-graph/nest` | NestJS controllers, services, models and dynamic module hosting the engine over HTTP/SSE | NestJS backend |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: the run/run-event/value model classes (`GraphRunModel`, `GraphRunEventModel`, `GraphValueModel`), their `@repository()` classes, and the `RamGraphRunStore` / `RamGraphRunEventStore` stores | Backend / Node.js |
+| `@decaf-ts/as-graph/workflows` | Engine-neutral demo workflow fixture registry (`basicWorkflowFixtures`) plus the shared fixture types/builders — demo/test content, not part of the engine contract | Demo / test |
+| `@decaf-ts/as-graph/workflows/mastra` | Mastra capability fixture registry (`mastraWorkflowFixtures`), composite workflows, deterministic host fakes, and the `MASTRA_FEATURE_CAPABILITIES` coverage matrix | Demo / test |
 
 #### The shared-vs-engine boundary rule
 
@@ -48,14 +50,16 @@ src/
 │   │   ├── reader.ts     # metadata readers (ports, nodes, workflows)
 │   │   └── snapshot.ts   # frontend-safe execution snapshots
 │   └── ui/               # framework-neutral view models for the graph UI
-├── node/       # built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
-│               # (triggers, flow, data, io, storage, devops, comms, utility, agents, boundary)
+├── node/       # engine-neutral built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
+│               # (triggers, flow, data, io, storage, devops, comms, utility, boundary)
 ├── engine/     # execution engine (planning, validation, auth, credentials, loops, pinning, runs, store, catalog)
 ├── nest/       # NestJS HTTP/SSE wiring for the engine
 ├── ram/        # adapter-backed run/run-event persistence (RamGraphRunStore, RamGraphRunEventStore)
-├── mastra/     # Mastra execution backend (mastra/nodes/: the mastra-only node-kind registry)
+├── mastra/     # Mastra execution backend; mastra/nodes/ owns the Mastra-dependent node classes and registry
 ├── typeorm/    # durable Postgres adapter factory for the as-graph decaf tables
 ├── dagster/    # Dagster execution backend (host-injected DagsterClient port)
+├── workflows/  # demo workflow registries: basic/ (engine-neutral fixtures, /workflows export)
+│               # and mastra/ (Mastra capability fixtures + coverage matrix, /workflows/mastra export)
 ├── assets/     # locale JSON for @uielement strings (i18n/en.json, shipped via package files)
 └── log/        # run-log channel
 ```

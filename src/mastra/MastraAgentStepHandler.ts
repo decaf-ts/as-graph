@@ -1,23 +1,24 @@
 /**
  * @module as-graph/mastra/MastraAgentStepHandler
  * @summary Real `core.agent` execution for the mastra backend (SAA-837 M1).
- * @description Replaces the SAA-824 degraded echo placeholder with a genuine
- * agent step. The handler builds a `@mastra/core` step that resolves the agent
- * configured for the node (from the host's agent map or an injected factory),
- * invokes it with the node's resolved `prompt` input, and projects the agent
- * result onto the canonical `response`/`actions` outputs. Execution fails closed
- * with {@link GRAPH_MASTRA_AGENT_UNAVAILABLE} when no agent (or no agent runtime)
- * is available, so the engine never reports a fabricated agent result. When the
- * compiled document wires processor/guardrail nodes onto the agent's
- * `inputProcessors`/`outputProcessors` zones (SAA-836 M5), the handler resolves
- * them into real `@mastra/core/processors` instances and hands them to the
- * runtime as mastra's per-run processor overrides (R3). When the document wires
+ * @description Builds the run-scoped agent runtime and binds it to the
+ * `core.agent` node class through the single step adapter. The runtime resolves
+ * the agent configured for the node (from the host's agent map or an injected
+ * factory), invokes it with the node's resolved `prompt` input, and projects the
+ * agent result onto the canonical `response`/`actions` outputs; the node's
+ * `execute()` is the single implementation of the declared semantics. Execution
+ * fails closed with {@link GRAPH_MASTRA_AGENT_UNAVAILABLE} when no agent (or no
+ * agent runtime) is available, so the engine never reports a fabricated agent
+ * result. When the compiled document wires processor/guardrail nodes onto the
+ * agent's `inputProcessors`/`outputProcessors` zones (SAA-836 M5), the runtime
+ * resolves them into real `@mastra/core/processors` instances and applies them
+ * as mastra's per-run processor overrides (R3). When the document wires
  * memory provider nodes onto the agent's `memory` zone (SAA-836 M2), the
- * handler resolves them into live mastra-native `Memory` instances, hands them
+ * runtime resolves them into live mastra-native `Memory` instances, hands them
  * to the agent factory for construction-time attachment, and binds the
  * invocation to the configured thread via mastra's per-run `memory` option.
  * When the node declares a `structuredOutput` definition (SAA-836 S1), the
- * handler resolves it into mastra's per-run `structuredOutput` generate option
+ * runtime resolves it into mastra's per-run `structuredOutput` generate option
  * through the backend structured-output contract (see
  * {@link MastraStructuredOutput}) and the resolved Zod schema drives and
  * validates the response.
@@ -26,16 +27,14 @@
  * the backend passes the config-backed implementation, while tests can inject a
  * deterministic fake agent without a model provider or credentials.
  */
-import { z } from "zod";
-import { createStep } from "@mastra/core/workflows";
 import type { MastraVector } from "@mastra/core/vector";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
+import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import {
   GRAPH_MASTRA_AGENT_UNAVAILABLE,
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
 } from "./types";
 import {
   graphModelAdapterOf,
@@ -60,6 +59,9 @@ import {
   type MastraDecafModelResolver,
   type MastraResolvedStructuredOutput,
 } from "./MastraStructuredOutput";
+import type { MastraAgentNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { AgentNode } from "./nodes/agent/node";
 
 /**
  * Host port that performs the actual agent invocation for one `core.agent` node.
@@ -450,93 +452,120 @@ export function createMastraAgentRuntimeFromConfig(
  * @param options - The handler-set options (the agent runtime).
  * @returns The `core.agent` step handler.
  */
+/**
+ * Builds the run-scoped agent runtime service that executes a `core.agent`
+ * node. The service resolves the node's wired processor/memory zones and
+ * structured-output option from the canonical document and delegates the host
+ * model call to the configured {@link MastraAgentRuntime}.
+ *
+ * @param options - The handler-set options (the agent runtime and resolvers).
+ * @returns The agent node runtime service.
+ */
+export function createMastraAgentNodeRuntime(
+  options: MastraAgentStepHandlerOptions = {}
+): MastraAgentNodeRuntime {
+  const resolved = new WeakMap<
+    GraphWorkflowDocument,
+    Map<
+      string,
+      {
+        processors?: MastraAgentWiredProcessors;
+        memories?: readonly MastraAgentMemoryWiring[];
+        structuredOutput?: MastraResolvedStructuredOutput;
+        structuredOutputResolved: boolean;
+      }
+    >
+  >();
+
+  return {
+    async execute(node, inputData, signal, document) {
+      const runtime = options.runtime;
+      if (!runtime) {
+        throw new GraphExecutionError(
+          `core.agent node '${node.id}' has no mastra agent runtime configured`,
+          GRAPH_MASTRA_AGENT_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind }
+        );
+      }
+      let state:
+        | {
+            processors?: MastraAgentWiredProcessors;
+            memories?: readonly MastraAgentMemoryWiring[];
+            structuredOutput?: MastraResolvedStructuredOutput;
+            structuredOutputResolved: boolean;
+          }
+        | undefined;
+      if (document) {
+        let perDocument = resolved.get(document);
+        if (!perDocument) {
+          perDocument = new Map();
+          resolved.set(document, perDocument);
+        }
+        state = perDocument.get(node.id);
+        if (!state) {
+          state = { structuredOutputResolved: false };
+          perDocument.set(node.id, state);
+        }
+      }
+      let processors: MastraAgentWiredProcessors | undefined;
+      if (document && state) {
+        if (state.processors) {
+          processors = state.processors;
+        } else {
+          processors = await resolveAgentWiredProcessors(
+            document,
+            node.id,
+            options.resolveProcessorModel
+          );
+          state.processors = processors;
+        }
+      }
+      let memories: readonly MastraAgentMemoryWiring[] | undefined;
+      if (document && state) {
+        if (state.memories === undefined) {
+          const wiring = connectedMastraMemoryWiringOf(document, node);
+          state.memories = wiring.length ? wiring : [];
+        }
+        if (state.memories.length) memories = state.memories;
+      }
+      let structuredOutput: MastraResolvedStructuredOutput | undefined;
+      if (state) {
+        if (!state.structuredOutputResolved) {
+          state.structuredOutput = mastraStructuredOutputOf(
+            node,
+            options.resolveModel
+          );
+          state.structuredOutputResolved = true;
+        }
+        structuredOutput = state.structuredOutput;
+      } else {
+        structuredOutput = mastraStructuredOutputOf(node, options.resolveModel);
+      }
+      return (await runtime.execute(
+        node,
+        inputData,
+        signal,
+        processors,
+        memories,
+        structuredOutput
+      )) as Record<string, unknown>;
+    },
+  };
+}
+
+/**
+ * Builds the schema-agnostic {@link MastraNodeStepHandler} registered for the
+ * `core.agent` kind through the single node-class adapter. The step adapts the
+ * Mastra runtime to the node class `execute()` and injects the run-scoped
+ * agent services; there is no second agent implementation here.
+ *
+ * @param options - The handler-set options (the agent runtime).
+ * @returns The `core.agent` step handler.
+ */
 export function createMastraAgentStepHandler(
   options: MastraAgentStepHandlerOptions = {}
 ): MastraNodeStepHandler {
-  return {
-    kind: "core.agent",
-    createStep: (node: GraphNodeInstance, stepOptions: MastraNodeStepOptions) => {
-      const document = stepOptions.document;
-      // Resolved wired processors, memoized per step. Each compilation creates
-      // fresh steps through this handler, so a per-step memo can never serve a
-      // stale pipeline from a prior document revision.
-      let wiredProcessors: MastraAgentWiredProcessors | undefined;
-      // Resolved wired memory provider nodes (SAA-836 M2), memoized per step
-      // with the same per-compilation freshness guarantee.
-      let wiredMemories: readonly MastraAgentMemoryWiring[] | undefined;
-      // Resolved structured-output option (SAA-836 S1), memoized per step;
-      // a declared definition that cannot resolve fails closed at compile
-      // time, never at run time.
-      let structuredOutput: MastraResolvedStructuredOutput | undefined;
-      let structuredOutputResolved = false;
-      return createStep({
-        id: stepOptions.stepId,
-        inputSchema: z.any(),
-        outputSchema: z.any(),
-        execute: async (args: {
-          inputData?: unknown;
-          abortSignal?: AbortSignal;
-        }) => {
-          const inputData =
-            args.inputData &&
-            typeof args.inputData === "object" &&
-            !Array.isArray(args.inputData)
-              ? (args.inputData as Record<string, unknown>)
-              : {};
-          const runtime = options.runtime;
-          if (!runtime) {
-            throw new GraphExecutionError(
-              `core.agent node '${node.id}' has no mastra agent runtime configured`,
-              GRAPH_MASTRA_AGENT_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind }
-            );
-          }
-          // SAA-836 M5: resolve the processors wired onto the agent node's
-          // `inputProcessors`/`outputProcessors` zones (memoized per step) and
-          // hand them to the runtime as mastra's per-run processor overrides.
-          let processors: MastraAgentWiredProcessors | undefined;
-          if (document) {
-            if (wiredProcessors) {
-              processors = wiredProcessors;
-            } else {
-              processors = await resolveAgentWiredProcessors(
-                document,
-                node.id,
-                options.resolveProcessorModel
-              );
-              wiredProcessors = processors;
-            }
-          }
-          // SAA-836 M2: resolve the memory provider nodes wired onto the
-          // agent's `memory` zone (memoized per step) and hand them to the
-          // runtime, which resolves live mastra memories and binds the thread.
-          let memories: readonly MastraAgentMemoryWiring[] | undefined;
-          if (document) {
-            const wiring =
-              wiredMemories ??
-              (wiredMemories = connectedMastraMemoryWiringOf(document, node));
-            if (wiring.length) memories = wiring;
-          }
-          // SAA-836 S1: resolve the node's structured-output definition into
-          // the mastra generate option (memoized per step). A declared
-          // definition that cannot resolve fails closed here.
-          if (!structuredOutputResolved) {
-            structuredOutput = mastraStructuredOutputOf(node, options.resolveModel);
-            structuredOutputResolved = true;
-          }
-          const output = await runtime.execute(
-            node,
-            inputData,
-            args.abortSignal,
-            processors,
-            memories,
-            structuredOutput
-          );
-          return output && typeof output === "object"
-            ? (output as Record<string, unknown>)
-            : {};
-        },
-      });
-    },
-  };
+  return createMastraNodeStepHandler("core.agent", AgentNode, {
+    agent: createMastraAgentNodeRuntime(options),
+  });
 }

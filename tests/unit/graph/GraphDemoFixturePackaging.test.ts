@@ -1,13 +1,16 @@
 /**
  * @module as-graph/tests/unit/graph/GraphDemoFixturePackaging.test
  * @summary SAA-1358/D4 regression: the release package must ship the compiled
- * demo workflow fixture registry so the published backend seeds every engine on
- * boot.
- * @description The registry lives under `src/workflows` and is compiled into
- * `lib/{cjs,esm,types}/workflows`; `GraphBackendHost.loadGraphDemoWorkflows()`
- * only finds it when those compiled files survive npm packaging. This suite
- * guards the `files` allowlist (and the build output it selects) against a
- * future release silently re-adding `!lib/**\/workflows` ignores.
+ * demo workflow fixture registries so the published backend seeds the selected
+ * engine on boot.
+ * @description SAA-1549 split the registry into the engine-neutral `basic/`
+ * set and the Mastra-only `mastra/` set. Both trees live under
+ * `src/workflows` and are compiled into `lib/{cjs,esm,types}/workflows/...`;
+ * `GraphBackendHost.loadGraphDemoWorkflows()` only finds them when those
+ * compiled files survive npm packaging. This suite guards the `files` allowlist
+ * (and the build output it selects) against a future release silently re-adding
+ * `!lib/**\/workflows` ignores, and pins both registry output sets plus the
+ * expected fixture counts.
  */
 import { describe, it, expect } from "@jest/globals";
 import { existsSync, readFileSync } from "node:fs";
@@ -15,10 +18,9 @@ import { join } from "node:path";
 
 const PACKAGE_ROOT = join(__dirname, "..", "..", "..");
 
-/** The 12 compiled fixture modules the registry re-exports. */
-const FIXTURE_MODULES = [
+/** The 11 engine-neutral fixture modules the basic registry re-exports. */
+const BASIC_FIXTURE_MODULES = [
   "boundary-value.workflow",
-  "chat-agent.workflow",
   "error-boundary.workflow",
   "event-map.workflow",
   "foreach-break.workflow",
@@ -31,14 +33,40 @@ const FIXTURE_MODULES = [
   "webhook-form.workflow",
 ] as const;
 
+/** The Mastra registry modules (per-kind set, composites, chat demo, matrix). */
+const MASTRA_REGISTRY_MODULES = [
+  "capabilities",
+  "chat-agent.workflow",
+  "composites",
+  "host-fakes",
+  "kind-fixtures",
+] as const;
+
+/** Expected shipped fixture counts (SAA-1545 §5). */
+const EXPECTED_FIXTURE_COUNTS = { basic: 11, mastra: 48 } as const;
+
 /** Compiled registry entrypoints (one per module format) + fixture modules. */
 const REGISTRY_OUTPUTS: readonly string[] = [
   "lib/cjs/workflows/index.cjs",
   "lib/esm/workflows/index.js",
   "lib/types/workflows/index.d.cts",
   "lib/types/workflows/index.d.mts",
-  ...FIXTURE_MODULES.map((name) => `lib/cjs/workflows/${name}.cjs`),
-  ...FIXTURE_MODULES.map((name) => `lib/esm/workflows/${name}.js`),
+  "lib/cjs/workflows/mastra/index.cjs",
+  "lib/esm/workflows/mastra/index.js",
+  "lib/types/workflows/mastra/index.d.cts",
+  "lib/types/workflows/mastra/index.d.mts",
+  ...BASIC_FIXTURE_MODULES.map(
+    (name) => `lib/cjs/workflows/basic/${name}.cjs`
+  ),
+  ...BASIC_FIXTURE_MODULES.map(
+    (name) => `lib/esm/workflows/basic/${name}.js`
+  ),
+  ...MASTRA_REGISTRY_MODULES.map(
+    (name) => `lib/cjs/workflows/mastra/${name}.cjs`
+  ),
+  ...MASTRA_REGISTRY_MODULES.map(
+    (name) => `lib/esm/workflows/mastra/${name}.js`
+  ),
 ];
 
 interface PackageManifest {
@@ -70,13 +98,18 @@ function excludedByFilesAllowlist(
     );
 }
 
+/** Counts non-overlapping occurrences of `needle` in `source`. */
+function countOccurrences(source: string, needle: string): number {
+  return source.split(needle).length - 1;
+}
+
 describe("demo fixture registry packaging (SAA-1358 D4)", () => {
   it("keeps lib in the published file allowlist", () => {
     expect(manifest.files).toBeDefined();
     expect(manifest.files).toEqual(expect.arrayContaining(["lib"]));
   });
 
-  it("does not exclude the compiled demo workflow registry", () => {
+  it("does not exclude either compiled demo workflow registry", () => {
     const exclusions = (manifest.files ?? []).filter((entry) =>
       entry.startsWith("!")
     );
@@ -99,11 +132,48 @@ describe("demo fixture registry packaging (SAA-1358 D4)", () => {
     expect(missing).toEqual([]);
   });
 
-  it("the shipped compiled registry exposes exactly the 12 fixture workflows", () => {
-    const registryPath = join(PACKAGE_ROOT, "lib/cjs/workflows/index.cjs");
+  it("the shipped basic registry exposes exactly the 11 engine-neutral fixtures", () => {
+    const registryPath = join(PACKAGE_ROOT, "lib/cjs/workflows/basic/index.cjs");
     const source = readFileSync(registryPath, "utf8");
-    for (const name of FIXTURE_MODULES) {
+    for (const name of BASIC_FIXTURE_MODULES) {
       expect(source).toContain(`./${name}.cjs`);
     }
+    expect(BASIC_FIXTURE_MODULES).toHaveLength(
+      EXPECTED_FIXTURE_COUNTS.basic
+    );
+    expect(source).not.toContain("chat-agent.workflow");
+  });
+
+  it("the shipped mastra registry exposes one fixture per kind plus the composites", () => {
+    const registryPath = join(
+      PACKAGE_ROOT,
+      "lib/cjs/workflows/mastra/index.cjs"
+    );
+    const source = readFileSync(registryPath, "utf8");
+    for (const name of [
+      "kind-fixtures",
+      "composites",
+      "chat-agent.workflow",
+      "capabilities",
+    ]) {
+      expect(source).toContain(`./${name}.cjs`);
+    }
+    expect(source).toContain("exports.mastraWorkflowFixtures");
+
+    const kindFixtures = readFileSync(
+      join(PACKAGE_ROOT, "lib/cjs/workflows/mastra/kind-fixtures.cjs"),
+      "utf8"
+    );
+    const composites = readFileSync(
+      join(PACKAGE_ROOT, "lib/cjs/workflows/mastra/composites.cjs"),
+      "utf8"
+    );
+    // One focused per-kind fixture per MASTRA_NODE_CLASSES_BY_KIND entry (38),
+    // the chat demo (1), and the focused composites (9) = 48.
+    expect(countOccurrences(kindFixtures, 'kind: "core.agent')).toBe(38);
+    expect(countOccurrences(composites, "composite({")).toBe(9);
+    expect(
+      countOccurrences(kindFixtures, 'kind: "core.agent') + 1 + 9
+    ).toBe(EXPECTED_FIXTURE_COUNTS.mastra);
   });
 });

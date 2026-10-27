@@ -21,10 +21,11 @@
  * `GRAPH_MASTRA_AGENT_UNAVAILABLE`, and with a runtime it emits the runtime's
  * output. The reserved `MASTRA_DEGRADED_OUTPUT_KEY` marker is no longer emitted.
  *
- * SAA-836 M2/M4/M5 bring the mastra memory, RAG, and processor/guardrail leaf
- * kinds into the default handler set: the memory kinds emit their JSON-safe
- * descriptors, and every RAG and processor kind emits the same `resource`
- * descriptor shape as the AI-family kinds beside the forwarded input.
+ * SAA-836 M2/M4/M5 introduced the mastra memory, RAG, and processor/guardrail
+ * leaf kinds; they are reached through the node-class registry
+ * (`createMastraNodeStepHandlers`), not the default handler set, so this suite
+ * exercises them through the production node-class adapter in a dedicated
+ * suite rather than through a branch the default loop can never reach.
  */
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import {
@@ -35,7 +36,6 @@ import {
 import {
   createMastraDefaultStepHandlers,
   DEFAULT_MASTRA_DELAY_MAX_MS,
-  MASTRA_AGENT_FAMILY_STEP_KINDS,
   MASTRA_DEFAULT_STEP_HANDLER_KINDS,
   MASTRA_MAX_SET_TIMEOUT_MS,
   MASTRA_PROCESSOR_STEP_KINDS,
@@ -43,11 +43,13 @@ import {
 } from "../../../../src/mastra/MastraDefaultStepHandlers";
 import {
   GRAPH_MASTRA_AGENT_UNAVAILABLE,
+  GRAPH_MASTRA_RAG_UNAVAILABLE,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
 } from "../../../../src/mastra/types";
+import { createMastraNodeStepHandlers } from "../../../../src/mastra/nodes";
 import { document, node } from "../../../../src/workflows/builders";
-import { foreachBreakDocument } from "../../../../src/workflows/foreach-break.workflow";
-import { loopsWhileUntilDocument } from "../../../../src/workflows/loops-while-until.workflow";
+import { foreachBreakDocument } from "../../../../src/workflows/basic/foreach-break.workflow";
+import { loopsWhileUntilDocument } from "../../../../src/workflows/basic/loops-while-until.workflow";
 import { graphCodeOf } from "./helpers";
 
 /** The step shape this suite exercises (`id`/`execute`; `abortSignal` for F1). */
@@ -65,18 +67,6 @@ function nodeIdOf(kind: string): string {
     kind
   )}`;
 }
-
-/**
- * Every default-handled leaf kind whose step resolves the node's configuration
- * into a `resource` descriptor beside the forwarded input: the SAA-836 M3
- * AI-family kinds, the M4 RAG kinds, and the M5 processor/guardrail kinds —
- * all emit the same `{ kind, nodeId, parameters }` descriptor shape.
- */
-const RESOURCE_DESCRIPTOR_KINDS: readonly string[] = [
-  ...(MASTRA_AGENT_FAMILY_STEP_KINDS as readonly string[]),
-  ...MASTRA_RAG_STEP_KINDS,
-  ...MASTRA_PROCESSOR_STEP_KINDS,
-];
 
 /** Configured parameters that exercise each kind's special-cased behaviour. */
 function parametersFor(kind: string): Record<string, unknown> {
@@ -164,44 +154,6 @@ describe("MastraDefaultStepHandlers — handler set (SAA-820)", () => {
         await expect(
           step.execute({ inputData: input })
         ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_UNSUPPORTED_KIND });
-      } else if (kind === "core.agent") {
-        // SAA-837 M1: the agent kind is mastra-only and fails closed when no
-        // agent runtime is configured, instead of forwarding a fabricated echo.
-        await expect(
-          step.execute({ inputData: input })
-        ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_AGENT_UNAVAILABLE });
-      } else if (RESOURCE_DESCRIPTOR_KINDS.includes(kind)) {
-        // SAA-836 M3/M4/M5: the mastra AI-family, RAG, and processor leaf kinds
-        // resolve their configuration into a `resource` descriptor beside the
-        // forwarded input.
-        const output = (await step.execute({ inputData: input })) as Record<
-          string,
-          unknown
-        >;
-        expect(output).toEqual({
-          ...input,
-          resource: { kind, nodeId: nodeIdOf(kind), parameters: {} },
-        });
-      } else if (kind === "core.agent.memory") {
-        // SAA-836 M2: an unconfigured memory provider emits the JSON-safe
-        // fallback descriptor (the live `Memory` is resolved by the agent
-        // runtime, never persisted).
-        const output = (await step.execute({ inputData: input })) as Record<
-          string,
-          unknown
-        >;
-        expect(output).toEqual({
-          ...input,
-          resource: { type: "mastra.memory", id: "memory", provider: "memory" },
-        });
-      } else if (kind === "core.agent.memorySelector") {
-        // SAA-836 M2: with no decision and no declared candidates the selector
-        // emits a null selection beside the forwarded input.
-        const output = (await step.execute({ inputData: input })) as Record<
-          string,
-          unknown
-        >;
-        expect(output).toEqual({ ...input, selected: null, resource: null });
       } else {
         const output = await step.execute({ inputData: input });
         expect({ kind, output }).toEqual({ kind, output: input });
@@ -259,6 +211,141 @@ describe("MastraDefaultStepHandlers — handler set (SAA-820)", () => {
     expect(graphCodeOf(() => compiler.compile(allKindsDocument()))).toBe(
       GRAPH_MASTRA_UNSUPPORTED_KIND
     );
+  });
+});
+
+describe("MastraDefaultStepHandlers — node-class registry families (SAA-1590)", () => {
+  it("executes the processor kinds to their exact resource descriptors", async () => {
+    const cases: Array<{
+      kind: string;
+      parameters: Record<string, unknown>;
+      inputData: Record<string, unknown>;
+      expected: Record<string, unknown>;
+    }> = [
+      {
+        kind: "core.agent.inputProcessor",
+        parameters: {
+          processorType: "tokenCostControl",
+          options: { maxCost: 1 },
+        },
+        inputData: { prompt: "hello" },
+        expected: {
+          resource: {
+            type: "mastra.inputProcessor",
+            processorType: "tokenCostControl",
+            options: { maxCost: 1 },
+            input: { prompt: "hello" },
+          },
+        },
+      },
+      {
+        kind: "core.agent.outputProcessor",
+        parameters: {
+          processorType: "batchParts",
+          options: { batchSize: 2 },
+        },
+        inputData: { response: "hi" },
+        expected: {
+          resource: {
+            type: "mastra.outputProcessor",
+            processorType: "batchParts",
+            options: { batchSize: 2 },
+            input: { response: "hi" },
+          },
+        },
+      },
+      {
+        kind: "core.agent.guardrail",
+        parameters: {
+          guardrailType: "regexFilter",
+          strategy: "block",
+          options: {
+            rules: [{ pattern: "secret", flags: "i" }],
+            strategy: "block",
+          },
+        },
+        inputData: { text: "secret" },
+        expected: {
+          resource: {
+            type: "mastra.guardrail",
+            guardrailType: "regexFilter",
+            strategy: "block",
+            options: {
+              rules: [{ pattern: "secret", flags: "i" }],
+              strategy: "block",
+            },
+            input: { text: "secret" },
+          },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const step = compileRegistryStep(testCase.kind, testCase.parameters);
+      const output = await step.execute({ inputData: testCase.inputData });
+      expect({ kind: testCase.kind, output }).toEqual({
+        kind: testCase.kind,
+        output: testCase.expected,
+      });
+    }
+  });
+
+  it("executes every RAG kind through the production node-class adapter", async () => {
+    const outcomes: Array<{
+      kind: string;
+      code?: string;
+      output?: Record<string, unknown>;
+    }> = [];
+    for (const kind of MASTRA_RAG_STEP_KINDS) {
+      const step = compileRegistryStep(kind, {});
+      try {
+        const output = (await step.execute({ inputData: {} })) as Record<
+          string,
+          unknown
+        >;
+        outcomes.push({ kind, output });
+      } catch (error) {
+        outcomes.push({
+          kind,
+          code: (error as { graphCode?: string }).graphCode,
+        });
+      }
+    }
+
+    for (const outcome of outcomes) {
+      if (outcome.kind === "core.agent.chunking") {
+        // Pure deterministic node: no host service is involved, so the
+        // production adapter must return the real chunk output.
+        expect({ kind: outcome.kind, output: outcome.output }).toEqual({
+          kind: outcome.kind,
+          output: { chunks: [], count: 0 },
+        });
+        continue;
+      }
+      if (outcome.kind === "core.agent.rerank") {
+        // The host reranker is optional; without one the node fails closed
+        // with its documented typed code rather than fabricating a ranking.
+        expect({ kind: outcome.kind, code: outcome.code }).toEqual({
+          kind: outcome.kind,
+          code: GRAPH_MASTRA_RAG_UNAVAILABLE,
+        });
+        continue;
+      }
+      const resource = outcome.output?.["resource"] as
+        | Record<string, unknown>
+        | undefined;
+      expect({
+        kind: outcome.kind,
+        resourceKind: resource?.["kind"],
+        resourceNodeId: resource?.["nodeId"],
+        resourceType: resource?.["type"],
+      }).toEqual({
+        kind: outcome.kind,
+        resourceKind: outcome.kind,
+        resourceNodeId: "target",
+        resourceType: `mastra.${outcome.kind.replace(/^core\.agent\./, "")}`,
+      });
+    }
   });
 });
 
@@ -338,6 +425,26 @@ function compileSingleStep(
   return compiled.steps.get("target") as ExecutableStep;
 }
 
+/**
+ * Compiles a single node through the Mastra node registry (the owner of every
+ * Mastra kind) rather than the engine-neutral default handler set.
+ */
+function compileRegistryStep(
+  kind: string,
+  parameters: Record<string, unknown> = {},
+  agentOptions: { runtime?: unknown } = {}
+): ExecutableStep {
+  const compiler = new MastraWorkflowCompiler({
+    stepHandlers: createMastraNodeStepHandlers({
+      agent: agentOptions as never,
+    }),
+  });
+  const compiled = compiler.compile(
+    singleKindDocument(`saa-1545-${kind}`, kind, parameters)
+  );
+  return compiled.steps.get("target") as ExecutableStep;
+}
+
 describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
   it("pins the exported clamp constants", () => {
     expect(MASTRA_MAX_SET_TIMEOUT_MS).toBe(2_147_483_647);
@@ -403,7 +510,7 @@ describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
   });
 
   it("fails a compiled core.agent step closed when no runtime is configured", async () => {
-    const step = compileSingleStep("core.agent", {});
+    const step = compileRegistryStep("core.agent", {});
 
     await expect(
       step.execute({ inputData: { alpha: 1 } })
@@ -421,7 +528,7 @@ describe("MastraDefaultStepHandlers — SAA-824 hardening", () => {
         return { response: "runtime response", actions: [] };
       },
     };
-    const step = compileSingleStep("core.agent", {}, { agentRuntime: runtime });
+    const step = compileRegistryStep("core.agent", {}, { runtime });
 
     const output = await step.execute({ inputData: { prompt: "hello" } });
 

@@ -40,14 +40,16 @@ authoritative contract instead of two drifting copies. The same manifest a UI re
 is the manifest the backend validator resolves against, and the same workflow document a UI saves is the
 document the backend executes.
 
-The module is split into three public entry points:
+The module is split into multiple public entry points:
 
 | Entry point | Contents | Audience |
 | --- | --- | --- |
-| `@decaf-ts/as-graph` | Engine, planning, validation, auth, loops, pinning, run lifecycle, value store, and the built-in node classes | Backend / Node.js |
+| `@decaf-ts/as-graph` | Engine, planning, validation, auth, loops, pinning, run lifecycle, value store, and the engine-neutral built-in node classes (Mastra-dependent node classes ship only from `@decaf-ts/as-graph/mastra/nodes`) | Backend / Node.js |
 | `@decaf-ts/as-graph/shared` | Decorated-node/workflow metadata contracts, the canonical workflow document and its (de)serialization, manifest catalogue types, frontend-safe execution-state contracts | UI + backend |
 | `@decaf-ts/as-graph/nest` | NestJS controllers, services, models and dynamic module hosting the engine over HTTP/SSE | NestJS backend |
 | `@decaf-ts/as-graph/ram` | Adapter-backed persistence: the run/run-event/value model classes (`GraphRunModel`, `GraphRunEventModel`, `GraphValueModel`), their `@repository()` classes, and the `RamGraphRunStore` / `RamGraphRunEventStore` stores | Backend / Node.js |
+| `@decaf-ts/as-graph/workflows` | Engine-neutral demo workflow fixture registry (`basicWorkflowFixtures`) plus the shared fixture types/builders — demo/test content, not part of the engine contract | Demo / test |
+| `@decaf-ts/as-graph/workflows/mastra` | Mastra capability fixture registry (`mastraWorkflowFixtures`), composite workflows, deterministic host fakes, and the `MASTRA_FEATURE_CAPABILITIES` coverage matrix | Demo / test |
 
 #### The shared-vs-engine boundary rule
 
@@ -79,14 +81,16 @@ src/
 │   │   ├── reader.ts     # metadata readers (ports, nodes, workflows)
 │   │   └── snapshot.ts   # frontend-safe execution snapshots
 │   └── ui/               # framework-neutral view models for the graph UI
-├── node/       # built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
-│               # (triggers, flow, data, io, storage, devops, comms, utility, agents, boundary)
+├── node/       # engine-neutral built-in @node classes, one folder per node: node/<category>/<sub>/<node>/node.ts
+│               # (triggers, flow, data, io, storage, devops, comms, utility, boundary)
 ├── engine/     # execution engine (planning, validation, auth, credentials, loops, pinning, runs, store, catalog)
 ├── nest/       # NestJS HTTP/SSE wiring for the engine
 ├── ram/        # adapter-backed run/run-event persistence (RamGraphRunStore, RamGraphRunEventStore)
-├── mastra/     # Mastra execution backend (mastra/nodes/: the mastra-only node-kind registry)
+├── mastra/     # Mastra execution backend; mastra/nodes/ owns the Mastra-dependent node classes and registry
 ├── typeorm/    # durable Postgres adapter factory for the as-graph decaf tables
 ├── dagster/    # Dagster execution backend (host-injected DagsterClient port)
+├── workflows/  # demo workflow registries: basic/ (engine-neutral fixtures, /workflows export)
+│               # and mastra/ (Mastra capability fixtures + coverage matrix, /workflows/mastra export)
 ├── assets/     # locale JSON for @uielement strings (i18n/en.json, shipped via package files)
 └── log/        # run-log channel
 ```
@@ -156,6 +160,8 @@ npm install @decaf-ts/as-graph
 | `@decaf-ts/as-graph/mastra` | Mastra execution backend: `MastraGraphExecutionBackend`, the workflow compiler, condition/event bridges, schema converter, resume guard, and the Mastra capability table — plus the backend contract: `MastraModelSchemaConverter` (`mastraSchemaFromModel`/`mastraModelFromSchema`, the single decaf↔mastra schema conversion path over `@decaf-ts/as-zod`), `MastraStructuredOutput` (the JSON-safe structured-output definition/resolution contract), and `MastraEnvironment` (the `MASTRA__*` engine environment with the credential fail-closed gate). Runs canonical documents on a host-injected `@mastra/core` runtime (peer dependency `^1.77.0`; the capability manifest separately pins `MASTRA_PINNED_VERSION = "1.74.0"` as the reviewed engine contract), executing the RAG/sandbox kinds for real through `MastraRagStepHandlers` (fail-closed `GRAPH_MASTRA_RAG_UNAVAILABLE`/`GRAPH_MASTRA_EMBEDDING_UNAVAILABLE`/`GRAPH_MASTRA_SANDBOX_UNAVAILABLE`) and serving MCP deliveries behind the run-scoped C6 `MastraMcpDeliveryGuard` |
 | `@decaf-ts/as-graph/mastra/nodes` | Mastra-only node-kind registry (SAA-1141): the authoritative list of `core.agent[.*]` kinds, each paired with its declaration class and the step-handler factory that owns it. `createMastraNodeStepHandlers` composes the backend's registered handler set from the host extension points; `auditMastraNodeCoverage` / `assertMastraNodeCoverage` prove zero missing implementations |
 | `@decaf-ts/as-graph/dagster` | Dagster execution backend: `DagsterGraphExecutionBackend`, the workflow translator, event bridge, result mapper, capability table (`DAGSTER_CAPABILITY_TABLE`), and Dagster identifier/condition-grammar helpers. Driven through a host-injected `DagsterClient` port against the pinned engine contract (`1.13.25`; Dagster is Python-side, there is no JavaScript runtime dependency) |
+| `@decaf-ts/as-graph/workflows` | Engine-neutral demo workflow fixtures (SAA-1549): the shared fixture types/builders plus the `basic/` registry (`basicWorkflowFixtures`) — demo/test content, not part of the engine contract. The local engine seeds only this registry |
+| `@decaf-ts/as-graph/workflows/mastra` | Mastra capability fixtures (SAA-1549): one focused workflow per Mastra node kind, composite workflows, the deterministic host fakes, and the `MASTRA_FEATURE_CAPABILITIES` coverage matrix (`mastraWorkflowFixtures`). The mastra engine seeds only this registry; importing or booting the basic set never loads a Mastra node implementation |
 
 The `exports` map in `package.json` is:
 
@@ -166,6 +172,16 @@ The `exports` map in `package.json` is:
       "import": { "types": "./lib/types/index.d.mts", "default": "./lib/esm/index.js" },
       "require": { "types": "./lib/types/index.d.cts", "default": "./lib/cjs/index.cjs" },
       "default": "./lib/esm/index.js"
+    },
+    "./workflows": {
+      "import": { "types": "./lib/types/workflows/index.d.mts", "default": "./lib/esm/workflows/index.js" },
+      "require": { "types": "./lib/types/workflows/index.d.cts", "default": "./lib/cjs/workflows/index.cjs" },
+      "default": "./lib/esm/workflows/index.js"
+    },
+    "./workflows/mastra": {
+      "import": { "types": "./lib/types/workflows/mastra/index.d.mts", "default": "./lib/esm/workflows/mastra/index.js" },
+      "require": { "types": "./lib/types/workflows/mastra/index.d.cts", "default": "./lib/cjs/workflows/mastra/index.cjs" },
+      "default": "./lib/esm/workflows/mastra/index.js"
     },
     "./shared": {
       "import": { "types": "./lib/types/shared/index.d.mts", "default": "./lib/esm/shared/index.js" },
@@ -1046,9 +1062,11 @@ the full compatibility surface built across the SAA-836 slices:
   variant of `GraphExecutionModule`).
 
 The agent-family node kinds themselves (memory, RAG, processors, HITL, voice,
-triggers, channel responses) are declared under
-`src/node/agents/**` and registered from their `@node` metadata — see the
-Agent row of the built-in node-kind table above.
+triggers, channel responses) are Mastra-dependent: they are declared and
+implemented under `src/mastra/nodes/**`, registered from their `@node`
+metadata, and exposed only through the `@decaf-ts/as-graph/mastra/nodes`
+registry (SAA-1547 node ownership) — see the Agent row of the built-in
+node-kind table above.
 
 ##### Mastra engine environment (`.env` / `.env.secret`)
 
@@ -1411,18 +1429,20 @@ The host binds to `127.0.0.1` and only admits `http://localhost`/`http://127.0.0
 
 ##### Demo workflow seeding
 
-The standalone host seeds the demo workflow fixture registry into whichever
-engine it boots: `loadGraphDemoWorkflows()` (exported from
-`@decaf-ts/as-graph/nest`) imports the `graphWorkflowFixtures` registry from
-`src/workflows` and passes its canonical documents as `seedWorkflows`, so each
-driver's catalogue lists the full fixture set out of the box. Operators can
+Each boot variant seeds only its own demo registry (SAA-1549 demo ownership).
+`loadGraphDemoWorkflows(variant)` (exported from
+`@decaf-ts/as-graph/nest`) resolves the variant's fixture registry — the
+local engine imports `basicWorkflowFixtures` from
+`@decaf-ts/as-graph/workflows` (`src/workflows/basic/`), the mastra engine
+imports `mastraWorkflowFixtures` from `@decaf-ts/as-graph/workflows/mastra`
+(`src/workflows/mastra/`), and Dagster receives no synthetic seed at all: its
+catalogue always lists the deployed Dagster workflows/jobs. The loader is
+best-effort — when the registry module is unavailable it returns an empty
+seed set and never fails the boot. Operators can
 suppress boot-time seeding with `GRAPH_SEED_DEMO=off` (also
 `false`/`0`/`no`/`disabled`) — any other value (or an unset variable) keeps the
-default on. The registry is
-test-only content — `npm pack` excludes `lib/**/workflows` — so a
-release-packaged host boots with an empty seed set and its catalogues behave
-exactly as before (the mastra catalogue starts empty; the dagster catalogue
-needs a wired client).
+default on. The fixture registries are demo/test content shipped through the
+`workflows` subpath exports — not part of the engine contract.
 
 ##### Standard (local engine)
 

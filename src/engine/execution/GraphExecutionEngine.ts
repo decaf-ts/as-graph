@@ -35,12 +35,14 @@ import {
   GRAPH_MAX_FOREACH_ITERATIONS,
   GRAPH_MAX_LOOP_ITERATIONS,
   GRAPH_MAX_SUB_WORKFLOW_DEPTH,
+  GRAPH_LOCAL_UNSUPPORTED_NODE_KIND,
 } from "../constants";
 import {
   GraphExecutionEventType,
   GraphExecutionStatus,
 } from "../../shared/graph";
 import { GraphExecutionError, GraphRunCancelledError } from "../errors";
+import { graphNodeRequiresMastraEngine } from "./GraphNodeEngineRequirements";
 import {
   GraphNodeCredentialResolver,
   type GraphNodeCredentialServices,
@@ -373,6 +375,14 @@ export class GraphExecutionEngine
           }
         : {}),
     };
+    // Register the node kinds owned by this engine's backend (SAA-1545 §2.1).
+    // The general catalogue deliberately omits Mastra declarations; the Mastra
+    // backend contributes them through its own registration hook, so the
+    // engine facade never imports the Mastra node surface itself.
+    for (const registration of backend.nodeRegistrations?.() ?? []) {
+      catalogue.register(registration, { replace: true });
+    }
+
     this._config = config;
     this._client = client;
     // Preserve any host-supplied backend configuration. A host may configure the
@@ -600,6 +610,23 @@ export class GraphExecutionEngine
     // receives the authoritative run id.
     opts.runId = runId;
     const path = opts.path ?? [];
+    // Engine-requirement gate: the local engine never resolves or runs a
+    // Mastra-owned kind. Checking the canonical document before catalogue
+    // resolution keeps the rejection typed even though the general catalogue
+    // deliberately does not carry Mastra node declarations.
+    if (this.client.backend.local) {
+      const gated = document.nodes.find((node) =>
+        graphNodeRequiresMastraEngine(node.kind)
+      );
+      if (gated) {
+        throw new GraphExecutionError(
+          `Node '${gated.id}' of kind '${gated.kind}' requires the mastra engine, which the local backend does not provide`,
+          GRAPH_LOCAL_UNSUPPORTED_NODE_KIND,
+          { nodeId: gated.id, kind: gated.kind, backend: "local" }
+        );
+      }
+    }
+
     this.enterExecutionBudget(runId, opts);
     try {
     const eventFactory = new GraphExecutionEventFactory();

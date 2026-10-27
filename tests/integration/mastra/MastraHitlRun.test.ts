@@ -182,7 +182,7 @@ liveDescribe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
     const seed = frameSinkHarness("mastra-it-hitl-seed");
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,
@@ -231,7 +231,7 @@ liveDescribe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
     const seed = frameSinkHarness("mastra-it-hitl-seed-decline");
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,

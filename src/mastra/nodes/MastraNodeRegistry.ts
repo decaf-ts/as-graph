@@ -1,128 +1,43 @@
 /**
  * @module as-graph/mastra/nodes/MastraNodeRegistry
- * @summary Built-in mastra implementation registry for node kinds (DECAF-809 Phase B).
- * @description Single authority binding every mastra-only node kind
- * (`core.agent` and its family — see `graphNodeRequiresMastraEngine`) to its
- * built-in `GraphNode` class and to the mastra step handlers that execute it.
- * The backend pulls its handler set from here instead of hand-wiring each
- * kind, and `auditMastraNodeCoverage`/`assertMastraNodeCoverage` fail closed
- * when a registered mastra-only kind lacks an implementation or a node class,
- * so a gap surfaces as `GRAPH_MASTRA_NODE_KIND_UNIMPLEMENTED` rather than a
- * fabricated placeholder step.
+ * @summary Single source of truth for Mastra-owned node kinds (SAA-1545 §3.2).
+ * @description Binds every kind in {@link MASTRA_NODE_CLASSES_BY_KIND} to its
+ * node class, published manifest, and Mastra execution adapter. The backend
+ * pulls its handler set from here; the coverage audit fails registration when a
+ * kind has no class, no manifest, no concrete `execute()` implementation, or no
+ * adapter, so a gap surfaces as a startup error rather than a fabricated step.
  */
 import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
-import {
-  graphNodeRequiresMastraEngine,
-} from "../../engine/execution/GraphNodeEngineRequirements";
+import { graphNodeRequiresMastraEngine } from "../../engine/execution/GraphNodeEngineRequirements";
+import { GraphNode } from "../../node/base";
 import { createMastraAgentStepHandler } from "../MastraAgentStepHandler";
-import {
-  createMastraChannelResponseStepHandlers,
-} from "../MastraChannelResponse";
-import {
-  createMastraChannelTriggerStepHandlers,
-} from "../MastraChannelTrigger";
-import {
-  createMastraDefaultStepHandlers,
-} from "../MastraDefaultStepHandlers";
+import { createMastraChannelResponseStepHandlers } from "../MastraChannelResponse";
+import { createMastraChannelTriggerStepHandlers } from "../MastraChannelTrigger";
+import { createMastraDefaultStepHandlers } from "../MastraDefaultStepHandlers";
 import { createMastraHitlStepHandler } from "../MastraHitlStepHandler";
 import { createMastraMcpTriggerStepHandler } from "../MastraMcpTrigger";
 import { createMastraRagStepHandlers } from "../MastraRagStepHandlers";
 import { createMastraVoiceStepHandler } from "../MastraVoiceStepHandler";
 import type { MastraNodeStepHandler } from "../types";
-import { GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND } from "../../node";
-
-import { AgentNode } from "../../node/agents/agent/node";
-import { AgentDelegationHookNode } from "../../node/agents/hooks/delegation/node";
-import { AgentHookNode } from "../../node/agents/hooks/hook/node";
-import { AgentToolDenyNode } from "../../node/agents/hooks/tool-deny/node";
-import { AgentHitlNode } from "../../node/agents/hitl/node";
-import { AgentMemorySelectorNode } from "../../node/agents/memory/memory-selector/node";
-import { AgentMemoryNode } from "../../node/agents/memory/memory/node";
-import { AgentGuardrailNode } from "../../node/agents/processors/guardrail/node";
-import { AgentInputProcessorNode } from "../../node/agents/processors/input-processor/node";
-import { AgentOutputProcessorNode } from "../../node/agents/processors/output-processor/node";
-import { AgentBasicChainNode } from "../../node/agents/rag/chains/basic/node";
-import { AgentQaChainNode } from "../../node/agents/rag/chains/qa/node";
-import { AgentSummarizationChainNode } from "../../node/agents/rag/chains/summarization/node";
-import { AgentChunkingNode } from "../../node/agents/rag/chunking/node";
-import { AgentEmbeddingNode } from "../../node/agents/rag/embedding/node";
-import { AgentInformationExtractorNode } from "../../node/agents/rag/information-extractor/node";
-import { AgentLangChainCodeNode } from "../../node/agents/rag/langchain-code/node";
-import { AgentRerankNode } from "../../node/agents/rag/rerank/node";
-import { AgentRetrieverNode } from "../../node/agents/rag/retriever/node";
-import { AgentStructuredOutputParserNode } from "../../node/agents/rag/structured-output-parser/node";
-import { AgentVectorStoreNode } from "../../node/agents/rag/vector-store/node";
-import { DiscordChannelResponseNode } from "../../node/agents/responses/discord/node";
-import { SlackChannelResponseNode } from "../../node/agents/responses/slack/node";
-import { TeamsChannelResponseNode } from "../../node/agents/responses/teams/node";
-import { TelegramChannelResponseNode } from "../../node/agents/responses/telegram/node";
-import { AgentSandboxNode } from "../../node/agents/sandbox/node";
-import { AgentScorerSelectorNode } from "../../node/agents/scorers/scorer-selector/node";
-import { AgentScorerNode } from "../../node/agents/scorers/scorer/node";
-import { AgentSkillSelectorNode } from "../../node/agents/skills/skill-selector/node";
-import { AgentSkillNode } from "../../node/agents/skills/skill/node";
-import { AgentToolSelectorNode } from "../../node/agents/tools/tool-selector/node";
-import { AgentToolNode } from "../../node/agents/tools/tool/node";
-import { DiscordChannelTriggerNode } from "../../node/agents/triggers/discord/node";
-import { McpServerTriggerNode } from "../../node/agents/triggers/mcp-server/node";
-import { SlackChannelTriggerNode } from "../../node/agents/triggers/slack/node";
-import { TeamsChannelTriggerNode } from "../../node/agents/triggers/teams/node";
-import { TelegramChannelTriggerNode } from "../../node/agents/triggers/telegram/node";
-import { AgentVoiceNode } from "../../node/agents/voice/node";
+import { MASTRA_NODE_CLASSES_BY_KIND } from "./classes";
+import { MASTRA_NODE_MANIFESTS_BY_KIND } from "./manifests";
+import { createMastraNodeStepHandler } from "./MastraNodeStepAdapter";
 import type {
   MastraNodeCoverageGap,
   MastraNodeHandlerOptions,
   MastraNodeKindImplementation,
 } from "./types";
 
-/** Built-in node classes by node kind, keyed by the kind discriminator. */
-const NODE_CLASSES: Record<string, MastraNodeKindImplementation["nodeClass"]> = {
-  "core.agent": AgentNode,
-  "core.agent.tool": AgentToolNode,
-  "core.agent.toolSelector": AgentToolSelectorNode,
-  "core.agent.hook": AgentHookNode,
-  "core.agent.toolDeny": AgentToolDenyNode,
-  "core.agent.delegationHook": AgentDelegationHookNode,
-  "core.agent.skill": AgentSkillNode,
-  "core.agent.skillSelector": AgentSkillSelectorNode,
-  "core.agent.sandbox": AgentSandboxNode,
-  "core.agent.scorer": AgentScorerNode,
-  "core.agent.scorerSelector": AgentScorerSelectorNode,
-  "core.agent.memory": AgentMemoryNode,
-  "core.agent.memorySelector": AgentMemorySelectorNode,
-  "core.agent.embedding": AgentEmbeddingNode,
-  "core.agent.vectorStore": AgentVectorStoreNode,
-  "core.agent.retriever": AgentRetrieverNode,
-  "core.agent.chunking": AgentChunkingNode,
-  "core.agent.rerank": AgentRerankNode,
-  "core.agent.chain.qa": AgentQaChainNode,
-  "core.agent.chain.basic": AgentBasicChainNode,
-  "core.agent.chain.summarization": AgentSummarizationChainNode,
-  "core.agent.structuredOutputParser": AgentStructuredOutputParserNode,
-  "core.agent.informationExtractor": AgentInformationExtractorNode,
-  "core.agent.langchainCode": AgentLangChainCodeNode,
-  "core.agent.inputProcessor": AgentInputProcessorNode,
-  "core.agent.outputProcessor": AgentOutputProcessorNode,
-  "core.agent.guardrail": AgentGuardrailNode,
-  "core.agent.hitl": AgentHitlNode,
-  "core.agent.trigger.mcp": McpServerTriggerNode,
-  "core.agent.trigger.slack": SlackChannelTriggerNode,
-  "core.agent.trigger.discord": DiscordChannelTriggerNode,
-  "core.agent.trigger.telegram": TelegramChannelTriggerNode,
-  "core.agent.trigger.teams": TeamsChannelTriggerNode,
-  "core.agent.response.slack": SlackChannelResponseNode,
-  "core.agent.response.discord": DiscordChannelResponseNode,
-  "core.agent.response.telegram": TelegramChannelResponseNode,
-  "core.agent.response.teams": TeamsChannelResponseNode,
-  "core.agent.voice": AgentVoiceNode,
-};
-
 /** A step-handler factory entry contributing the handlers of one options group. */
 interface HandlerGroup {
   create: (options: MastraNodeHandlerOptions) => MastraNodeStepHandler[];
 }
 
-/** Handler groups in registration order: defaults, agent, HITL, MCP trigger, channel trigger/response, voice, RAG. */
+/**
+ * Handler groups in registration order. Specific groups own the host-service
+ * kinds; any Mastra kind they do not cover is reached through the generic
+ * node-class adapter (pure/configuration kinds).
+ */
 const HANDLER_GROUPS: readonly HandlerGroup[] = [
   { create: (options) => createMastraDefaultStepHandlers(options.default) },
   { create: (options) => [createMastraAgentStepHandler(options.agent)] },
@@ -141,49 +56,66 @@ const HANDLER_GROUPS: readonly HandlerGroup[] = [
 ];
 
 /**
- * Indexes every mastra-only kind produced with empty options to the handler
- * group that owns it, so implementations can be built per group.
+ * Builds the handler map for one options bundle: specific groups first, then a
+ * generic node-class adapter for every remaining Mastra-owned kind.
  *
- * @returns A map from node kind to the index of its handler group in `HANDLER_GROUPS`.
+ * @param options - The handler options forwarded to each group.
+ * @returns The complete kind→handler map for every Mastra-owned kind.
  */
-function kindGroupIndex(): Map<string, number> {
-  const groups = new Map<string, number>();
-  HANDLER_GROUPS.forEach((group, index) => {
-    for (const handler of group.create({})) {
-      groups.set(handler.kind, index);
+function handlersFor(
+  options: MastraNodeHandlerOptions
+): Map<string, MastraNodeStepHandler> {
+  const handlers = new Map<string, MastraNodeStepHandler>();
+  for (const group of HANDLER_GROUPS) {
+    for (const handler of group.create(options)) {
+      if (!graphNodeRequiresMastraEngine(handler.kind)) continue;
+      handlers.set(handler.kind, handler);
     }
-  });
-  return groups;
+  }
+  for (const [kind, nodeClass] of Object.entries(
+    MASTRA_NODE_CLASSES_BY_KIND
+  )) {
+    if (handlers.has(kind)) continue;
+    handlers.set(kind, createMastraNodeStepHandler(kind, nodeClass, {}));
+  }
+  return handlers;
 }
 
 /**
- * Builds one implementation per mastra-only kind: kinds are filtered to the
- * mastra engine boundary, sorted for deterministic ordering, and each factory
- * is narrowed to emit only the handlers of the kind it was indexed for.
+ * Returns `true` when the class overrides the base `GraphNode.execute`, i.e.
+ * the kind has a concrete implementation rather than inheriting the fail-fast
+ * default.
  *
- * @returns The complete implementation list, ordered by kind.
+ * @param nodeClass - The registered node class.
+ * @returns `true` when the class declares its own `execute`.
+ */
+function hasConcreteExecute(nodeClass: unknown): boolean {
+  const prototype = (nodeClass as { prototype?: { execute?: unknown } })
+    .prototype;
+  if (!prototype || typeof prototype.execute !== "function") return false;
+  return prototype.execute !== GraphNode.prototype.execute;
+}
+
+/**
+ * Builds one implementation per Mastra-owned kind, ordered by kind.
+ *
+ * @returns The complete implementation list.
  */
 function buildImplementations(): MastraNodeKindImplementation[] {
-  const groups = kindGroupIndex();
-  return [...groups.entries()]
-    .filter(([kind]) => graphNodeRequiresMastraEngine(kind))
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([kind, groupIndex]) => ({
+  return Object.keys(MASTRA_NODE_CLASSES_BY_KIND)
+    .sort((left, right) => left.localeCompare(right))
+    .map((kind) => ({
       kind,
-      nodeClass: NODE_CLASSES[kind],
-      createStepHandlers: (options) =>
-        HANDLER_GROUPS[groupIndex].create(options).filter(
-          (handler) => handler.kind === kind
-        ),
+      nodeClass: MASTRA_NODE_CLASSES_BY_KIND[kind],
+      manifest: MASTRA_NODE_MANIFESTS_BY_KIND[kind],
+      createStepHandlers: (options: MastraNodeHandlerOptions) => {
+        const handler = handlersFor(options).get(kind);
+        return handler ? [handler] : [];
+      },
     }));
 }
 
-/**
- * Every mastra-only node kind with its built-in implementation, ordered by kind.
- * `nodeClass` may be `undefined` on an implementation whose handlers exist but
- * whose node class is not registered — such a gap is only observable through
- * {@link auditMastraNodeCoverage}.
- */
+/** Every Mastra-owned node kind with its built-in implementation, ordered by kind. */
 export const MASTRA_NODE_IMPLEMENTATIONS: readonly MastraNodeKindImplementation[] =
   buildImplementations();
 
@@ -191,7 +123,7 @@ export const MASTRA_NODE_IMPLEMENTATIONS: readonly MastraNodeKindImplementation[
 export const MASTRA_ONLY_NODE_KINDS: readonly string[] =
   MASTRA_NODE_IMPLEMENTATIONS.map((implementation) => implementation.kind);
 
-/** Lookup from node kind to its mastra implementation. */
+/** Lookup from node kind to its Mastra implementation. */
 export const MASTRA_NODE_IMPLEMENTATION_BY_KIND: ReadonlyMap<
   string,
   MastraNodeKindImplementation
@@ -203,41 +135,34 @@ export const MASTRA_NODE_IMPLEMENTATION_BY_KIND: ReadonlyMap<
 );
 
 /**
- * Produces the complete set of mastra step handlers the backend registers,
- * one per mastra-only kind, deduplicated by kind.
- *
- * The backend passes its host-supplied extension points (agent runtime,
- * MCP server factory, channel adapters, voice resolver, RAG embedders/vector
- * stores) through `options`; handler factories that receive nothing fail
- * closed for kinds that require those surfaces.
+ * Produces the complete set of Mastra step handlers the backend registers, one
+ * per Mastra-owned kind, deduplicated by kind.
  *
  * @param options - Options forwarded to each handler group's factory.
- * @returns The deduplicated step handlers for all mastra-only kinds.
+ * @returns The deduplicated step handlers for all Mastra-owned kinds.
  */
 export function createMastraNodeStepHandlers(
   options: MastraNodeHandlerOptions = {}
 ): MastraNodeStepHandler[] {
-  const handlers = new Map<string, MastraNodeStepHandler>();
-  for (const group of HANDLER_GROUPS) {
-    for (const handler of group.create(options)) {
-      if (!graphNodeRequiresMastraEngine(handler.kind)) continue;
-      handlers.set(handler.kind, handler);
-    }
-  }
+  assertMastraNodeCoverage();
+  const handlers = handlersFor(options);
   return [...handlers.values()];
 }
 
 /**
- * Audits the given (default: every registered mastra-only) kind list for
- * implementations missing from the registry.
+ * Audits the given (default: every Mastra-owned) kind list for complete,
+ * executable declarations.
  *
- * @param kinds - Node kinds to audit; defaults to all mastra-only kinds in the built-in node catalogue.
- * @returns One gap per kind that has no implementation or no node class; empty when coverage is complete.
+ * @param kinds - Node kinds to audit; defaults to every Mastra-owned kind.
+ * @returns One gap per missing implementation/class/manifest/execute/adapter.
  */
 export function auditMastraNodeCoverage(
-  kinds: readonly string[] = Object.keys(
-    GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND
-  ).filter(graphNodeRequiresMastraEngine)
+  kinds: readonly string[] = [
+    ...new Set([
+      ...Object.keys(MASTRA_NODE_CLASSES_BY_KIND),
+      ...Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND),
+    ]),
+  ]
 ): MastraNodeCoverageGap[] {
   const gaps: MastraNodeCoverageGap[] = [];
   for (const kind of kinds) {
@@ -249,20 +174,32 @@ export function auditMastraNodeCoverage(
     }
     if (!implementation.nodeClass) {
       gaps.push({ kind, reason: "missing-node-class" });
+      continue;
+    }
+    if (!implementation.manifest) {
+      gaps.push({ kind, reason: "missing-manifest" });
+      continue;
+    }
+    if (!hasConcreteExecute(implementation.nodeClass)) {
+      gaps.push({ kind, reason: "missing-execute" });
+      continue;
+    }
+    if (implementation.createStepHandlers({}).length === 0) {
+      gaps.push({ kind, reason: "missing-execution-adapter" });
     }
   }
   return gaps;
 }
 
 /**
- * Asserts complete mastra node-kind coverage, throwing instead of returning gaps.
+ * Asserts complete Mastra node-kind coverage, throwing instead of returning
+ * gaps.
  *
- * @param kinds - Node kinds to audit; defaults to all mastra-only kinds in the built-in node catalogue.
- * @throws {GraphExecutionError} with code `GRAPH_MASTRA_NODE_KIND_UNIMPLEMENTED` listing every uncovered kind and reason.
+ * @param kinds - Node kinds to audit; defaults to every Mastra-owned kind.
+ * @throws {GraphExecutionError} with code `GRAPH_MASTRA_NODE_KIND_UNIMPLEMENTED`
+ *   listing every uncovered kind and reason.
  */
-export function assertMastraNodeCoverage(
-  kinds?: readonly string[]
-): void {
+export function assertMastraNodeCoverage(kinds?: readonly string[]): void {
   const gaps = auditMastraNodeCoverage(kinds);
   if (gaps.length > 0) {
     throw new GraphExecutionError(

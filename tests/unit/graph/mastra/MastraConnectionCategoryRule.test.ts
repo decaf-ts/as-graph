@@ -20,6 +20,7 @@ import { graphNodeManifest } from "../../../../src/shared/graph";
 import { connection, node } from "../../../../src/shared/graph";
 import { GraphWorkflowDocumentValidator } from "../../../../src/engine/validation/GraphWorkflowDocumentValidator";
 import { registerBuiltInGraphNodes } from "../../../../src/engine/catalog/GraphBuiltInRegistrations";
+import { MastraGraphExecutionBackend } from "../../../../src/mastra/MastraGraphExecutionBackend";
 import { defineGraphNode } from "../../../../src/engine/catalog/GraphNodeRegistration";
 import type { GraphNodeCatalogue } from "../../../../src/engine/catalog/GraphNodeCatalogue";
 import type { GraphWorkflowDocument } from "../../../../src/shared/graph";
@@ -49,6 +50,9 @@ class PolicyTargetNode extends Model {
 async function builtInCatalogue(): Promise<GraphNodeCatalogue> {
   const catalogue = freshCatalogue();
   await registerBuiltInGraphNodes(catalogue);
+  for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
+    await catalogue.register(registration);
+  }
   return catalogue;
 }
 

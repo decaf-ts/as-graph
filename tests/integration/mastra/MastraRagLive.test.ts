@@ -24,9 +24,7 @@ import type {
   MastraVectorConstructor,
   MastraVectorStoreConfig,
 } from "../../../src/mastra/MastraVectorStore";
-import { AgentChunkingNode } from "../../../src/node/agents/rag/chunking/node";
-import { AgentRerankNode } from "../../../src/node/agents/rag/rerank/node";
-import { AgentStructuredOutputParserNode } from "../../../src/node/agents/rag/structured-output-parser/node";
+import { AgentChunkingNode } from "../../../src/mastra/nodes/rag/chunking/node";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
 import { document, edge, node } from "../../../src/workflows/builders";
 import { ENDPOINTS, runNode } from "../graph/nodes/real-service-support";
@@ -228,24 +226,49 @@ describe("core.agent.chunking — live node", () => {
 
 describe("core.agent.rerank — live node", () => {
   it("truncates to topN and resolves the reranker descriptor", async () => {
-    const result = await runNode(
-      AgentRerankNode,
+    const requests: Array<{ documents: unknown[]; query?: string; topN?: number }> =
+      [];
+    const step = compileStep(
       "core.agent.rerank",
       { topN: 2, modelAdapter: EMBEDDING },
-      {
+      createMastraRagStepHandlers({
+        rerankDocuments: async (request) => {
+          requests.push({
+            documents: [...request.documents],
+            query: request.query,
+            topN: request.topN,
+          });
+          return [
+            { document: { text: "alpha" }, score: 0.95 },
+            { document: { text: "beta" }, score: 0.6 },
+            { document: { text: "gamma" }, score: 0.2 },
+          ];
+        },
+      })
+    );
+    const result = await step.execute({
+      inputData: {
         query: "alpha",
         documents: [
+          { text: "gamma" },
           { text: "alpha" },
           { text: "beta" },
-          { text: "gamma" },
         ],
-      }
-    );
-    expect(result.documents).toEqual([
+      },
+    });
+    expect(requests).toEqual([
+      {
+        documents: [{ text: "gamma" }, { text: "alpha" }, { text: "beta" }],
+        query: "alpha",
+        topN: 2,
+      },
+    ]);
+    expect(result["documents"]).toEqual([
       { text: "alpha" },
       { text: "beta" },
     ]);
-    expect(result.resource).toMatchObject({
+    expect(result["scores"]).toEqual([0.95, 0.6]);
+    expect(result["resource"]).toMatchObject({
       type: "mastra.rerank",
       provider: "deterministic",
       modelId: "saa1144-embed",
@@ -256,23 +279,25 @@ describe("core.agent.rerank — live node", () => {
 
 describe("core.agent.structuredOutputParser — live node", () => {
   it("parses real model-shaped JSON text", async () => {
-    const result = await runNode(
-      AgentStructuredOutputParserNode,
+    const step = compileStep(
       "core.agent.structuredOutputParser",
       { strict: true, structuredOutput: { type: "object" } },
-      { text: '{"name":"Ada","score":7}' }
+      createMastraRagStepHandlers()
     );
-    expect(result.object).toEqual({ name: "Ada", score: 7 });
+    const result = await step.execute({
+      inputData: { text: '{"name":"Ada","score":7}' },
+    });
+    expect(result["object"]).toEqual({ name: "Ada", score: 7 });
   });
 
   it("returns null for non-JSON model output instead of fabricating a value", async () => {
-    const result = await runNode(
-      AgentStructuredOutputParserNode,
+    const step = compileStep(
       "core.agent.structuredOutputParser",
       {},
-      { text: "not json" }
+      createMastraRagStepHandlers()
     );
-    expect(result.object).toBeNull();
+    const result = await step.execute({ inputData: { text: "not json" } });
+    expect(result["object"]).toBeNull();
   });
 });
 

@@ -20,8 +20,8 @@ import { createMastraDefaultStepHandlers } from "../../../src/mastra/MastraDefau
 import type { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
-import { humanApprovalDocument } from "../../../src/workflows/human-approval.workflow";
-import { valueTemplatesDocument } from "../../../src/workflows/value-templates.workflow";
+import { humanApprovalDocument } from "../../../src/workflows/basic/human-approval.workflow";
+import { valueTemplatesDocument } from "../../../src/workflows/basic/value-templates.workflow";
 import { frameSinkHarness } from "./helpers";
 
 const OBSERVABILITY_ENABLED_OVERRIDE = "MASTRA__OBSERVABILITY__ENABLED";
@@ -65,7 +65,7 @@ async function runFixture(
   const harness = frameSinkHarness(runId);
   const result = await backend.execute({
     document,
-    plan: {} as never,
+    plan: undefined as never,
     inputs,
     options: {} as never,
     events: harness.sink,

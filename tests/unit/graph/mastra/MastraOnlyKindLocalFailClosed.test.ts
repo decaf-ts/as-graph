@@ -10,8 +10,8 @@
  * {@link GRAPH_LOCAL_UNSUPPORTED_NODE_KIND} before their executor is invoked.
  */
 import { describe, it, expect, afterEach } from "@jest/globals";
-import { GraphExecutionStatus } from "../../../../src/shared/graph/constants";
 import type { GraphWorkflowDocument } from "../../../../src/shared/graph";
+import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 import { GraphNodeExecutorRegistry } from "../../../../src/engine/registry/GraphNodeExecutorRegistry";
 import { GraphExecutionBackendRegistry } from "../../../../src/engine/execution/GraphExecutionBackendRegistry";
 import { graphNodeRequiresMastraEngine } from "../../../../src/engine/execution/GraphNodeEngineRequirements";
@@ -118,16 +118,25 @@ describe("local engine fails closed on the mastra AI family (SAA-837 M1)", () =>
   });
 
   it.each(["core.agent", "core.agent.tool"])(
-    "fails a %s node closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND without running its executor",
+    "rejects a %s node with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND before running its executor",
     async (kind) => {
       const { engine, calls } = await bootLocalEngine([kind]);
 
-      const result = await engine.execute(singleNodeDocument(kind), {});
+      let thrown: unknown;
+      try {
+        await engine.execute(singleNodeDocument(kind), {});
+      } catch (error) {
+        thrown = error;
+      }
 
-      expect(result.status).toBe(GraphExecutionStatus.FAILED);
-      expect(result.nodeResults["agent"]?.error?.code).toBe(
-        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
-      );
+      expect(thrown).toBeInstanceOf(GraphExecutionError);
+      const error = thrown as GraphExecutionError;
+      expect(error.graphCode).toBe(GRAPH_LOCAL_UNSUPPORTED_NODE_KIND);
+      expect(error.details).toEqual({
+        nodeId: "agent",
+        kind,
+        backend: "local",
+      });
       // The registered executor was never invoked: the boundary check runs
       // before delegation.
       expect(calls).toEqual([]);
@@ -153,16 +162,25 @@ describe("local engine fails closed on the mastra AI family (SAA-837 M1)", () =>
     "core.agent.response.teams",
     "core.agent.voice",
   ])(
-    "fails a %s node closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND without running its executor",
+    "rejects a %s node with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND before running its executor",
     async (kind) => {
       const { engine, calls } = await bootLocalEngine([kind]);
 
-      const result = await engine.execute(singleNodeDocument(kind), {});
+      let thrown: unknown;
+      try {
+        await engine.execute(singleNodeDocument(kind), {});
+      } catch (error) {
+        thrown = error;
+      }
 
-      expect(result.status).toBe(GraphExecutionStatus.FAILED);
-      expect(result.nodeResults["agent"]?.error?.code).toBe(
-        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
-      );
+      expect(thrown).toBeInstanceOf(GraphExecutionError);
+      const error = thrown as GraphExecutionError;
+      expect(error.graphCode).toBe(GRAPH_LOCAL_UNSUPPORTED_NODE_KIND);
+      expect(error.details).toMatchObject({
+        nodeId: "agent",
+        kind,
+        backend: "local",
+      });
       expect(calls).toEqual([]);
     }
   );

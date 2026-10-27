@@ -43,7 +43,7 @@ import {
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
   GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED,
 } from "../../../../src/mastra/types";
-import { AgentMemoryNode } from "../../../../src/node";
+import { AgentMemoryNode } from "../../../../src/mastra/nodes";
 import { document, edge, node } from "../../../../src/workflows/builders";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 import { buildNodeContext } from "../nodes/node-test-utils";

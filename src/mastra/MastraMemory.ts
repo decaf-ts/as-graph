@@ -64,7 +64,7 @@ import {
   mastraCredentialEnvNameOf,
   resolveMastraCredentialValue,
 } from "./MastraEnvironment";
-import { MASTRA_AGENT_ZONE } from "../node/agents/zones";
+import { MASTRA_AGENT_ZONE } from "./nodes/zones";
 
 /**
  * The mastra-native memory storage providers the memory node can be

@@ -42,6 +42,7 @@ import {
   GraphNodeCatalogueController,
   type GraphCatalogueControllerOptions,
 } from "../../../src/nest/graph";
+import { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { freshCatalogue } from "../graph/engine-fixtures";
 jest.setTimeout(30000);
 
@@ -271,6 +272,9 @@ async function bootstrapController(
   // the built-ins (Switch, loops, Code, Log) register without an engine: node
   // classes reach the engine through the execution context
   await registerBuiltInGraphNodes(catalogue);
+  for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
+    await catalogue.register(registration);
+  }
   registerCustomKinds(catalogue);
   const moduleRef = await Test.createTestingModule({
     imports: throttlers ? [ThrottlerModule.forRoot(throttlers)] : [],

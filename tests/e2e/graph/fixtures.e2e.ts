@@ -11,7 +11,7 @@
  * every executable kind family — triggers, branching, loops, utilities and the
  * `value`/`result` boundaries — asserting the workflow output. The parity lane
  * boots the real Nest host over the real HTTP surface for each engine variant,
- * deriving the expected set from `graphWorkflowFixtures` (never hard-coding ids).
+ * deriving the expected set from `basicWorkflowFixtures` (never hard-coding ids).
  */
 import { describe, it, expect, beforeAll, afterAll, jest } from "@jest/globals";
 
@@ -33,8 +33,8 @@ import {
 import { TestRequestContextModule } from "../../unit/nest/graphRunTestSupport";
 import { runFixtureDocument } from "../../fixtures/workflow-engine";
 import {
-  executableWorkflowFixtures,
-  graphWorkflowFixtures,
+  executableBasicWorkflowFixtures,
+  basicWorkflowFixtures,
 } from "../../../src/workflows";
 
 jest.setTimeout(180000);
@@ -57,7 +57,7 @@ afterAll(() => {
 
 describe("demo workflow fixtures — end to end (SAA-2049)", () => {
   it("executes the full executable fixture set through GraphExecutionEngine.execute", async () => {
-    for (const fixture of executableWorkflowFixtures) {
+    for (const fixture of executableBasicWorkflowFixtures) {
       const result = await runFixtureDocument(
         fixture.document,
         fixture.inputs ?? {}
@@ -79,7 +79,7 @@ describe("demo workflow fixtures — end to end (SAA-2049)", () => {
   }, 180000);
 
   it("drives the boundary value/result workflow end to end", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-boundary-value"
     )!;
     const result = await runFixtureDocument(
@@ -93,7 +93,7 @@ describe("demo workflow fixtures — end to end (SAA-2049)", () => {
   });
 
   it("drives the if→switch workflow down the then/high branch end to end", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-if-switch"
     )!;
     const result = await runFixtureDocument(fixture.document, { n: 7 });
@@ -106,14 +106,14 @@ describe("demo workflow fixtures — end to end (SAA-2049)", () => {
  * The expected fixture id set, derived from the fixture registry export — never
  * hard-coded — so a registry change flows straight into the parity assertions.
  */
-const FIXTURE_DOCUMENTS = graphWorkflowFixtures.map(
+const FIXTURE_DOCUMENTS = basicWorkflowFixtures.map(
   (fixture) => fixture.document
 );
 const FIXTURE_IDS = FIXTURE_DOCUMENTS.map((document) => document.id).sort();
 
 /** The seeded fixture documents forwarded to the host on boot. */
 function seedDocuments() {
-  return graphWorkflowFixtures.map((fixture) => fixture.document);
+  return basicWorkflowFixtures.map((fixture) => fixture.document);
 }
 
 /** Maps a serving list body to its sorted workflow id set. */
@@ -320,7 +320,7 @@ describe("run detail serves per-node I/O untruncated (SAA-721)", () => {
   const api = () => request(app.getHttpServer());
 
   it("GET /graph/runs/:runId and the workflow run history expose nodeResults verbatim", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-manual-log"
     )!;
 

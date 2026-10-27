@@ -35,6 +35,7 @@ import type {
   MastraEmbeddingConfig,
   MastraRagEmbedder,
   MastraRagTextGenerator,
+  MastraReranker,
   MastraSandboxRunner,
 } from "./MastraRagStepHandlers";
 import type {
@@ -63,8 +64,32 @@ export const GRAPH_MASTRA_STORAGE_UNWIRED = "GRAPH_MASTRA_STORAGE_UNWIRED";
 export const GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY =
   "GRAPH_MASTRA_STORAGE_DOMAIN_INMEMORY";
 
-/** A document node kind the Mastra translator cannot represent. */
+/**
+ * A document node kind the Mastra translator cannot represent, or for which the
+ * backend has no registered step handler. Translation fails closed with this
+ * code instead of emitting a workflow that would drop the node.
+ */
 export const GRAPH_MASTRA_UNSUPPORTED_KIND = "GRAPH_MASTRA_UNSUPPORTED_KIND";
+/**
+ * A graph topology the Mastra translator cannot represent faithfully: a cyclic
+ * document, a supplied execution plan that does not cover the document's node
+ * ids, or a loop that is conditionally activated by a branch.
+ */
+export const GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY =
+  "GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY";
+/**
+ * Internal routing-envelope key. Before each dependency layer the compiler maps
+ * one envelope keyed by node id onto the workflow input; each translated step
+ * reads its own entry to obtain inputs resolved by graph port identity and to
+ * learn whether its branch was selected.
+ */
+export const GRAPH_MASTRA_ROUTED_ENVELOPE = "__decafGraphRouting";
+/**
+ * Internal step-output marker for a node whose branch was not selected. The
+ * translated step returns this sentinel instead of executing, and the event
+ * bridge maps it to `NODE_SKIPPED` rather than `NODE_COMPLETED`.
+ */
+export const GRAPH_MASTRA_SKIPPED_NODE = "__decafSkippedNode";
 /** A suspendable step declared a missing or degraded resume schema. */
 export const GRAPH_MASTRA_RESUME_SCHEMA_UNSAFE =
   "GRAPH_MASTRA_RESUME_SCHEMA_UNSAFE";
@@ -158,6 +183,11 @@ export const GRAPH_MASTRA_PROCESSOR_UNAVAILABLE =
  * fails closed instead of fabricating an endpoint.
  */
 export const GRAPH_MASTRA_MCP_UNAVAILABLE = "GRAPH_MASTRA_MCP_UNAVAILABLE";
+/**
+ * The HITL node was not given the suspend surface it needs to execute, so the
+ * node fails closed instead of silently completing without human input.
+ */
+export const GRAPH_MASTRA_HITL_UNAVAILABLE = "GRAPH_MASTRA_HITL_UNAVAILABLE";
 /**
  * A channel trigger/response node has no host-supplied channel adapter surface
  * (SAA-836 M6), so no conversation can be received from or delivered to the
@@ -442,6 +472,12 @@ export interface MastraBackendConfig extends Record<string, unknown> {
    * node's `modelAdapter` config and call `generate`.
    */
   generateText?: MastraRagTextGenerator;
+  /**
+   * Optional host reranker port used by `core.agent.rerank`. When omitted, a
+   * rerank node with documents fails closed with `GRAPH_MASTRA_RAG_UNAVAILABLE`
+   * instead of returning an unranked list.
+   */
+  rerankDocuments?: MastraReranker;
   /**
    * Optional host sandbox runner for `core.agent.sandbox` and
    * `core.agent.langchainCode` (SAA-747 Stage 2). The runner receives the

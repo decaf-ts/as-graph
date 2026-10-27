@@ -117,7 +117,7 @@ async function resumeWith(
   const seed = frameSinkHarness("mastra-it-seed-run");
   await backend.execute({
     document: source,
-    plan: {} as never,
+    plan: undefined as never,
     inputs: {},
     options: {} as never,
     events: seed.sink,
@@ -206,7 +206,7 @@ liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const seed = frameSinkHarness("mastra-it-seed-run");
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,
@@ -302,7 +302,7 @@ liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const seed = frameSinkHarness("mastra-it-seed-run");
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,
@@ -336,7 +336,7 @@ liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const unsafeSeed = frameSinkHarness("mastra-it-seed-run");
     await unsafeBackend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: unsafeSeed.sink,
@@ -365,7 +365,7 @@ liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const seed = frameSinkHarness("mastra-it-seed-run");
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,

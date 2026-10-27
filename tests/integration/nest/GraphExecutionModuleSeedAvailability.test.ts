@@ -28,7 +28,7 @@ import { RamAdapter } from "@decaf-ts/core/ram";
 import { GraphExecutionModule } from "../../../src/nest/graph";
 import { GraphWorkflowService } from "../../../src/engine/services/GraphWorkflowService";
 import { GraphEnvironment } from "../../../src/engine/services/GraphEnvironment";
-import { graphWorkflowFixtures } from "../../../src/workflows";
+import { basicWorkflowFixtures } from "../../../src/workflows";
 
 RamAdapter.decoration();
 
@@ -39,10 +39,10 @@ function userContext(user: string): Context {
 }
 
 describe("GraphExecutionModule boot-seed availability (SAA-798 F2)", () => {
-  const fixtureIds = graphWorkflowFixtures
+  const fixtureIds = basicWorkflowFixtures
     .map((fixture) => fixture.document.id)
     .sort();
-  const foreignFixture = graphWorkflowFixtures[0];
+  const foreignFixture = basicWorkflowFixtures[0];
   const foreignId = foreignFixture.document.id;
   const foreignDocument = { ...foreignFixture.document, name: "user-owned" };
 
@@ -79,7 +79,7 @@ describe("GraphExecutionModule boot-seed availability (SAA-798 F2)", () => {
     moduleRef = await Test.createTestingModule({
       imports: [
         GraphExecutionModule.forRoot({
-          seedWorkflows: graphWorkflowFixtures.map(
+          seedWorkflows: basicWorkflowFixtures.map(
             (fixture) => fixture.document
           ),
           workflows: { auth: "optional", allowAnonymousAccess: true },

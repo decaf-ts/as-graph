@@ -279,41 +279,64 @@ export async function createGraphBackendHost(
 }
 
 /**
- * Relative specifiers tried, in order, for the demo workflow fixture registry
- * (`src/workflows`). The registry is typed TS under `src/` — satisfying the
- * owner directive that demo assets live in `src` — and is excluded from release
- * packaging (see the `files` ignores). Using relative, extension-varied
- * specifiers keeps the loader working across the source checkout (ts-jest /
- * `tsx`) and both compiled outputs without a static dependency.
+ * Relative specifiers tried, in order, for one demo fixture registry variant
+ * (SAA-1545 §5.3). The local/general engine loads only `workflows/basic`; the
+ * Mastra boot loads only `workflows/mastra`; Dagster receives neither set (its
+ * catalogue comes from the deployed Dagster jobs). Relative, extension-varied
+ * specifiers keep the loader working across the source checkout (ts-jest /
+ * `tsx`) and both compiled outputs without a static dependency, so the basic
+ * surface never imports a Mastra node implementation.
  */
-const GRAPH_DEMO_WORKFLOW_SPECIFIERS: readonly string[] = [
-  "../../workflows",
-  "../../workflows/index",
-  "../../workflows/index.js",
-  "../../workflows/index.mjs",
-  "../../workflows/index.cjs",
-];
+const GRAPH_DEMO_WORKFLOW_SPECIFIERS: Record<
+  "basic" | "mastra",
+  readonly string[]
+> = {
+  basic: [
+    "../../workflows/basic",
+    "../../workflows/basic/index",
+    "../../workflows/basic/index.js",
+    "../../workflows/basic/index.mjs",
+    "../../workflows/basic/index.cjs",
+    "../../workflows",
+    "../../workflows/index.js",
+    "../../workflows/index.mjs",
+    "../../workflows/index.cjs",
+  ],
+  mastra: [
+    "../../workflows/mastra",
+    "../../workflows/mastra/index",
+    "../../workflows/mastra/index.js",
+    "../../workflows/mastra/index.mjs",
+    "../../workflows/mastra/index.cjs",
+  ],
+};
 
 /**
- * Loads the host's demo workflow fixture registry for boot-time seeding. This is
- * the engine driver's seeding path (R4): the fixture registry is imported only
- * by tests and by this loader. Because the registry is excluded from release
- * packaging, the loader is best-effort — it returns the fixture documents when
- * the registry is present (a source checkout or development install) and an
- * empty set when it is absent (a published package), never failing the boot.
+ * Loads the host's demo workflow fixture registry for the selected boot
+ * variant. This is the engine driver's seeding path (R4): the fixture registry
+ * is imported only by tests and by this loader, and the loader is best-effort —
+ * it returns the fixture documents when the registry is present (a source
+ * checkout or development install) and an empty set when it is absent (a
+ * published package), never failing the boot.
  *
+ * @param variant - The boot variant; defaults to `local`.
  * @returns The canonical documents to seed, or an empty array when the registry
- *   is unavailable.
+ *   is unavailable or the variant has no synthetic demo set (Dagster).
  */
-export async function loadGraphDemoWorkflows(): Promise<
-  readonly GraphWorkflowDocument[]
-> {
-  for (const specifier of GRAPH_DEMO_WORKFLOW_SPECIFIERS) {
+export async function loadGraphDemoWorkflows(
+  variant: GraphEngineVariant = DEFAULT_GRAPH_ENGINE_VARIANT
+): Promise<readonly GraphWorkflowDocument[]> {
+  if (variant === "dagster") return [];
+  const registry = variant === "mastra" ? "mastra" : "basic";
+  const fixtureProperty =
+    registry === "mastra" ? "mastraWorkflowFixtures" : "basicWorkflowFixtures";
+  for (const specifier of GRAPH_DEMO_WORKFLOW_SPECIFIERS[registry]) {
     try {
-      const module = (await import(specifier)) as {
-        graphWorkflowFixtures?: readonly { document: GraphWorkflowDocument }[];
-      };
-      const fixtures = module.graphWorkflowFixtures;
+      const module = (await import(specifier)) as Record<
+        string,
+        readonly { document: GraphWorkflowDocument }[] | undefined
+      >;
+      const fixtures = module[fixtureProperty];
       return fixtures ? fixtures.map((fixture) => fixture.document) : [];
     } catch {
       // Try the next candidate specifier.

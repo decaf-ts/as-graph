@@ -1,21 +1,26 @@
 /**
  * @module as-graph/mastra/MastraRagStepHandlers
- * @summary Real RAG execution for the mastra engine (SAA-747 Stage 2).
- * @description Implements the RAG family as real `@mastra/core` workflow steps
+ * @summary Run-scoped RAG/sandbox execution for the mastra engine (SAA-747
+ * Stage 2, re-homed by SAA-1547).
+ * @description Supplies the run-scoped {@link MastraRagNodeRuntime} service that
+ * the RAG/sandbox node classes delegate to from their `execute()`, and binds it
+ * to the single step adapter. The service performs the real `@mastra/core` work
  * on top of the mastra-native vector/embedding/model bindings: the vector-store
- * step creates its index and inserts embedded documents (or queries it when a
+ * path creates its index and inserts embedded documents (or queries it when a
  * query is supplied), the retriever embeds the query and reads the wired store,
  * the three chains generate through a mastra agent, the structured-output
  * parser/information extractor parse and validate model output, and the LangChain
  * Code/Sandbox kinds run user code through a host sandbox runner with the same
- * ceiling guard as the verified `CodeNode`.
+ * ceiling guard as the verified `CodeNode`. The node class remains the single
+ * implementation of its declared semantics; this module never re-implements a
+ * kind's step behaviour.
  *
- * The nodes keep their config-only descriptor projection (R9) as the fallback:
- * when a host has not supplied the corresponding execution surface (or the node
- * carries no work), the step emits the JSON-safe `kind` descriptor exactly like
- * the default handler set. Real execution is selected only when the document
- * wires the inputs the kind needs, so an authored config-only node never makes a
- * model or database call by accident.
+ * The runtime keeps each node's config-only descriptor projection (R9) as the
+ * fallback: when a host has not supplied the corresponding execution surface
+ * (or the node carries no work), it emits the JSON-safe `kind` descriptor
+ * exactly like the default handler set. Real execution is selected only when
+ * the document wires the inputs the kind needs, so an authored config-only node
+ * never makes a model or database call by accident.
  *
  * Embedding and text generation are carried as **config** on the node (R1):
  * `embedding`/`modelAdapter` objects with `provider`/`modelId` (and an optional
@@ -28,8 +33,6 @@
 import { Agent } from "@mastra/core/agent";
 import { ModelRouterEmbeddingModel } from "@mastra/core/llm";
 import type { MastraVector, VectorFilter } from "@mastra/core/vector";
-import { createStep } from "@mastra/core/workflows";
-import { z } from "zod";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
@@ -59,14 +62,18 @@ import {
   GRAPH_MASTRA_SANDBOX_UNAVAILABLE,
   GRAPH_MASTRA_VECTOR_PROVIDER_UNKNOWN,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
 } from "./types";
+
+import type { MastraRagNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { MASTRA_NODE_CLASSES_BY_KIND } from "./nodes/classes";
 
 /** The RAG node kinds this handler set executes. */
 export const MASTRA_RAG_EXECUTION_KINDS = [
   "core.agent.embedding",
   "core.agent.vectorStore",
   "core.agent.retriever",
+  "core.agent.rerank",
   "core.agent.chain.qa",
   "core.agent.chain.basic",
   "core.agent.chain.summarization",
@@ -150,6 +157,33 @@ export interface MastraSandboxRunRequest {
   workingDirectory?: string;
 }
 
+/** One rerank request handed to the host reranker port. */
+export interface MastraRerankRequest {
+  /** The node executing the rerank. */
+  node: GraphNodeInstance;
+  /** The candidate documents to rank. */
+  documents: unknown[];
+  /** The query the documents are ranked against. */
+  query?: string;
+  /** Optional ceiling on the number of documents returned. */
+  topN?: number;
+  /** The node's model-adapter config, when declared. */
+  modelAdapter?: MastraModelAdapterConfig;
+  /** The run's abort signal, when available. */
+  abortSignal?: AbortSignal;
+}
+
+/** One reranked document and its host-assigned score. */
+export interface MastraRerankedDocument {
+  document: unknown;
+  score: number;
+}
+
+/** Host reranker port; when omitted, rerank nodes fail closed. */
+export type MastraReranker = (
+  request: MastraRerankRequest
+) => Promise<MastraRerankedDocument[]>;
+
 /** Host sandbox runner port executing the code under the requested bounds. */
 export type MastraSandboxRunner = (
   request: MastraSandboxRunRequest
@@ -169,6 +203,8 @@ export interface MastraRagStepHandlerOptions {
   embedText?: MastraRagEmbedder;
   /** Host generation port; defaults to a mastra `Agent` over the adapter config. */
   generateText?: MastraRagTextGenerator;
+  /** Host reranker; when omitted rerank nodes fail closed. */
+  rerankDocuments?: MastraReranker;
   /** Host sandbox runner; when omitted code kinds fail closed. */
   runSandboxedCode?: MastraSandboxRunner;
   /**
@@ -544,9 +580,9 @@ function indexNameOf(
  * @param options - Host ports (embeddings, generation, sandbox) and bindings.
  * @returns One {@link MastraNodeStepHandler} per executed kind.
  */
-export function createMastraRagStepHandlers(
+export function createMastraRagNodeRuntime(
   options: MastraRagStepHandlerOptions = {}
-): MastraNodeStepHandler[] {
+): MastraRagNodeRuntime {
   const storeCache = options.storeCache ?? new Map<string, MastraVector>();
   const embedder: MastraRagEmbedder = options.embedText ?? defaultEmbed;
   const generator: MastraRagTextGenerator =
@@ -639,7 +675,15 @@ export function createMastraRagStepHandlers(
     return vectors;
   };
 
-  const handlers: MastraNodeStepHandler[] = [];
+  const executors = new Map<
+    string,
+    (
+      node: GraphNodeInstance,
+      inputData: Record<string, unknown>,
+      document: GraphWorkflowDocument | undefined,
+      signal?: AbortSignal
+    ) => Promise<Record<string, unknown>>
+  >();
 
   const handler = (
     kind: string,
@@ -650,27 +694,7 @@ export function createMastraRagStepHandlers(
       signal?: AbortSignal
     ) => Promise<Record<string, unknown>>
   ): void => {
-    handlers.push({
-      kind,
-      createStep: (node, stepOptions: MastraNodeStepOptions) =>
-        createStep({
-          id: stepOptions.stepId,
-          inputSchema: z.any(),
-          outputSchema: z.any(),
-          execute: async (args: {
-            inputData?: unknown;
-            abortSignal?: AbortSignal;
-          }) => {
-            const inputData = asRecord(args.inputData);
-            return execute(
-              node,
-              inputData,
-              stepOptions.document,
-              args.abortSignal
-            );
-          },
-        }),
-    });
+    executors.set(kind, execute);
   };
 
   // --- embedding ---------------------------------------------------------
@@ -1105,6 +1129,52 @@ export function createMastraRagStepHandlers(
     }
   );
 
+  // --- rerank ------------------------------------------------------------
+
+  handler("core.agent.rerank", async (node, inputData, _document, signal) => {
+    const parameters = asRecord(node.parameters);
+    const documents = Array.isArray(inputData["documents"])
+      ? (inputData["documents"] as unknown[])
+      : Array.isArray(parameters["documents"])
+        ? (parameters["documents"] as unknown[])
+        : [];
+    const query = textOf(inputData["query"] ?? parameters["query"]);
+    const topN =
+      positiveInteger(inputData["topN"] ?? parameters["topN"]) ??
+      positiveInteger(parameters["topN"]);
+    if (!options.rerankDocuments) {
+      throw new GraphExecutionError(
+        `Rerank node '${node.id}' has no host reranker service configured`,
+        GRAPH_MASTRA_RAG_UNAVAILABLE,
+        { nodeId: node.id, kind: node.kind }
+      );
+    }
+    const ranked = await options.rerankDocuments({
+      node,
+      documents,
+      ...(query !== undefined ? { query } : {}),
+      ...(topN !== undefined ? { topN } : {}),
+      ...(graphModelAdapterOf(node)
+        ? { modelAdapter: graphModelAdapterOf(node) }
+        : {}),
+      ...(signal ? { abortSignal: signal } : {}),
+    });
+    const limited = topN !== undefined ? ranked.slice(0, topN) : ranked;
+    return {
+      ...inputData,
+      documents: limited.map((entry) => entry.document),
+      scores: limited.map((entry) => entry.score),
+      resource: {
+        kind: node.kind,
+        nodeId: node.id,
+        type: "mastra.rerank",
+        provider: graphModelAdapterOf(node)?.provider,
+        modelId: graphModelAdapterOf(node)?.modelId,
+        topN,
+      },
+    };
+  });
+
   // --- structured output / extractor ------------------------------------
 
   handler("core.agent.structuredOutputParser", async (node, inputData) => {
@@ -1259,5 +1329,41 @@ export function createMastraRagStepHandlers(
     runCode(node, inputData, "langchainCode")
   );
 
-  return handlers;
+  return {
+    execute: async (
+      kind: string,
+      node: GraphNodeInstance,
+      inputData: Record<string, unknown>,
+      document?: GraphWorkflowDocument,
+      signal?: AbortSignal
+    ): Promise<Record<string, unknown>> => {
+      const executor = executors.get(kind);
+      if (!executor) {
+        throw new GraphExecutionError(
+          `Mastra RAG runtime does not implement node kind '${kind}'`,
+          GRAPH_MASTRA_RAG_UNAVAILABLE,
+          { nodeId: node.id, kind }
+        );
+      }
+      return executor(node, inputData, document, signal);
+    },
+  };
+}
+
+/**
+ * Builds the Mastra step handler set for the RAG and sandbox node kinds through
+ * the single node-class adapter, injecting the run-scoped RAG services.
+ *
+ * @param options - The RAG/sandbox host service options.
+ * @returns One handler per RAG/sandbox execution kind.
+ */
+export function createMastraRagStepHandlers(
+  options: MastraRagStepHandlerOptions = {}
+): MastraNodeStepHandler[] {
+  const runtime = createMastraRagNodeRuntime(options);
+  const services = { rag: runtime };
+  return [...MASTRA_RAG_EXECUTION_KINDS, ...MASTRA_SANDBOX_EXECUTION_KINDS].map(
+    (kind) =>
+      createMastraNodeStepHandler(kind, MASTRA_NODE_CLASSES_BY_KIND[kind], services)
+  );
 }

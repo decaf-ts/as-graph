@@ -160,14 +160,13 @@ async function bootstrap(): Promise<void> {
   // standalone dev posture (`initAdapter: true`) is unchanged.
   const durableAdapter = await buildGraphDbAdapter();
 
-  // Seed the demo workflow fixture registry (`src/workflows`) into whichever
-  // engine this driver boots, so the per-engine catalogue and the serving list
-  // expose the full fixture set out of the box. The registry is excluded from
-  // release packaging, so the loader yields an empty set there. Demo seeding can
-  // be suppressed in a source-built production host without a code change by
+  // Seed the boot variant's demo workflow registry: the local/general engine
+  // loads `workflows/basic`, Mastra loads `workflows/mastra`, and Dagster gets
+  // no synthetic seed (its catalogue is the deployed jobs). Demo seeding can be
+  // suppressed in a source-built production host without a code change by
   // setting `GRAPH_SEED_DEMO=off` (F5 hardening).
   const demoWorkflows = graphDemoSeedEnabledFromEnv()
-    ? await loadGraphDemoWorkflows()
+    ? await loadGraphDemoWorkflows(variant)
     : [];
 
   const host = await createGraphBackendHost({

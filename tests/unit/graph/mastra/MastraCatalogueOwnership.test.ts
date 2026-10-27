@@ -123,7 +123,7 @@ async function executeAs(
 ): Promise<void> {
   await backend.execute({
     document,
-    plan: {} as never,
+    plan: undefined as never,
     inputs: {},
     options: user ? { auth: { user } } : {},
     events: frameSinkFor(runId).sink,

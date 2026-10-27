@@ -1,21 +1,21 @@
 /**
  * @module as-graph/mastra/MastraChannelTrigger
- * @summary Mastra step handler for the built-in channel trigger kinds
- * (SAA-836 M6).
- * @description Translates a channel trigger node (`core.agent.trigger.slack`,
+ * @summary Run-scoped channel-trigger service and step handler for the built-in
+ * channel trigger kinds (SAA-836 M6, re-homed by SAA-1547).
+ * @description Builds the {@link MastraChannelNodeRuntime} `trigger` service
+ * that the channel trigger node classes (`core.agent.trigger.slack`,
  * `core.agent.trigger.discord`, `core.agent.trigger.telegram`,
- * `core.agent.trigger.teams`) into a mastra step that resolves the trigger's
- * channel descriptor, delegates the platform surface to the host-supplied
- * adapter factory, and forwards the inbound conversation payload carried by
- * the run input onto the trigger's outputs. The concrete mastra channel
+ * `core.agent.trigger.teams`) delegate to from their `execute()`, then binds
+ * it to the single step adapter. The service resolves the trigger's channel
+ * descriptor, delegates the platform surface to the host-supplied adapter
+ * factory, and forwards the inbound conversation payload carried by the run
+ * input onto the trigger's outputs. The concrete mastra channel
  * adapters (`AgentChannels` adapters) are packaged in host-supplied packages —
  * mastra's adapter catalog is metadata-only — so per R2 the adapter surface is
  * a declared extension point: without one the trigger fails closed with
  * {@link GRAPH_MASTRA_CHANNEL_UNAVAILABLE} instead of fabricating a channel
  * endpoint.
  */
-import { z } from "zod";
-import { createStep } from "@mastra/core/workflows";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
@@ -24,8 +24,21 @@ import {
   type MastraChannelPlatform,
   type MastraChannelTriggerDescriptor,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
 } from "./types";
+import type { MastraChannelNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { DiscordChannelTriggerNode } from "./nodes/triggers/discord/node";
+import { SlackChannelTriggerNode } from "./nodes/triggers/slack/node";
+import { TeamsChannelTriggerNode } from "./nodes/triggers/teams/node";
+import { TelegramChannelTriggerNode } from "./nodes/triggers/telegram/node";
+
+/** The node class for each built-in channel trigger kind. */
+const CHANNEL_TRIGGER_NODE_CLASSES: Record<string, unknown> = {
+  "core.agent.trigger.discord": DiscordChannelTriggerNode,
+  "core.agent.trigger.slack": SlackChannelTriggerNode,
+  "core.agent.trigger.teams": TeamsChannelTriggerNode,
+  "core.agent.trigger.telegram": TelegramChannelTriggerNode,
+};
 
 /** The document node kind prefix every built-in channel trigger kind carries. */
 export const GRAPH_MASTRA_CHANNEL_TRIGGER_KIND_PREFIX =
@@ -96,62 +109,76 @@ export function mastraChannelTriggerDescriptorOf(
 }
 
 /**
+ * Builds the run-scoped channel transport service used by trigger nodes. The
+ * service owns the host platform adapter lookup; the node class owns the
+ * declared trigger semantics and output mapping.
+ *
+ * @param options - The handler options (the host adapter factory).
+ * @returns The channel trigger runtime service.
+ */
+export function createMastraChannelTriggerNodeRuntime(
+  options: MastraChannelTriggerStepHandlerOptions = {}
+): MastraChannelNodeRuntime {
+  return {
+    trigger: async (node, inputData) => {
+      const descriptor = mastraChannelTriggerDescriptorOf(node);
+      if (!options.resolveChannelAdapter) {
+        throw new GraphExecutionError(
+          `Channel trigger node '${node.id}' has no host mastra channel adapter surface configured`,
+          GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
+        );
+      }
+      const adapter = await options.resolveChannelAdapter(descriptor);
+      if (adapter === undefined || adapter === null) {
+        throw new GraphExecutionError(
+          `Channel trigger node '${node.id}': the host mastra channel adapter factory resolved no adapter`,
+          GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
+        );
+      }
+      return {
+        message: inputData["message"] ?? null,
+        sessionId: inputData["sessionId"] ?? null,
+        userId: inputData["userId"] ?? null,
+        threadId: inputData["threadId"] ?? descriptor.threadId ?? null,
+        resource: adapter,
+      };
+    },
+    response: async () => {
+      throw new GraphExecutionError(
+        "The channel trigger runtime does not execute channel response nodes",
+        GRAPH_MASTRA_CHANNEL_UNAVAILABLE
+      );
+    },
+  };
+}
+
+/**
  * Builds the {@link MastraNodeStepHandler} registered for one built-in
- * channel trigger kind. The step resolves the trigger's channel descriptor,
- * delegates the platform adapter surface to the host factory, and forwards
- * the inbound conversation payload — `message`, `sessionId`, `userId`,
- * `threadId` — from the run input onto the trigger's outputs so a wired
- * agent receives the prompt and the conversation binding. Without a host
- * factory the step fails closed — no channel endpoint is ever fabricated.
+ * channel trigger kind through the single node-class adapter.
  *
  * @param kind - The channel trigger kind to translate.
  * @param options - The handler options (the host adapter factory).
  * @returns The channel trigger step handler.
- * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CHANNEL_UNAVAILABLE} when
- *   no host factory is configured or it yields nothing.
  */
 export function createMastraChannelTriggerStepHandler(
   kind: string,
   options: MastraChannelTriggerStepHandlerOptions = {}
 ): MastraNodeStepHandler {
-  return {
+  const nodeClass = CHANNEL_TRIGGER_NODE_CLASSES[kind];
+  if (!nodeClass) {
+    throw new GraphExecutionError(
+      `No mastra channel trigger node class is registered for kind '${kind}'`,
+      GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+      { kind }
+    );
+  }
+  return createMastraNodeStepHandler(
     kind,
-    createStep: (node: GraphNodeInstance, { stepId }: MastraNodeStepOptions) =>
-      createStep({
-        id: stepId,
-        inputSchema: z.any(),
-        outputSchema: z.any(),
-        execute: async (args: { inputData?: unknown }) => {
-          const descriptor = mastraChannelTriggerDescriptorOf(node);
-          if (!options.resolveChannelAdapter) {
-            throw new GraphExecutionError(
-              `Channel trigger node '${node.id}' has no host mastra channel adapter surface configured`,
-              GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
-            );
-          }
-          const adapter = await options.resolveChannelAdapter(descriptor);
-          if (adapter === undefined || adapter === null) {
-            throw new GraphExecutionError(
-              `Channel trigger node '${node.id}': the host mastra channel adapter factory resolved no adapter`,
-              GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
-            );
-          }
-          const inputData =
-            args.inputData && typeof args.inputData === "object"
-              ? (args.inputData as Record<string, unknown>)
-              : {};
-          return {
-            message: inputData["message"] ?? null,
-            sessionId: inputData["sessionId"] ?? null,
-            userId: inputData["userId"] ?? null,
-            threadId: inputData["threadId"] ?? descriptor.threadId ?? null,
-            resource: adapter,
-          };
-        },
-      }),
-  };
+    nodeClass as never,
+    { channel: createMastraChannelTriggerNodeRuntime(options) }
+  );
 }
 
 /**

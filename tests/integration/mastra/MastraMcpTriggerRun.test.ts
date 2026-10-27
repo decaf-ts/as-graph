@@ -94,7 +94,7 @@ describe("mastra MCP trigger driver run (SAA-836 M5)", () => {
 
     const result = await backend.execute({
       document: mcpTriggerDocument("saa-836-mcp-trigger-serves"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
@@ -138,7 +138,7 @@ describe("mastra MCP trigger driver run (SAA-836 M5)", () => {
 
     const result = await backend.execute({
       document: mcpTriggerDocument("saa-836-mcp-trigger-fail-closed"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
@@ -164,7 +164,7 @@ describe("mastra MCP trigger driver run (SAA-836 M5)", () => {
 
     const result = await backend.execute({
       document: mcpTriggerDocument("saa-836-mcp-trigger-empty-factory"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,

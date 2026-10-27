@@ -402,6 +402,68 @@ describe("mastra RAG execution — chains and extractors (SAA-747 Stage 2)", () 
   });
 });
 
+describe("mastra RAG execution — rerank (SAA-1547 acceptance §7)", () => {
+  it("ranks documents through the deterministic host reranker and applies topN", async () => {
+    const requests: Array<{ documents: unknown[]; query?: string; topN?: number }> =
+      [];
+    const step = compileStep(
+      "core.agent.rerank",
+      { topN: 2, modelAdapter: MODEL_ADAPTER },
+      createMastraRagStepHandlers({
+        rerankDocuments: async (request) => {
+          requests.push({
+            documents: [...request.documents],
+            query: request.query,
+            topN: request.topN,
+          });
+          return [
+            { document: "alpha", score: 0.9 },
+            { document: "beta", score: 0.5 },
+            { document: "gamma", score: 0.1 },
+          ];
+        },
+      })
+    );
+
+    const result = await step.execute({
+      inputData: {
+        query: "alpha",
+        documents: ["gamma", "alpha", "beta"],
+      },
+    });
+
+    expect(requests).toEqual([
+      {
+        documents: ["gamma", "alpha", "beta"],
+        query: "alpha",
+        topN: 2,
+      },
+    ]);
+    expect(result["documents"]).toEqual(["alpha", "beta"]);
+    expect(result["scores"]).toEqual([0.9, 0.5]);
+    expect(result["resource"]).toMatchObject({
+      kind: "core.agent.rerank",
+      nodeId: "target",
+      type: "mastra.rerank",
+      provider: "fake-model",
+      modelId: "generate-v1",
+      topN: 2,
+    });
+  });
+
+  it("fails closed with GRAPH_MASTRA_RAG_UNAVAILABLE without a host reranker", async () => {
+    const step = compileStep(
+      "core.agent.rerank",
+      { topN: 2 },
+      createMastraRagStepHandlers()
+    );
+
+    await expect(
+      step.execute({ inputData: { documents: ["alpha"], query: "alpha" } })
+    ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_RAG_UNAVAILABLE });
+  });
+});
+
 describe("mastra RAG execution — config-only fallbacks (SAA-747 Stage 2)", () => {
   it("emits the pinned R9 descriptor for every kind without work and calls no port", async () => {
     const calls: string[] = [];
@@ -422,6 +484,10 @@ describe("mastra RAG execution — config-only fallbacks (SAA-747 Stage 2)", () 
         calls.push("store");
         throw new Error("a config-only node must not resolve a store");
       },
+      // Rerank now requires a host reranker even for the config-only fallback:
+      // without it the node correctly fails closed with
+      // GRAPH_MASTRA_RAG_UNAVAILABLE.
+      rerankDocuments: async () => [],
     });
 
     const source = document({
@@ -437,6 +503,7 @@ describe("mastra RAG execution — config-only fallbacks (SAA-747 Stage 2)", () 
       "core.agent.embedding": "mastra.embedding",
       "core.agent.vectorStore": "mastra.vectorStore",
       "core.agent.retriever": "mastra.retriever",
+      "core.agent.rerank": "mastra.rerank",
       "core.agent.chain.qa": "mastra.chain.qa",
       "core.agent.chain.basic": "mastra.chain.basic",
       "core.agent.chain.summarization": "mastra.chain.summarization",
@@ -653,7 +720,7 @@ describe("mastra backend RAG registration (SAA-747 Stage 2)", () => {
           }),
         ],
       }),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: sink,

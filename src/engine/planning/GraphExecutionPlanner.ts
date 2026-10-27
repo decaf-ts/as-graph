@@ -3,10 +3,13 @@
  * @summary Topological planner for resolved graph workflows (DECAF-50 §4.9).
  * @description Turns a {@link GraphResolvedWorkflow} — the output of the
  * nine-stage §4.8 validation gate — into a {@link GraphExecutionPlan} with
- * topological layers. The planner accepts ONLY resolved workflows: it never
- * calls `graphDefinitionOf()` and never accepts `GraphWorkflowDefinition`
- * objects or inline raw `GraphNodeDefinition` objects (P3 gate). Resolution
- * against the trusted backend catalogue happens upstream, in
+ * topological layers. Layer and cycle computation is delegated to
+ * {@link GraphDependencyTopology}, the same helper the Mastra compiler uses, so
+ * the planner's plan and the compiler's fallback can never disagree about
+ * execution order. The planner accepts ONLY resolved workflows: it never calls
+ * `graphDefinitionOf()` and never accepts `GraphWorkflowDefinition` objects or
+ * inline raw `GraphNodeDefinition` objects (P3 gate). Resolution against the
+ * trusted backend catalogue happens upstream, in
  * {@link GraphWorkflowDocumentValidator}.
  */
 import {
@@ -16,7 +19,6 @@ import {
   type MaybeContextualArg,
 } from "@decaf-ts/core";
 import { GRAPH_WORKFLOW_BOUNDARY } from "../constants";
-import { GraphCycleError } from "../errors/GraphCycleError";
 import { GraphTopologyError } from "../errors/GraphTopologyError";
 import { isGraphResolvedWorkflow } from "../validation/GraphWorkflowDocumentValidator";
 import type { GraphResolvedWorkflow } from "../validation/GraphResolvedWorkflow";
@@ -24,10 +26,14 @@ import type { GraphExecutionPlan } from "./GraphExecutionPlan";
 import type { GraphExecutionPlanNode } from "./GraphExecutionPlanNode";
 import type { GraphExecutionPlanEdge } from "./GraphExecutionPlanEdge";
 import type { GraphExecutionPlanLayer } from "./GraphExecutionPlanLayer";
+import { GraphDependencyTopology } from "./GraphDependencyTopology";
 
 /**
  * Planner that turns a {@link GraphResolvedWorkflow} into a
  * {@link GraphExecutionPlan} with topological layers.
+ *
+ * @summary Produces the plan the execution engine and the Mastra compiler
+ * consume, with one ordered layer per set of independent nodes.
  */
 @service()
 export class GraphExecutionPlanner extends Service {
@@ -38,10 +44,18 @@ export class GraphExecutionPlanner extends Service {
   /**
    * Plans a resolved workflow for execution.
    *
-   * @param workflow - The catalogue-resolved workflow (output of the
-   *   nine-stage validation gate). Raw `GraphWorkflowDefinition` objects and
-   *   inline `GraphNodeDefinition` objects are rejected.
-   * @returns The execution plan with nodes, edges, layers, and maps.
+   * @summary Builds plan nodes, edges, layer order, and incoming/outgoing maps.
+   * @description Only data and connection edges between executable nodes create
+   * dependencies; workflow-boundary edges stay in the maps for routing but are
+   * excluded from layer computation. Every node in a layer is independent of
+   * the others, so a backend may execute the layer in parallel.
+   * @param {GraphResolvedWorkflow} workflow - The catalogue-resolved workflow
+   * (output of the nine-stage validation gate). Raw `GraphWorkflowDefinition`
+   * objects and inline `GraphNodeDefinition` objects are rejected.
+   * @param {...MaybeContextualArg<Context>} args - Forwarded contextual
+   * arguments used for logging.
+   * @returns {Promise<GraphExecutionPlan>} The execution plan with nodes, edges,
+   * layers, and incoming/outgoing maps.
    * @throws {GraphTopologyError} when the input is not a resolved workflow.
    * @throws {GraphCycleError} when the workflow contains an unsupported cycle.
    */
@@ -64,7 +78,7 @@ export class GraphExecutionPlanner extends Service {
     const incomingByNode = this.buildIncomingMap(edges);
     const outgoingByNode = this.buildOutgoingMap(edges);
 
-    const layers = this.topologicalLayers(nodes, edges);
+    const layers = this.topologicalLayers(nodes, edges, workflow.document.id);
 
     return {
       resolved: workflow,
@@ -149,7 +163,7 @@ export class GraphExecutionPlanner extends Service {
   }
 
   /**
-   * Produces topological layers using Kahn's algorithm.
+   * Produces topological layers using the shared dependency topology.
    *
    * Workflow boundary edges do not count as executable-node dependencies.
    * Both data and structural (connection) edges count as dependencies
@@ -158,66 +172,30 @@ export class GraphExecutionPlanner extends Service {
    */
   private topologicalLayers(
     nodes: GraphExecutionPlanNode[],
-    edges: GraphExecutionPlanEdge[]
+    edges: GraphExecutionPlanEdge[],
+    workflowId?: string
   ): GraphExecutionPlanLayer[] {
     const executableNodes = nodes.filter(
       (n) => n.id !== GRAPH_WORKFLOW_BOUNDARY
     );
-    const nodeIds = new Set(executableNodes.map((n) => n.id));
-
-    // Only edges between two executable nodes count as dependencies
-    const execEdges = edges.filter(
-      (e) => nodeIds.has(e.sourceNodeId) && nodeIds.has(e.targetNodeId)
+    const byId = new Map(executableNodes.map((node) => [node.id, node]));
+    return GraphDependencyTopology.layers(executableNodes, edges, workflowId).map(
+      (ids, index) => ({
+        index,
+        nodes: ids
+          .map((id) => byId.get(id))
+          .filter((node): node is GraphExecutionPlanNode => !!node),
+      })
     );
-
-    // Compute in-degree
-    const indegree = new Map<string, number>();
-    for (const node of executableNodes) indegree.set(node.id, 0);
-    for (const edge of execEdges) {
-      indegree.set(edge.targetNodeId, (indegree.get(edge.targetNodeId) ?? 0) + 1);
-    }
-
-    const layers: GraphExecutionPlanLayer[] = [];
-    const planned = new Set<string>();
-    let ready = executableNodes.filter((n) => (indegree.get(n.id) ?? 0) === 0);
-    let layerIndex = 0;
-
-    while (ready.length > 0) {
-      const layer: GraphExecutionPlanLayer = { index: layerIndex++, nodes: ready };
-      layers.push(layer);
-      const nextReady: GraphExecutionPlanNode[] = [];
-      for (const node of ready) {
-        planned.add(node.id);
-        const outgoing = execEdges.filter((e) => e.sourceNodeId === node.id);
-        for (const edge of outgoing) {
-          const deg = (indegree.get(edge.targetNodeId) ?? 1) - 1;
-          indegree.set(edge.targetNodeId, deg);
-          if (deg === 0 && !planned.has(edge.targetNodeId)) {
-            const next = executableNodes.find((n) => n.id === edge.targetNodeId);
-            if (next) nextReady.push(next);
-          }
-        }
-      }
-      ready = nextReady;
-    }
-
-    if (planned.size !== executableNodes.length) {
-      const unplanned = executableNodes
-        .filter((n) => !planned.has(n.id))
-        .map((n) => n.id);
-      throw new GraphCycleError({
-        unplannedNodes: unplanned,
-        workflowId: executableNodes[0]?.manifest.kind,
-      });
-    }
-
-    return layers;
   }
 }
 
 /**
  * Produces a safe, JSON-friendly description of a rejected planner input for
  * error details (never serialises executors or class instances).
+ *
+ * @param {unknown} value - The rejected planner input.
+ * @returns {Record<string, unknown>} A compact description used in error details.
  */
 function describeInput(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") {

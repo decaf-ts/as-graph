@@ -6,7 +6,11 @@
  * translates workflow/step/log lifecycle events into canonical
  * {@link GraphExecutionEvent} emissions, and mirrors node/edge visual-state and
  * routed edge values so the canvas renders a Mastra run exactly like a local
- * one. Unrecognised events are ignored unless they look like log entries.
+ * one. Only document node ids are reported: compiler-internal control and
+ * mapping steps are filtered out. A step result carrying the skip sentinel
+ * ({@link GRAPH_MASTRA_SKIPPED_NODE}) maps to `NODE_SKIPPED` and the skipped
+ * visual state instead of `NODE_COMPLETED`. Unrecognised events are ignored
+ * unless they look like log entries.
  */
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import type { GraphEdgeInstance } from "../shared/graph/document/GraphEdgeInstance";
@@ -17,6 +21,7 @@ import {
 } from "../shared/graph/constants";
 import type { GraphExecutionEventSink } from "../engine/execution/GraphExecutionBackend";
 import type { GraphRunLogEntry } from "../shared/graph/types";
+import { GRAPH_MASTRA_SKIPPED_NODE } from "./types";
 
 /** Options a {@link MastraEventBridge} is created with. */
 export interface MastraEventBridgeOptions {
@@ -81,17 +86,27 @@ function endpointPort(
 }
 
 /**
- * Translates Mastra `fullStream` events into canonical facade events. The
- * bridge indexes the document's data edges by node endpoint so step results can
- * be routed as edge values and step lifecycles can drive node/edge visual
- * states. Log events (`log`, `writer`, `console`) are surfaced as
- * `GRAPH_RUN_LOG` entries with a known log level.
+ * Translates Mastra `fullStream` events into canonical facade events.
+ *
+ * @summary Bridges Mastra step/workflow events onto the facade sink with
+ * node filtering, edge routing, and skip-sentinel handling.
+ * @description The bridge indexes the document's data edges by node endpoint so
+ * step results can be routed as edge values and step lifecycles can drive
+ * node/edge visual states. Events for ids that are not document nodes (the
+ * compiler's routers, loop bodies, and other internal steps) are ignored, so
+ * only graph nodes appear in the canvas. A successful step whose output carries
+ * the skip sentinel emits `NODE_SKIPPED` with the sentinel's reason instead of
+ * `NODE_COMPLETED`, and does not route outgoing edge values. Log events
+ * (`log`, `writer`, `console`) are surfaced as `GRAPH_RUN_LOG` entries with a
+ * known log level.
  */
 export class MastraEventBridge {
   /** Data edges leaving each node, keyed by source node id. */
   private readonly outgoing = new Map<string, GraphEdgeInstance[]>();
   /** Data edges entering each node, keyed by target node id. */
   private readonly incoming = new Map<string, GraphEdgeInstance[]>();
+  /** Document node ids; control/mapping entries are not graph nodes. */
+  private readonly nodeIds: Set<string>;
   /**
    * The run's terminal execution status, recorded from the `workflow-finish`
    * event (or `workflow-canceled`). Kept in lock-step with the terminal workflow
@@ -106,6 +121,9 @@ export class MastraEventBridge {
    * @param options - Run identity, document, and event sink options.
    */
   constructor(private readonly options: MastraEventBridgeOptions) {
+    this.nodeIds = new Set(
+      (options.document.nodes ?? []).map((node) => node.id)
+    );
     for (const edge of options.document.edges ?? []) {
       if (edge.type !== "data") continue;
       const source = nodeEndpointId(edge, "source");
@@ -210,6 +228,7 @@ export class MastraEventBridge {
   private async onStepStart(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
     if (!nodeId) return;
+    if (!this.nodeIds.has(nodeId)) return;
     const path = [...(this.options.path ?? []), nodeId];
     await this.emit({
       type: GraphExecutionEventType.NODE_STARTED,
@@ -232,6 +251,7 @@ export class MastraEventBridge {
   private async onStepOutput(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
     if (!nodeId) return;
+    if (!this.nodeIds.has(nodeId)) return;
     const payload = this.payloadOf(event);
     await this.emit({
       type: GraphExecutionEventType.NODE_OUTPUT,
@@ -251,6 +271,7 @@ export class MastraEventBridge {
   private async onStepProgress(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
     if (!nodeId) return;
+    if (!this.nodeIds.has(nodeId)) return;
     const payload = this.payloadOf(event);
     const iteration = typeof payload["currentIndex"] === "number" ? payload["currentIndex"] : undefined;
     const failed = payload["iterationStatus"] === "failed";
@@ -270,14 +291,21 @@ export class MastraEventBridge {
 
   /**
    * Emits the terminal lifecycle of a finished step: failure, suspension
-   * block, or completion (including routed outgoing edge values).
+   * block, branch skip, or completion (including routed outgoing edge values).
    *
-   * @param event - The raw `workflow-step-result` event.
-   * @returns Resolves once the derived events have been emitted.
+   * A step result whose output contains `GRAPH_MASTRA_SKIPPED_NODE: true` is a
+   * node whose branch was not selected: it emits `NODE_SKIPPED` with the
+   * sentinel's `reason` (defaulting to `branchNotSelected`) and the skipped
+   * visual state, and its outgoing edges are not routed. Step ids that are not
+   * document nodes are ignored.
+   *
+   * @param {MastraFullStreamEvent} event - The raw `workflow-step-result` event.
+   * @returns {Promise<void>} Resolves once the derived events have been emitted.
    */
   private async onStepResult(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
     if (!nodeId) return;
+    if (!this.nodeIds.has(nodeId)) return;
     const payload = this.payloadOf(event);
     const status = payload["status"];
     const path = [...(this.options.path ?? []), nodeId];
@@ -295,6 +323,26 @@ export class MastraEventBridge {
     }
     if (status === "suspended") {
       await this.emitNodeState(nodeId, GraphVisualState.BLOCKED, path);
+      return;
+    }
+    if (
+      output &&
+      typeof output === "object" &&
+      !Array.isArray(output) &&
+      (output as Record<string, unknown>)[GRAPH_MASTRA_SKIPPED_NODE] === true
+    ) {
+      await this.emit({
+        type: GraphExecutionEventType.NODE_SKIPPED,
+        nodeId,
+        path,
+        status: GraphExecutionStatus.SKIPPED,
+        payload: {
+          reason:
+            (output as Record<string, unknown>)["reason"] ??
+            "branchNotSelected",
+        },
+      });
+      await this.emitNodeState(nodeId, GraphVisualState.SKIPPED, path);
       return;
     }
     await this.emit({
@@ -318,6 +366,7 @@ export class MastraEventBridge {
   private async onStepSuspended(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
     if (!nodeId) return;
+    if (!this.nodeIds.has(nodeId)) return;
     const path = [...(this.options.path ?? []), nodeId];
     await this.emitNodeState(nodeId, GraphVisualState.BLOCKED, path);
     await this.emit({

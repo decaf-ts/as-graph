@@ -35,7 +35,19 @@ import type { GraphExecutionResult, GraphRunId } from "../engine/types";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import { graphRunDocumentFingerprint } from "../engine/runs/GraphRunFingerprint";
 import { buildGraphExecutionResult } from "../engine/execution/GraphExecutionResult";
+import type { GraphNodeExecutor } from "../engine/execution/GraphNodeExecutor";
+import {
+  defineGraphNode,
+  type GraphNodeRegistration,
+} from "../engine/catalog/GraphNodeRegistration";
+import { graphNodeConfig } from "../node/base";
+import { MASTRA_NODE_CLASSES_BY_KIND } from "./nodes/classes";
+import { MASTRA_NODE_MANIFESTS_BY_KIND } from "./nodes/manifests";
 import { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
+import {
+  configureMastraRunConcurrency,
+  releaseMastraRunConcurrency,
+} from "./MastraRunConcurrencyLimiter";
 import { MastraWorkflowManager } from "./MastraWorkflowManager";
 import { MastraEventBridge } from "./MastraEventBridge";
 import { recoverMastraRunHandle } from "./MastraRunRecovery";
@@ -361,6 +373,9 @@ export class MastraGraphExecutionBackend
           ...(config.generateText
             ? { generateText: config.generateText }
             : {}),
+          ...(config.rerankDocuments
+            ? { rerankDocuments: config.rerankDocuments }
+            : {}),
           ...(config.runSandboxedCode
             ? { runSandboxedCode: config.runSandboxedCode }
             : {}),
@@ -376,13 +391,14 @@ export class MastraGraphExecutionBackend
             : {}),
         },
       });
+    // The registry is the source of truth: host-supplied handlers may extend or
+    // override the registered set, but every Mastra-owned kind keeps its step.
+    // A missing host service (for example no agent runtime) fails closed at
+    // execution with its stable typed error instead of disappearing from the
+    // compiled workflow.
     const stepHandlers: MastraNodeStepHandler[] = [
       ...hostStepHandlers,
-      ...(agentRuntime
-        ? registeredStepHandlers
-        : registeredStepHandlers.filter(
-            (handler) => handler.kind !== "core.agent"
-          )),
+      ...registeredStepHandlers,
     ];
     this.compiler = new MastraWorkflowCompiler({ stepHandlers });
     // SAA-836 O1: wire the mastra engine's observability layer onto the real
@@ -393,6 +409,33 @@ export class MastraGraphExecutionBackend
     // doubles) are skipped so the general engine keeps booting them unchanged.
     this.observability = await wireMastraObservability(this.runtime);
     this.initialized = true;
+  }
+
+  /**
+   * Catalogue registrations for every Mastra-owned node kind (SAA-1545 §2.1).
+   * The facade registers these before doc validation so a Mastra workflow's
+   * kinds resolve against the Mastra catalogue without the general catalogue
+   * importing the Mastra node surface. Execution itself goes through the Mastra
+   * compiler and node-class step adapter, not this catalogue executor.
+   *
+   * @returns One registration per Mastra-owned kind.
+   */
+  nodeRegistrations(): readonly GraphNodeRegistration[] {
+    const registrations: GraphNodeRegistration[] = [];
+    for (const [kind, manifest] of Object.entries(
+      MASTRA_NODE_MANIFESTS_BY_KIND
+    )) {
+      const nodeClass = MASTRA_NODE_CLASSES_BY_KIND[kind];
+      if (!nodeClass) continue;
+      const executor: GraphNodeExecutor = {
+        execute: (request, context) =>
+          nodeClass
+            .instantiate(graphNodeConfig(context.node))
+            .execute(request, context),
+      };
+      registrations.push(defineGraphNode({ manifest, executor }));
+    }
+    return registrations;
   }
 
   get capabilities(): MastraBackendCapabilities {
@@ -540,6 +583,30 @@ export class MastraGraphExecutionBackend
     return summaries;
   }
 
+  /**
+   * Executes a canonical workflow through the compiled Mastra workflow.
+   *
+   * @summary Compiles the request's document with the planner's layers, runs it
+   * under the run-scoped concurrency ceiling, and bridges its events.
+   * @description The request's execution plan is handed to
+   * {@link MastraWorkflowCompiler.compile}, so the planner's dependency layers
+   * are authoritative and the compiler falls back to the shared topology only
+   * when no plan is available. The run's effective `concurrency` option installs
+   * a run-scoped gate through {@link configureMastraRunConcurrency}; every
+   * translated step acquires a slot through {@link withMastraRunConcurrency},
+   * and the gate is always released in the terminal `finally`. The returned
+   * status comes from the event bridge's terminal workflow event, falling back
+   * to the run result or stream status when the stream was not observed.
+   * @param {GraphBackendExecutionRequest} request - The resolved document, plan,
+   * inputs, effective options, and frame-bound event sink.
+   * @param {...MaybeContextualArg<Context>} args - Forwarded contextual arguments
+   * used to resolve the authenticated caller owner.
+   * @returns {Promise<GraphExecutionResult>} The terminal run result built from
+   * the frame, document inputs, final status, and document fingerprint.
+   * @throws {GraphExecutionError} when the sink is not frame-bound, the
+   * workflow has no `createRun` surface, or compilation fails closed on an
+   * unsupported topology or node kind.
+   */
   async execute(
     request: GraphBackendExecutionRequest,
     ...args: MaybeContextualArg<Context>
@@ -560,7 +627,9 @@ export class MastraGraphExecutionBackend
       ...(owner ? { owner } : {}),
     });
     this.runWorkflows.set(runId, request.document.id);
-    const compiled = this.compiler.compile(request.document);
+    const compiled = this.compiler.compile(request.document, {
+      plan: request.plan,
+    });
     // SAA-836 O1: record the cache ledger entry and atomically invalidate
     // stale entries for this document (gate A: recompilation only on
     // document change). Never fails the run.
@@ -601,6 +670,7 @@ export class MastraGraphExecutionBackend
       path: [],
     });
 
+    configureMastraRunConcurrency(runId, request.options?.concurrency);
     let status: GraphExecutionStatus = GraphExecutionStatus.SUCCEEDED;
     let resolvedRunOutput: unknown = undefined;
     const signal = request.options?.abortSignal;
@@ -639,6 +709,8 @@ export class MastraGraphExecutionBackend
         status,
         error: this.errorPayload(error),
       });
+    } finally {
+      releaseMastraRunConcurrency(runId);
     }
 
     // SAA-836 O1: persist a versioned replay snapshot of the terminal

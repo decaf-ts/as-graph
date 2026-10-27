@@ -19,7 +19,7 @@ import {
 } from "../../../../src/mastra/MastraMcpTrigger";
 import { GRAPH_MASTRA_CREDENTIALS_UNAVAILABLE } from "../../../../src/mastra/MastraEnvironment";
 import { GRAPH_MASTRA_MCP_UNAVAILABLE } from "../../../../src/mastra/types";
-import { McpServerTriggerNode } from "../../../../src/node/agents/triggers/mcp-server/node";
+import { McpServerTriggerNode } from "../../../../src/mastra/nodes/triggers/mcp-server/node";
 import { graphNodeManifest } from "../../../../src/shared/graph";
 import type { GraphNodeInstance } from "../../../../src/shared/graph/document/GraphNodeInstance";
 

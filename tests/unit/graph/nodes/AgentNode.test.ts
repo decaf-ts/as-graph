@@ -3,14 +3,15 @@
  * @summary Dedicated unit tests for the `core.agent` node class's manifest
  * surface and its mastra-only `execute` contract (SAA-837 M1).
  * @description SAA-837 M1 removed the `core.agent` echo/degraded placeholder:
- * the agent kind is now mastra-only and fails closed on the general engine, and
+ * the agent kind is now mastra-only and its direct node execution fails closed
+ * without a host agent service (the local engine gate rejects it earlier), and
  * the manifest carries the full CRUD agent configuration plus the dedicated
  * mastra connection zones (SAA-836 M1/M3).
  */
-import { AgentNode } from "../../../../src/node";
+import { AgentNode } from "../../../../src/mastra/nodes";
 import { graphNodeManifest } from "../../../../src/shared/graph";
 import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
-import { GRAPH_LOCAL_UNSUPPORTED_NODE_KIND } from "../../../../src/engine/constants";
+import { GRAPH_MASTRA_AGENT_UNAVAILABLE } from "../../../../src/mastra/types";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 import { buildNodeContext } from "./node-test-utils";
 
@@ -102,14 +103,14 @@ describe("AgentNode", () => {
       ["a missing prompt", {}, {}],
       ["credentials on the request", { prompt: "hi" }, { credentials: {} }],
     ])(
-      "fails closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND (%s)",
-      (_label, inputs, overrides) => {
+      "fails closed with GRAPH_MASTRA_AGENT_UNAVAILABLE without a host runtime (%s)",
+      async (_label, inputs, overrides) => {
         const context = buildNodeContext("core.agent");
         let thrown: unknown;
         try {
-          executeNode(
+          await executeNode(
             AgentNode,
-            nodeExecutionRequest(inputs, overrides),
+            nodeExecutionRequest(inputs, { kind: "core.agent", ...overrides }),
             context
           );
         } catch (error) {
@@ -118,11 +119,12 @@ describe("AgentNode", () => {
 
         expect(thrown).toBeInstanceOf(GraphExecutionError);
         expect((thrown as GraphExecutionError).graphCode).toBe(
-          GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
+          GRAPH_MASTRA_AGENT_UNAVAILABLE
         );
-        expect((thrown as GraphExecutionError).details).toEqual({
+        expect((thrown as GraphExecutionError).details).toMatchObject({
+          nodeId: "TestNode",
           kind: "core.agent",
-          backend: "local",
+          service: "agent",
         });
       }
     );

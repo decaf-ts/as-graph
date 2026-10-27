@@ -29,7 +29,7 @@ import {
 } from "../../unit/graph/engine-fixtures";
 import { TestRequestContextModule } from "../../unit/nest/graphRunTestSupport";
 import { realStepHandler } from "../../integration/mastra/helpers";
-import { graphWorkflowFixtures } from "../../../src/workflows";
+import { mastraWorkflowFixtures } from "../../../src/workflows/mastra";
 import {
   closeLiveStores,
   liveAsGraphCount,
@@ -57,13 +57,13 @@ afterAll(() => {
   }
 });
 
-const FIXTURE_DOCUMENTS = graphWorkflowFixtures.map(
+const FIXTURE_DOCUMENTS = mastraWorkflowFixtures.map(
   (fixture) => fixture.document
 );
 const FIXTURE_IDS = FIXTURE_DOCUMENTS.map((document) => document.id).sort();
 
 function seedDocuments() {
-  return graphWorkflowFixtures.map((fixture) => fixture.document);
+  return mastraWorkflowFixtures.map((fixture) => fixture.document);
 }
 
 function servedIds(rows: Array<{ workflowId: string }>): string[] {

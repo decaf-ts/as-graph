@@ -16,7 +16,7 @@ import {
   AgentMemoryNode,
   AgentScorerNode,
   AgentToolNode,
-} from "../../../../src/node";
+} from "../../../../src/mastra/nodes";
 import {
   MastraAgentBuilder,
   MastraToolBuilder,
@@ -25,16 +25,20 @@ import { graphDefinitionOf } from "../../../../src/shared/graph";
 import { PortDirection } from "../../../../src/shared/graph/constants";
 import { GraphWorkflowDocumentValidator } from "../../../../src/engine/validation/GraphWorkflowDocumentValidator";
 import { registerBuiltInGraphNodes } from "../../../../src/engine/catalog/GraphBuiltInRegistrations";
+import { MastraGraphExecutionBackend } from "../../../../src/mastra/MastraGraphExecutionBackend";
 import { assertGraphWorkflowDocumentValid } from "../../../../src/shared/graph/document/GraphWorkflowDocumentBuilder";
 import type { GraphNodeCatalogue } from "../../../../src/engine/catalog/GraphNodeCatalogue";
 import type { GraphWorkflowDocument } from "../../../../src/shared/graph";
 import { freshCatalogue } from "../engine-fixtures";
-import type { MastraAgentZone } from "../../../../src/node";
+import type { MastraAgentZone } from "../../../../src/mastra/nodes";
 
 /** Boots a fresh catalogue with the built-in kinds registered. */
 async function builtInCatalogue(): Promise<GraphNodeCatalogue> {
   const catalogue = freshCatalogue();
   await registerBuiltInGraphNodes(catalogue);
+  for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
+    await catalogue.register(registration);
+  }
   return catalogue;
 }
 

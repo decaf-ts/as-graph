@@ -23,7 +23,8 @@ import {
   GRAPH_MASTRA_STRUCTURED_OUTPUT_UNRESOLVED,
   type MastraResolvedStructuredOutput,
 } from "../../../../src/mastra/MastraStructuredOutput";
-import { node } from "../../../../src/workflows/builders";
+import { document, node } from "../../../../src/workflows/builders";
+import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 
 /** A decorated decaf model used as the registry-resolved schema source. */
 @model()
@@ -112,7 +113,13 @@ describe("core.agent structured-output wiring (SAA-836 S1)", () => {
     const subject = node("agent-1", "core.agent", {
       structuredOutput: { model: "OrderModel" },
     });
-    const step = handler.createStep(subject, { stepId: "agent-1" }) as {
+    const source = document({
+      id: "saa-836-structured-output-memo",
+      nodes: [subject],
+    });
+    const compiler = new MastraWorkflowCompiler({ stepHandlers: [handler] });
+    const { steps } = compiler.compile(source);
+    const step = steps.get("agent-1") as {
       execute: (args: { inputData?: unknown }) => Promise<unknown>;
     };
 

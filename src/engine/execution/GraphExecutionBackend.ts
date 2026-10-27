@@ -30,6 +30,7 @@ import type { GraphExecutionEventFactory } from "../events/GraphExecutionEventFa
 import type { GraphExecutionFrame } from "./GraphExecutionFrame";
 import type { GraphExecutionEngine } from "./GraphExecutionEngine";
 import type { CodeSandboxEvaluator } from "./CodeSandboxEvaluator";
+import type { GraphNodeRegistration } from "../catalog/GraphNodeRegistration";
 
 /**
  * How a {@link GraphExecutionBackend} handles code-mode workflow surfaces.
@@ -252,6 +253,13 @@ export interface GraphExecutionBackend<
   readonly config?: CONFIG;
   /** Whether this backend executes locally (in-process). */
   readonly local: boolean;
+  /**
+   * Catalogue registrations owned by this engine (SAA-1545 §2.1). A backend
+   * whose engine owns node kinds absent from the general catalogue exposes
+   * them here; the facade registers them before document validation. The
+   * built-in local backend omits this.
+   */
+  nodeRegistrations?(): readonly GraphNodeRegistration[];
   /**
    * The document validation contract this backend requires. Omitted means
    * `canonical`; a deployment-projection backend declares `deployment`.

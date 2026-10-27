@@ -90,14 +90,18 @@ describe("mastra voice driver run (SAA-842 acceptance 3)", () => {
     });
     const result = await host.backend!.execute({
       document: voiceDocument("saa-842-voice-resolved-run"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
     });
 
     expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
-    expect(completedOutputs(harness, "voice")?.["resource"]).toBe(liveVoice);
+    // The step adapter deep-clones plain objects into the JSON-safe output, so
+    // the resolved voice surface is structurally equal, not reference-equal.
+    expect(completedOutputs(harness, "voice")?.["resource"]).toStrictEqual(
+      liveVoice
+    );
     // the voice node's VoiceConfig-shaped parameters reached the host factory
     expect(resolvedDescriptors).toEqual([
       expect.objectContaining({
@@ -121,7 +125,7 @@ describe("mastra voice driver run (SAA-842 acceptance 3)", () => {
     });
     const result = await host.backend!.execute({
       document: voiceDocument("saa-842-voice-fail-closed-run"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,

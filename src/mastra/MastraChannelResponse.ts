@@ -1,11 +1,13 @@
 /**
  * @module as-graph/mastra/MastraChannelResponse
- * @summary Mastra step handler for the built-in channel response kinds
- * (SAA-836 M6).
- * @description Translates a channel response node (`core.agent.response.slack`,
+ * @summary Run-scoped channel-response service and step handler for the
+ * built-in channel response kinds (SAA-836 M6, re-homed by SAA-1547).
+ * @description Builds the {@link MastraChannelNodeRuntime} `response` service
+ * that the channel response node classes (`core.agent.response.slack`,
  * `core.agent.response.discord`, `core.agent.response.telegram`,
- * `core.agent.response.teams`) into a mastra step that posts the agent's reply
- * back to the platform conversation the graph received it from. The reply and
+ * `core.agent.response.teams`) delegate to from their `execute()`, then binds
+ * it to the single step adapter. The service posts the agent's reply back to
+ * the platform conversation the graph received it from. The reply and
  * the conversation binding arrive on the node's `response` and `threadId`
  * inputs, so the response node posts to the same conversation the matching
  * channel trigger delivered; the configured binding is authoritative and a
@@ -17,8 +19,6 @@
  * the response fails closed with {@link GRAPH_MASTRA_CHANNEL_UNAVAILABLE}
  * instead of fabricating a delivered reply.
  */
-import { z } from "zod";
-import { createStep } from "@mastra/core/workflows";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
@@ -28,8 +28,21 @@ import {
   type MastraChannelPlatform,
   type MastraChannelResponseDescriptor,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
 } from "./types";
+import type { MastraChannelNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { DiscordChannelResponseNode } from "./nodes/responses/discord/node";
+import { SlackChannelResponseNode } from "./nodes/responses/slack/node";
+import { TeamsChannelResponseNode } from "./nodes/responses/teams/node";
+import { TelegramChannelResponseNode } from "./nodes/responses/telegram/node";
+
+/** The node class for each built-in channel response kind. */
+const CHANNEL_RESPONSE_NODE_CLASSES: Record<string, unknown> = {
+  "core.agent.response.discord": DiscordChannelResponseNode,
+  "core.agent.response.slack": SlackChannelResponseNode,
+  "core.agent.response.teams": TeamsChannelResponseNode,
+  "core.agent.response.telegram": TelegramChannelResponseNode,
+};
 
 /** The document node kind prefix every built-in channel response kind carries. */
 export const GRAPH_MASTRA_CHANNEL_RESPONSE_KIND_PREFIX =
@@ -107,106 +120,107 @@ export function mastraChannelResponseDescriptorOf(
 }
 
 /**
+ * Builds the run-scoped channel transport service used by response nodes. The
+ * service owns the host delivery factory; the node class owns the declared
+ * response/thread-binding semantics and output mapping.
+ *
+ * @param options - The handler options (the host delivery factory).
+ * @returns The channel response runtime service.
+ */
+export function createMastraChannelResponseNodeRuntime(
+  options: MastraChannelResponseStepHandlerOptions = {}
+): MastraChannelNodeRuntime {
+  return {
+    trigger: async () => {
+      throw new GraphExecutionError(
+        "The channel response runtime does not execute channel trigger nodes",
+        GRAPH_MASTRA_CHANNEL_UNAVAILABLE
+      );
+    },
+    response: async (node, inputData) => {
+      const response = inputData["response"];
+      const wiredThreadId =
+        typeof inputData["threadId"] === "string" &&
+        inputData["threadId"].trim() !== ""
+          ? inputData["threadId"]
+          : undefined;
+      const descriptor = mastraChannelResponseDescriptorOf(node);
+      if (
+        descriptor.threadId !== undefined &&
+        wiredThreadId !== undefined &&
+        wiredThreadId !== descriptor.threadId
+      ) {
+        throw new GraphExecutionError(
+          `Channel response node '${node.id}' received a wired thread id that differs from its configured binding; the configured binding is authoritative and the override is refused (SAA-911 F5)`,
+          GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
+          {
+            nodeId: node.id,
+            kind: node.kind,
+            platform: descriptor.platform,
+            configuredLength: descriptor.threadId.length,
+            wiredLength: wiredThreadId.length,
+          }
+        );
+      }
+      const bound =
+        descriptor.threadId !== undefined ? descriptor.threadId : wiredThreadId;
+      if (
+        descriptor.threadId === undefined &&
+        wiredThreadId !== undefined &&
+        wiredThreadId.length > GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH
+      ) {
+        throw new GraphExecutionError(
+          `Channel response node '${node.id}' received a wired thread id longer than ${GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH} characters; the override is refused (SAA-911 F5)`,
+          GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
+          { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
+        );
+      }
+      if (!options.sendChannelResponse) {
+        throw new GraphExecutionError(
+          `Channel response node '${node.id}' has no host mastra channel delivery surface configured`,
+          GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
+        );
+      }
+      const payload = { response, threadId: bound ?? null };
+      const posted = await options.sendChannelResponse(descriptor, payload);
+      if (posted === undefined || posted === null) {
+        throw new GraphExecutionError(
+          `Channel response node '${node.id}': the host mastra channel delivery factory resolved no posted reply`,
+          GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
+        );
+      }
+      return { resource: posted };
+    },
+  };
+}
+
+/**
  * Builds the {@link MastraNodeStepHandler} registered for one built-in
- * channel response kind. The step resolves the response's channel descriptor,
- * takes the reply from the wired `response` input, and binds the delivery to
- * the configured conversation binding; a wired `threadId` is honored only
- * when it is the sole binding known — it never overrides the configured
- * binding, and an override attempt (or an overlong wired value) fails closed
- * (SAA-911 F5). Delivery is delegated to the host factory, and the posted
- * reply descriptor is returned on the `resource` output. Without a host
- * factory the step fails closed — no reply is ever fabricated as delivered.
+ * channel response kind through the single node-class adapter.
  *
  * @param kind - The channel response kind to translate.
  * @param options - The handler options (the host delivery factory).
  * @returns The channel response step handler.
- * @throws {GraphExecutionError} {@link GRAPH_MASTRA_CHANNEL_UNAVAILABLE} when
- *   no host factory is configured or it yields nothing.
  */
 export function createMastraChannelResponseStepHandler(
   kind: string,
   options: MastraChannelResponseStepHandlerOptions = {}
 ): MastraNodeStepHandler {
-  return {
+  const nodeClass = CHANNEL_RESPONSE_NODE_CLASSES[kind];
+  if (!nodeClass) {
+    throw new GraphExecutionError(
+      `No mastra channel response node class is registered for kind '${kind}'`,
+      GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
+      { kind }
+    );
+  }
+  return createMastraNodeStepHandler(
     kind,
-    createStep: (node: GraphNodeInstance, { stepId }: MastraNodeStepOptions) =>
-      createStep({
-        id: stepId,
-        inputSchema: z.any(),
-        outputSchema: z.any(),
-        execute: async (args: { inputData?: unknown }) => {
-          const inputData =
-            args.inputData && typeof args.inputData === "object"
-              ? (args.inputData as Record<string, unknown>)
-              : {};
-          const response = inputData["response"];
-          const wiredThreadId =
-            typeof inputData["threadId"] === "string" &&
-            inputData["threadId"].trim() !== ""
-              ? inputData["threadId"]
-              : undefined;
-          const descriptor = mastraChannelResponseDescriptorOf(node);
-          // SAA-911 F5: the configured binding is authoritative. A wired
-          // `threadId` is upstream data (the matching trigger's binding when
-          // the graph wires it straight through, but potentially
-          // attacker-influenced output when it crosses another step), so it
-          // may only be delivered when it either is the only binding known or
-          // exactly matches the configured one — an override attempt fails
-          // closed instead of silently redirecting the reply to another
-          // conversation thread. The error details carry lengths only; the
-          // attacker-influenced value is never echoed back.
-          if (
-            descriptor.threadId !== undefined &&
-            wiredThreadId !== undefined &&
-            wiredThreadId !== descriptor.threadId
-          ) {
-            throw new GraphExecutionError(
-              `Channel response node '${node.id}' received a wired thread id that differs from its configured binding; the configured binding is authoritative and the override is refused (SAA-911 F5)`,
-              GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
-              {
-                nodeId: node.id,
-                kind: node.kind,
-                platform: descriptor.platform,
-                configuredLength: descriptor.threadId.length,
-                wiredLength: wiredThreadId.length,
-              }
-            );
-          }
-          const bound =
-            descriptor.threadId !== undefined
-              ? descriptor.threadId
-              : wiredThreadId;
-          if (
-            descriptor.threadId === undefined &&
-            wiredThreadId !== undefined &&
-            wiredThreadId.length > GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH
-          ) {
-            throw new GraphExecutionError(
-              `Channel response node '${node.id}' received a wired thread id longer than ${GRAPH_MASTRA_CHANNEL_THREAD_ID_MAX_LENGTH} characters; the override is refused (SAA-911 F5)`,
-              GRAPH_MASTRA_CHANNEL_THREAD_MISMATCH,
-              { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
-            );
-          }
-          if (!options.sendChannelResponse) {
-            throw new GraphExecutionError(
-              `Channel response node '${node.id}' has no host mastra channel delivery surface configured`,
-              GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
-            );
-          }
-          const payload = { response, threadId: bound ?? null };
-          const posted = await options.sendChannelResponse(descriptor, payload);
-          if (posted === undefined || posted === null) {
-            throw new GraphExecutionError(
-              `Channel response node '${node.id}': the host mastra channel delivery factory resolved no posted reply`,
-              GRAPH_MASTRA_CHANNEL_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind, platform: descriptor.platform }
-            );
-          }
-          return { resource: posted };
-        },
-      }),
-  };
+    nodeClass as never,
+    { channel: createMastraChannelResponseNodeRuntime(options) }
+  );
 }
 
 /**

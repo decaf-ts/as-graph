@@ -66,7 +66,7 @@ import {
   MASTRA_GUARDRAIL_TYPES,
   MASTRA_INPUT_PROCESSOR_TYPES,
   MASTRA_OUTPUT_PROCESSOR_TYPES,
-} from "../node/agents/processors/types";
+} from "./nodes/processors/types";
 
 /** A document node kind the mastra processor resolution consumes. */
 export const MASTRA_AGENT_PROCESSOR_KINDS = [
@@ -80,7 +80,7 @@ export type {
   MastraGuardrailType,
   MastraInputProcessorType,
   MastraOutputProcessorType,
-} from "../node/agents/processors/types";
+} from "./nodes/processors/types";
 
 /** The wired processor set an agent node's zones resolve to. */
 export interface MastraAgentWiredProcessors {

@@ -1,8 +1,9 @@
 /**
  * @module as-graph/mastra/MastraToolConfig
  * @summary Mastra tool/hook/scorer/skill/sandbox configuration mirror (SAA-836 M3).
- * @description The AI-family node kinds declared under `src/node/agents/**` mirror
- * the real `@mastra/core` configuration objects 1:1 (real mastra-first parity, R3).
+ * @description The AI-family node kinds declared under `src/mastra/nodes/**`
+ * (see `nodes/classes.ts` and `nodes/manifests.ts`) mirror the real
+ * `@mastra/core` configuration objects 1:1 (real mastra-first parity, R3).
  * This module carries the config shapes plus the guarded constructors that turn a
  * document-resolved configuration into the mastra native object, using the real
  * `@mastra/core` factories (`createTool`, `createScorer`, `createSkill`,

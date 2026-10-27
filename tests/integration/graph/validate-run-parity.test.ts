@@ -11,7 +11,7 @@
  * - the same document with a non-string `code` literal binding is rejected by
  *   the validate endpoint and by the run path with the same
  *   `binding.literal-invalid` issue at `nodes[compute].inputBindings.code`;
- * - all 12 registered fixture documents pass the engine's nine-stage
+ * - all 11 registered basic fixture documents pass the engine's nine-stage
  *   `GraphWorkflowDocumentValidator`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
@@ -25,8 +25,8 @@ import { GraphExecutionEngine, registerBuiltInGraphNodes } from "../../../src";
 import { GraphWorkflowDocumentValidator } from "../../../src/engine/validation/GraphWorkflowDocumentValidator";
 import { GraphDocumentValidationError } from "../../../src/engine/validation/GraphValidationErrors";
 import {
-  graphWorkflowFixtures,
-  graphWorkflowFixturesById,
+  basicWorkflowFixtures,
+  basicWorkflowFixturesById,
 } from "../../../src/workflows";
 import { createGraphRunTestApp } from "../../unit/nest/graphRunTestSupport";
 import { freshCatalogue } from "../../unit/graph/engine-fixtures";
@@ -55,12 +55,12 @@ describe("validate/run parity (SAA-1357 D2)", () => {
   let app: INestApplication;
   let moduleRef: TestingModule;
   let engine: GraphExecutionEngine;
-  let fixture: (typeof graphWorkflowFixtures)[number];
+  let fixture: (typeof basicWorkflowFixtures)[number];
 
   beforeAll(async () => {
     ({ app, moduleRef } = await createGraphRunTestApp());
     engine = moduleRef.get(GraphExecutionEngine);
-    fixture = graphWorkflowFixturesById["fixture-schedule-code"];
+    fixture = basicWorkflowFixturesById["fixture-schedule-code"];
   });
 
   afterAll(async () => {
@@ -126,13 +126,15 @@ describe("validate/run parity (SAA-1357 D2)", () => {
     ).toMatchObject(INVALID_LITERAL_ISSUE);
   });
 
-  it("passes all 12 fixture documents through the nine-stage validator", async () => {
+  it("passes all 11 basic fixture documents through the nine-stage validator", async () => {
     const catalogue = freshCatalogue();
     await registerBuiltInGraphNodes(catalogue);
+    // The basic set is engine-neutral: it holds no Mastra-owned kind, so the
+    // built-in catalogue alone is the complete validator catalogue.
     const validator = new GraphWorkflowDocumentValidator({ catalogue });
-    expect(graphWorkflowFixtures).toHaveLength(12);
+    expect(basicWorkflowFixtures).toHaveLength(11);
 
-    for (const registered of graphWorkflowFixtures) {
+    for (const registered of basicWorkflowFixtures) {
       const result = await validator.validate(
         registered.document,
         0,

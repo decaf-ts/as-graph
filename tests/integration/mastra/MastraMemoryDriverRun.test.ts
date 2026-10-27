@@ -172,7 +172,7 @@ async function runDocument(
   const backend = host.backend!;
   return backend.execute({
     document,
-    plan: {} as never,
+    plan: undefined as never,
     inputs,
     options: {} as never,
     events: harness.sink,

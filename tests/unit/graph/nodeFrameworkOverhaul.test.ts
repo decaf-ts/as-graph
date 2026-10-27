@@ -37,6 +37,10 @@ import {
   UtilityLogNode,
   WebhookTriggerNode,
 } from "../../../src/node";
+import {
+  MASTRA_NODE_CLASSES_BY_KIND,
+  MASTRA_NODE_MANIFESTS_BY_KIND,
+} from "../../../src/mastra/nodes";
 import { GraphExecutionError, resolveGraphNodeManifest } from "../../../src";
 import { GraphExecutionContext } from "../../../src/engine/execution/GraphExecutionContext";
 import type { GraphExecutionEngine } from "../../../src/engine/execution/GraphExecutionEngine";
@@ -147,8 +151,13 @@ describe("node framework overhaul — removed kinds", () => {
     expect(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND).not.toHaveProperty(kind);
   });
 
-  it("registers exactly the 127 remaining built-in kinds", () => {
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)).toHaveLength(127);
+  it("registers exactly the 89 engine-neutral built-in kinds", () => {
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)).toHaveLength(89);
+  });
+
+  it("registers exactly the 38 Mastra-owned kinds alongside the neutral catalogue", () => {
+    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND)).toHaveLength(38);
+    expect(Object.keys(MASTRA_NODE_CLASSES_BY_KIND)).toHaveLength(38);
   });
 });
 

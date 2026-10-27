@@ -5,7 +5,8 @@
  * (1) `MastraGraphExecutionBackend.initialize` now wires `config.stepHandlers`
  * into its compiler, (2) the C15 resume guard now validates `resumeData` against
  * the suspended node's declared `resumeSchema`, and (3) the `parallel` capability
- * row is declared `NOT-SUPPORTED` (fan-out/fan-in is not translated).
+ * row is declared `SUPPORTED` after SAA-1548 introduced native parallel
+ * compilation.
  */
 import { MastraGraphExecutionBackend } from "../../../../src/mastra/MastraGraphExecutionBackend";
 import {
@@ -41,7 +42,7 @@ describe("SAA-203 regression: Mastra backend stepHandlers wiring", () => {
 
     const result = await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: sink,
@@ -68,7 +69,7 @@ describe("SAA-203 regression: Mastra backend stepHandlers wiring", () => {
     await expect(
       backend.execute({
         document: twoLeafDocument(),
-        plan: {} as never,
+        plan: undefined as never,
         inputs: {},
         options: {} as never,
         events: sink,
@@ -126,14 +127,14 @@ describe("SAA-203 regression: C15 resume schema validation", () => {
   });
 });
 
-describe("SAA-203 regression: parallel capability row", () => {
-  it("declares parallel as NOT-SUPPORTED", () => {
+describe("SAA-1548 regression: parallel capability row", () => {
+  it("declares parallel as SUPPORTED", () => {
     expect(mastraCapabilityOf("parallel")).toBeDefined();
-    expect(mastraCapabilityOf("parallel")!.verdict).toBe("NOT-SUPPORTED");
+    expect(mastraCapabilityOf("parallel")!.verdict).toBe("SUPPORTED");
     expect(
       MASTRA_FEATURE_CAPABILITIES.some(
         (row) => row.feature === "parallel" && row.verdict === "SUPPORTED"
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });

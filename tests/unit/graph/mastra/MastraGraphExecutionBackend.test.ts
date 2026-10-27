@@ -79,7 +79,7 @@ describe("MastraGraphExecutionBackend", () => {
 
     const result = await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: sink,
@@ -111,7 +111,7 @@ describe("MastraGraphExecutionBackend", () => {
     await expect(
       backend.execute({
         document: humanApprovalDocument(),
-        plan: {} as never,
+        plan: undefined as never,
         inputs: {},
         options: {} as never,
         events: {
@@ -137,7 +137,7 @@ describe("MastraGraphExecutionBackend", () => {
     const { sink } = frameBoundSink();
     await backend.execute({
       document: humanApprovalDocument(),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: sink,

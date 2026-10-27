@@ -27,8 +27,8 @@ import type {
 } from "../shared/graph/document";
 import { GraphWorkflowDocumentBuilder } from "../shared/graph/document/GraphWorkflowDocumentBuilder";
 import { graphDefinitionOf } from "../shared/graph/reader";
-import { AgentNode } from "../node/agents/agent/node";
-import type { MastraAgentZone } from "../node/agents/zones";
+import { AgentNode } from "./nodes/agent/node";
+import type { MastraAgentZone } from "./nodes/zones";
 
 /**
  * Derives the connection-port handle a satellite node exposes toward its

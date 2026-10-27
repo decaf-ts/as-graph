@@ -70,7 +70,7 @@ describe("Mastra AI-family nodes — real backend run (SAA-836 M3)", () => {
 
     const result = await backend.execute({
       document: familyDocument(),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
@@ -78,15 +78,14 @@ describe("Mastra AI-family nodes — real backend run (SAA-836 M3)", () => {
 
     expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
 
-    // The tool family step resolved its configuration into a resource descriptor.
+    // The tool family step resolved its real mastra resource contract.
+    const toolResource = {
+      type: "mastra.tool",
+      toolId: "weather",
+      input: {},
+    };
     expect(completedOutputs(harness, "tool")).toEqual({
-      outputs: {
-        resource: {
-          kind: "core.agent.tool",
-          nodeId: "tool",
-          parameters: { toolId: "weather" },
-        },
-      },
+      outputs: { resource: toolResource },
     });
 
     // The tool resource was routed along the `resource -> value` edge.
@@ -94,21 +93,13 @@ describe("Mastra AI-family nodes — real backend run (SAA-836 M3)", () => {
       (event) => event.type === GraphExecutionEventType.EDGE_VALUE_ROUTED
     );
     expect(routed?.edgeId).toBe("e1");
-    expect((routed?.payload as { value?: unknown })?.value).toEqual({
-      kind: "core.agent.tool",
-      nodeId: "tool",
-      parameters: { toolId: "weather" },
-    });
+    expect((routed?.payload as { value?: unknown })?.value).toEqual(toolResource);
 
-    // The hook family step executed as a real mastra step too.
+    // The hook family step executed as a real mastra step too; the producer's
+    // `resource` port value is routed onto the hook's `value` input port by
+    // port identity, so the hook forwards the resource itself on `value`.
     expect(completedOutputs(harness, "hook")).toEqual({
-      outputs: {
-        resource: {
-          kind: "core.agent.hook",
-          nodeId: "hook",
-          parameters: { phase: "before" },
-        },
-      },
+      outputs: { value: toolResource },
     });
 
     expect(

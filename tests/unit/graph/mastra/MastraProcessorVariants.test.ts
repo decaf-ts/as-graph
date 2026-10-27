@@ -34,7 +34,7 @@ import {
 import {
   MASTRA_INPUT_PROCESSOR_TYPES,
   MASTRA_OUTPUT_PROCESSOR_TYPES,
-} from "../../../../src/node/agents/processors/types";
+} from "../../../../src/mastra/nodes/processors/types";
 import { GRAPH_MASTRA_PROCESSOR_UNAVAILABLE } from "../../../../src/mastra/types";
 import { node } from "../../../../src/workflows/builders";
 

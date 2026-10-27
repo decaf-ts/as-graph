@@ -225,7 +225,7 @@ liveDescribe("mastra resume without host getRun (SAA-926 §6.3)", () => {
     const seed = frameSinkHarness(SEED_RUN_ID);
     await backend.execute({
       document: source,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: seed.sink,

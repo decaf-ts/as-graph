@@ -186,7 +186,7 @@ describe("mastra agent driver run — chat -> agent (SAA-837 M1)", () => {
 
     const result = await backend.execute({
       document: chatAgentDocument("saa-837-agent-driver-run"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "summarise the brief" },
       options: {} as never,
       events: harness.sink,
@@ -249,7 +249,7 @@ describeLive("mastra agent driver run — live pdm_ai router (SAA-837 M1)", () =
 
     const result = await backend.execute({
       document: chatAgentDocument("saa-837-agent-live-run"),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: { message: "Reply with exactly one word: pong" },
       options: {} as never,
       events: harness.sink,

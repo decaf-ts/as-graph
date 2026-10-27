@@ -36,9 +36,12 @@ export interface MastraFeatureCapability {
 /**
  * The exported Mastra capability table (SAA-196). Every row names a feature and
  * whether Mastra supports it natively, not at all, or through a declared
- * extension point. `parallel` and `pinning` are declared NOT-SUPPORTED, and
- * code-mode conditions fail closed, so the wrapper fails loudly rather than
- * silently degrading behaviour.
+ * extension point. `pinning` is declared NOT-SUPPORTED and code-mode
+ * conditions fail closed; `parallel` is SUPPORTED because the compiler derives
+ * dependency layers from the planner's plan when supplied and from the shared
+ * graph topology otherwise, then emits native `workflow.parallel(...)` groups
+ * with port-identity fan-in. The wrapper fails loudly rather than silently
+ * degrading behaviour.
  */
 export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
   {
@@ -62,8 +65,9 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
   { feature: "foreach", verdict: "SUPPORTED" },
   {
     feature: "parallel",
-    verdict: "NOT-SUPPORTED",
-    detail: "fan-out/fan-in topology is not translated by the compiler",
+    verdict: "SUPPORTED",
+    detail:
+      "the compiler uses the planner's layers when supplied (falling back to the shared validated topology) and emits native workflow.parallel groups with port-identity fan-in; loop bodies are compiled recursively",
   },
   { feature: "parametersStateBindings", verdict: "SUPPORTED" },
   { feature: "runsSnapshotsObservables", verdict: "SUPPORTED" },

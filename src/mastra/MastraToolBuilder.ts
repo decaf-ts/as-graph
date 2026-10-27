@@ -13,7 +13,7 @@ import type { GraphJsonValue } from "../shared/graph";
 import type { Constructor } from "@decaf-ts/decoration";
 import type { GraphWorkflowDocument } from "../shared/graph/document";
 import { GraphWorkflowDocumentBuilder } from "../shared/graph/document/GraphWorkflowDocumentBuilder";
-import { AgentToolNode } from "../node/agents/tools/tool/node";
+import { AgentToolNode } from "./nodes/tools/tool/node";
 
 /** Options accepted by the {@link MastraToolBuilder} constructor. */
 export interface MastraToolBuilderOptions {

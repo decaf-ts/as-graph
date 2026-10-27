@@ -1,20 +1,27 @@
 /**
  * @module as-graph/mastra/MastraHitlStepHandler
- * @summary Mastra step handler for the `core.agent.hitl` kind (SAA-836 M5).
- * @description Translates a human-in-the-loop node into a suspending mastra
- * step with mastra's own suspend/resume semantics (R3): the step suspends with
- * the node's `message`/`prompt` payload and resumes with the user's input,
- * validated against the node's declared resume schema (C15) and routed onto
- * the canonical `approved`/`rejected` outputs. Resume requests themselves are
- * authorized upstream by the run service's owner-equality gate and validated by
- * the backend resume guard (SAA-193); this handler only owns the step
- * translation.
+ * @summary Adapter for the `core.agent.hitl` node on the Mastra engine
+ * (SAA-836 M5).
+ * @description Binds a human-in-the-loop node to a suspending mastra step with
+ * mastra's own suspend/resume semantics (R3) and delegates the node behaviour
+ * to {@link AgentHitlNode.execute} through the shared step adapter: the node
+ * suspends with its `message`/`prompt` payload and routes the user's input,
+ * validated against its declared resume schema (C15), onto the canonical
+ * `approved`/`rejected` outputs. Resume requests themselves are authorized
+ * upstream by the run service's owner-equality gate and validated by the
+ * backend resume guard (SAA-193); this handler only owns the step translation.
  */
 import { z } from "zod";
 import { createStep } from "@mastra/core/workflows";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { assertMastraResumeSchemaSafe, toMastraZodSchema } from "./MastraSchemaConverter";
 import type { MastraNodeStepHandler, MastraNodeStepOptions } from "./types";
+import {
+  asMastraInputRecord,
+  runMastraNodeClass,
+  sanitizeMastraNodeOutput,
+} from "./nodes/MastraNodeStepAdapter";
+import { AgentHitlNode } from "./nodes/hitl/node";
 
 /** The document node kind the HITL handler translates. */
 export const GRAPH_MASTRA_HITL_KIND = "core.agent.hitl";
@@ -51,23 +58,22 @@ export function createMastraHitlStepHandler(): MastraNodeStepHandler {
         suspendSchema: suspendSchema.schema,
         resumeSchema,
         execute: async (args: {
+          inputData?: unknown;
           suspend?: (payload?: unknown) => unknown;
           resumeData?: unknown;
-        }) => {
-          if (args.resumeData === undefined) {
-            await args.suspend?.({
-              message: parameters["message"],
-              prompt: parameters["prompt"],
-            });
-          }
-          const resumeData = args.resumeData as
-            | { approved?: unknown; value?: unknown }
-            | undefined;
-          const value = resumeData?.value ?? resumeData;
-          return resumeData?.approved === false
-            ? { rejected: value }
-            : { approved: value };
-        },
+        }) =>
+          asMastraInputRecord(
+            sanitizeMastraNodeOutput(
+              await runMastraNodeClass(
+                GRAPH_MASTRA_HITL_KIND,
+                AgentHitlNode,
+                node,
+                { stepId: stepId },
+                {},
+                args
+              )
+            )
+          ),
       });
     },
   };

@@ -4,8 +4,10 @@
  * @description Reference interpreter for Decaf graph workflows. Executes
  * workflows declared with `@decaf-ts/as-graph/shared`, emits events
  * through Decaf's Observable pipeline, supports structured loops, configurable
- * value stores, and pinnable/cacheable nodes. Frontend-safe shared
- * declarations live in `@decaf-ts/as-graph/shared`.
+ * value stores, and pinnable/cacheable nodes. Planning exports include the
+ * shared {@link GraphDependencyTopology} helper used by both the planner and the
+ * Mastra compiler. Frontend-safe shared declarations live in
+ * `@decaf-ts/as-graph/shared`.
  */
 export * from "./constants";
 export * from "./types";
@@ -61,6 +63,7 @@ export * from "./planning/GraphExecutionPlanLayer";
 export * from "./planning/GraphExecutionPlan";
 export * from "./planning/GraphExecutionPlanner";
 export * from "./planning/GraphTopology";
+export * from "./planning/GraphDependencyTopology";
 
 // Validation (TASK-215; DECAF-50 §4.8 nine-stage document validation gate)
 export * from "./validation";

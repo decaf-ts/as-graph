@@ -34,6 +34,27 @@ it; do not fork or restate its normative content.
 
 ## Rules
 
+- **Node ownership boundary:** Mastra-dependent node classes, their execution
+  implementations, manifests/overlays, and Mastra-only registry live under
+  `src/mastra/nodes/`. All nodes that do not depend on Mastra live under
+  `src/node/`. Do not add Mastra node declarations under `src/node/agents/` or
+  make the local engine import the Mastra node implementation surface.
+- **No placeholder node execution:** every concrete node class must implement
+  its declared behavior in `execute()`. A Mastra compiler step may adapt the
+  Mastra workflow runtime to that implementation, but it must not replace it
+  with an echo, identity pass-through, descriptor-only fake, or other
+  fabricated result. Configuration/resource nodes are valid only when their
+  returned values are real, typed resources consumed by the owning runtime.
+- **Demo ownership:** engine-neutral demos live under `src/workflows/basic/`;
+  Mastra-specific demos live under `src/workflows/mastra/`. Keep their
+  registries distinct. Dagster's catalogue comes from the deployed Dagster
+  surface, not either demo registry.
+- **Canonical documentation:** the umbrella graph design document remains
+  the normative rules source. `workdocs/mastra-node-parallel-workflows-spec.md`
+  records the scoped migration requirements and acceptance criteria. The
+  implementation must update the canonical document and matching backend
+  skills in the same working change as the code migration.
+
 - Whenever **adding new nodes**, all rules defined in the technical
   documentation (`workdocs/ai/project/technical-docs/design-specification/08-graph-design.md`,
   umbrella repo root — §0 node rules and the canonical editor UI rules) must be

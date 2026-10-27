@@ -94,7 +94,9 @@ describe("Mastra compile -> real run -> bridge (SAA-307 item 1)", () => {
     await stream.result;
 
     expect(stepIds(calls)).toEqual(["first", "second"]);
-    expect(calls[1].inputData).toEqual({ out: { in: 1 } });
+    // SAA-1548: the compiler routes per-node inputs by graph port identity, so
+    // the second step receives the routed value keyed by its target port.
+    expect(calls[1].inputData).toEqual({ in: { in: 1 } });
 
     const types = harness.events.map((event) => event.type);
     expect(types).toEqual(

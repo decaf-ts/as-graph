@@ -18,6 +18,7 @@ import {
   resolveEffectiveColor,
   resolveEffectiveIcon,
 } from "../../../src/shared/graph";
+import type { GraphNodeManifest } from "../../../src/shared/graph";
 import {
   GraphExecutionEngine,
   GraphExecutionContext,
@@ -28,7 +29,6 @@ import {
   registerBuiltInGraphNodes,
 } from "../../../src";
 import {
-  AgentNode,
   GRAPH_FLOW_CONTROL_NODES,
   GRAPH_UTILITY_NODES,
   GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND,
@@ -36,6 +36,12 @@ import {
   GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
   LogFlowNode,
 } from "../../../src/node";
+import {
+  AgentNode,
+  MASTRA_NODE_MANIFESTS,
+  MASTRA_NODE_MANIFESTS_BY_KIND,
+} from "../../../src/mastra/nodes";
+import { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { registerEngineBoundGraphNodes } from "../../../src/nest/graph";
 import { freshCatalogue, nodeExecutionRequest } from "./engine-fixtures";
 
@@ -81,17 +87,36 @@ const GRAPH_M6_AGENT_SUPPLIER_ICONS: Record<string, string> = {
  * Runs {@link registerBuiltInGraphNodes} for a fresh catalogue and returns the
  * catalogue.
  */
+/**
+ * Every built-in manifest in the system: the engine-neutral catalogue plus the
+ * Mastra-owned nodes, which live in their own ownership surface.
+ */
+const ALL_BUILT_IN_MANIFESTS = [
+  ...GRAPH_BUILT_IN_NODE_MANIFESTS,
+  ...MASTRA_NODE_MANIFESTS,
+];
+
+/** Kind→manifest lookup across both built-in ownership surfaces. */
+const ALL_BUILT_IN_MANIFESTS_BY_KIND: Record<string, GraphNodeManifest> = {
+  ...GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
+  ...MASTRA_NODE_MANIFESTS_BY_KIND,
+};
+
 async function buildBuiltInCatalogue(): Promise<GraphNodeCatalogue> {
   const catalogue = freshCatalogue();
   await registerBuiltInGraphNodes(catalogue);
+  for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
+    await catalogue.register(registration);
+  }
   return catalogue;
 }
 
 describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
-    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(127);
-    for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
+    expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(89);
+    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND).length).toBe(38);
+    for (const manifest of ALL_BUILT_IN_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
       expect(await catalogue.getExecutor(manifest.kind)).toBeDefined();
@@ -104,10 +129,12 @@ describe("GraphBuiltInRegistrations", () => {
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
-    // registerBuiltInGraphNodes registers all 127 built-ins with no engine
-    // argument: each executor is derived from the node class's static execute.
+    // registerBuiltInGraphNodes registers the 89 engine-neutral built-ins with
+    // no engine argument: each executor derives from the node class's static
+    // execute. The 38 Mastra-owned kinds register separately from the backend's
+    // node registrations.
     await registerBuiltInGraphNodes(catalogue);
-    expect(catalogue.size).toBe(127);
+    expect(catalogue.size).toBe(89);
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)) {
       expect(await catalogue.has(kind)).toBe(true);
       expect((await catalogue.getManifest(kind)).kind).toBe(kind);
@@ -133,6 +160,10 @@ describe("GraphBuiltInRegistrations", () => {
     await expect(
       registerEngineBoundGraphNodes(catalogue, engine)
     ).resolves.toBeDefined();
+    expect(catalogue.size).toBe(89);
+    for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
+      await catalogue.register(registration);
+    }
     expect(catalogue.size).toBe(127);
   });
 
@@ -264,6 +295,15 @@ describe("GraphBuiltInRegistrations", () => {
       "core.flow.log",
       "core.utility.log",
       "core.flow.break",
+      "core.loop.foreach",
+      "core.loop.while",
+      "core.loop.until",
+    ]);
+    for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)) {
+      expect(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[kind].kind).toBe(kind);
+    }
+    // The 38 Mastra-owned kinds are a separate ownership surface.
+    expect(MASTRA_NODE_MANIFESTS.map((manifest) => manifest.kind)).toEqual([
       "core.agent",
       "core.agent.tool",
       "core.agent.toolSelector",
@@ -302,12 +342,9 @@ describe("GraphBuiltInRegistrations", () => {
       "core.agent.response.telegram",
       "core.agent.response.teams",
       "core.agent.voice",
-      "core.loop.foreach",
-      "core.loop.while",
-      "core.loop.until",
     ]);
-    for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)) {
-      expect(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[kind].kind).toBe(kind);
+    for (const kind of Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND)) {
+      expect(MASTRA_NODE_MANIFESTS_BY_KIND[kind].kind).toBe(kind);
     }
   });
 
@@ -510,7 +547,7 @@ describe("GraphBuiltInRegistrations", () => {
       "DevOps",
       "Comms",
     ] as const;
-    for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
+    for (const manifest of ALL_BUILT_IN_MANIFESTS) {
       expect(manifest.display.name).toBeTruthy();
       expect(typeof manifest.display.name).toBe("string");
       expect(
@@ -534,13 +571,16 @@ describe("GraphBuiltInRegistrations", () => {
 describe("Global built-in exhaustive kind catalogue and visual conformance", () => {
   it("rejects re-registering a built-in kind and replaces the reject path with an explicit replacement policy", async () => {
     const registrations = builtInGraphNodeRegistrations();
-    expect(registrations.length).toBe(127);
+    const mastraRegistrations = new MastraGraphExecutionBackend().nodeRegistrations();
+    expect(registrations.length).toBe(89);
+    expect(mastraRegistrations.length).toBe(38);
     const catalogue = await buildBuiltInCatalogue();
-    expect(() => catalogue.register(registrations[0] as never)).toThrow(
+    const all = [...registrations, ...mastraRegistrations];
+    expect(() => catalogue.register(all[0] as never)).toThrow(
       GraphNodeRegistrationError
     );
     expect(
-      catalogue.register(registrations[0] as never, { replace: true })
+      catalogue.register(all[0] as never, { replace: true })
     ).toBeDefined();
   });
 
@@ -558,7 +598,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       "DevOps",
       "Comms",
     ] as const;
-    for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
+    for (const manifest of ALL_BUILT_IN_MANIFESTS) {
       const family = manifest.display.category;
       expect(families.includes(family as never)).toBe(true);
       expect(manifest.display.labels?.at(0)).toBe(
@@ -647,7 +687,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
   });
 
   it("asserts the ALFRED-5 taxonomy's visual family conformance across the built-in types", () => {
-    const builtInKinds = Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND);
+    const builtInKinds = Object.keys(ALL_BUILT_IN_MANIFESTS_BY_KIND);
     for (const ctor of [
       ...GRAPH_FLOW_CONTROL_NODES,
       ...GRAPH_UTILITY_NODES,
@@ -655,7 +695,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       const definition = graphDefinitionOf(ctor as never);
       const kind = definition.kind;
       if (!kind) continue; // some classes have no compiled kind
-      const manifest = GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[kind];
+      const manifest = ALL_BUILT_IN_MANIFESTS_BY_KIND[kind];
       expect(builtInKinds).toContain(kind);
       expect(manifest.display.category).toBe(definition.category);
       expect(manifest.display.labels).toEqual(definition.labels);
@@ -676,7 +716,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
     // the Agent's own display conformance (no @node() color or icon)
     const agentDefinition = graphDefinitionOf(AgentNode);
     const agentManifest =
-      GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[agentDefinition.kind as string];
+      ALL_BUILT_IN_MANIFESTS_BY_KIND[agentDefinition.kind as string];
     expect(agentManifest.display.category).toBe("Agent");
     expect(agentManifest.display.color).toBeUndefined();
     expect(agentManifest.display.icon?.name).toBe("ti-robot");
@@ -743,7 +783,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
     });
 
     const families = new Set<string>();
-    for (const manifest of GRAPH_BUILT_IN_NODE_MANIFESTS) {
+    for (const manifest of ALL_BUILT_IN_MANIFESTS) {
       const family = manifest.display.category as string;
       families.add(family);
       expect(manifest.display.name).toBeTruthy();
@@ -831,7 +871,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
     const forward = await buildBuiltInCatalogue();
     // and in reverse order (no engine registration differences)
     const reversed = freshCatalogue();
-    for (const manifest of [...GRAPH_BUILT_IN_NODE_MANIFESTS].reverse()) {
+    for (const manifest of [...ALL_BUILT_IN_MANIFESTS].reverse()) {
       await reversed.register(
         defineGraphNode({ manifest, executor: { execute: async () => ({}) } })
       );
@@ -845,6 +885,6 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
       (JSON.parse(await digestOf(forward)) as { kind: string }[]).map(
         (manifest) => manifest.kind
       )
-    ).toEqual(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).sort());
+    ).toEqual(Object.keys(ALL_BUILT_IN_MANIFESTS_BY_KIND).sort());
   });
 });

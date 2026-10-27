@@ -9,6 +9,7 @@
  * {@link module:as-graph/mastra/nodes/MastraNodeRegistry}.
  */
 import type { GraphNode } from "../../node/base";
+import type { GraphNodeManifest } from "../../shared/graph";
 import type { MastraNodeStepHandler } from "../types";
 import type { MastraDefaultStepHandlerOptions } from "../MastraDefaultStepHandlers";
 import type { MastraAgentStepHandlerOptions } from "../MastraAgentStepHandler";
@@ -46,6 +47,7 @@ export interface MastraNodeHandlerOptions {
 export interface MastraNodeKindImplementation {
   kind: string;
   nodeClass: GraphNodeConstructor;
+  manifest: GraphNodeManifest;
   createStepHandlers: (
     options: MastraNodeHandlerOptions
   ) => MastraNodeStepHandler[];
@@ -58,5 +60,10 @@ export interface MastraNodeKindImplementation {
  */
 export interface MastraNodeCoverageGap {
   kind: string;
-  reason: "missing-implementation" | "missing-node-class";
+  reason:
+    | "missing-implementation"
+    | "missing-node-class"
+    | "missing-manifest"
+    | "missing-execute"
+    | "missing-execution-adapter";
 }

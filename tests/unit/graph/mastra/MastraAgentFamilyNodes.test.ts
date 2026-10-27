@@ -22,14 +22,15 @@ import {
   AgentSandboxNode,
   AgentScorerNode,
   AgentScorerSelectorNode,
-  GRAPH_AGENT_FAMILY_NODES,
+  MASTRA_AGENT_FAMILY_NODES,
   clampSandboxTimeoutMs,
-} from "../../../../src/node";
-import { MASTRA_AGENT_ZONE, MASTRA_AGENT_ZONES } from "../../../../src/node";
+} from "../../../../src/mastra/nodes";
+import { MASTRA_AGENT_ZONE, MASTRA_AGENT_ZONES } from "../../../../src/mastra/nodes";
 import type { GraphNodeClass } from "../../../../src/node/base";
 import { GRAPH_CODE_MAX_TIMEOUT_MS } from "../../../../src/engine/constants";
 import { GRAPH_CODE_DEFAULT_TIMEOUT_MS } from "../../../../src/node/utility/code/node";
 import { GraphEnvironment } from "../../../../src/engine/services/GraphEnvironment";
+import { GRAPH_MASTRA_RAG_UNAVAILABLE } from "../../../../src/mastra/types";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 import { buildNodeContext } from "../nodes/node-test-utils";
 
@@ -140,7 +141,7 @@ describe("Mastra AI-family nodes — manifest surface (SAA-836 M3)", () => {
       "core.agent.scorer",
       "core.agent.scorerSelector",
     ]);
-    expect(GRAPH_AGENT_FAMILY_NODES).toHaveLength(10);
+    expect(MASTRA_AGENT_FAMILY_NODES).toHaveLength(10);
   });
 
   it("declares the canonical agent connection zones", () => {
@@ -426,54 +427,52 @@ describe("Mastra AI-family nodes — execute (SAA-836 M3)", () => {
     });
   });
 
-  it("sandbox resolves a within-ceiling timeout unchanged", async () => {
-    const result = await executeNode(
-      AgentSandboxNode,
-      nodeExecutionRequest(
-        {},
-        {
-          parameters: {
-            workingDirectory: "/work",
-            isolation: "bwrap",
-            timeoutMs: 5000,
+  it("sandbox delegates its execution to the run-scoped rag service", async () => {
+    const calls: Array<{
+      kind: string;
+      inputs: Record<string, unknown>;
+    }> = [];
+    const parameters = {
+      workingDirectory: "/work",
+      isolation: "bwrap",
+      timeoutMs: 5000,
+    };
+    const request = nodeExecutionRequest({}, { parameters, kind: "core.agent.sandbox" });
+    (request as unknown as { mastra: unknown }).mastra = {
+      node: { id: "TestNode", kind: "core.agent.sandbox", parameters },
+      services: {
+        rag: {
+          execute: async (
+            kind: string,
+            _node: unknown,
+            inputs: Record<string, unknown>
+          ) => {
+            calls.push({ kind, inputs });
+            return { result: "delegated" };
           },
-        }
-      ),
-      ctx("core.agent.sandbox")
-    );
-    expect(result).toEqual({
-      resource: {
-        type: "mastra.sandbox",
-        workingDirectory: "/work",
-        isolation: "bwrap",
-        timeoutMs: 5000,
-        input: {},
+        },
       },
-    });
-  });
+    };
 
-  it("sandbox clamps an over-ceiling timeout to the code ceiling", async () => {
     const result = await executeNode(
       AgentSandboxNode,
-      nodeExecutionRequest({}, { parameters: { timeoutMs: 50000 } }),
+      request,
       ctx("core.agent.sandbox")
     );
-    expect(
-      (result["resource"] as { timeoutMs: number }).timeoutMs
-    ).toBe(GRAPH_CODE_MAX_TIMEOUT_MS);
+    expect(result).toEqual({ result: "delegated" });
+    expect(calls).toEqual([
+      { kind: "core.agent.sandbox", inputs: {} },
+    ]);
   });
 
-  it("sandbox falls back to the code default for a missing/invalid timeout", async () => {
-    for (const timeoutMs of [undefined, 0, -5, NaN]) {
-      const result = await executeNode(
+  it("sandbox fails closed with GRAPH_MASTRA_RAG_UNAVAILABLE without a rag service", async () => {
+    await expect(
+      executeNode(
         AgentSandboxNode,
-        nodeExecutionRequest({}, { parameters: { timeoutMs } }),
+        nodeExecutionRequest({}, { parameters: {} }),
         ctx("core.agent.sandbox")
-      );
-      expect(
-        (result["resource"] as { timeoutMs: number }).timeoutMs
-      ).toBe(GRAPH_CODE_DEFAULT_TIMEOUT_MS);
-    }
+      )
+    ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_RAG_UNAVAILABLE });
   });
 });
 

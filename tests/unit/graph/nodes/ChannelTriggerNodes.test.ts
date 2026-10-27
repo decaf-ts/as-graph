@@ -7,19 +7,19 @@
  * message/sessionId/userId/threadId/resource outputs, no inputs) and the
  * fail-closed instance `execute` contract: the general/local engine cannot run
  * a channel trigger, so every execute throws
- * `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND` instead of fabricating a channel
+ * `GRAPH_MASTRA_CHANNEL_UNAVAILABLE` instead of fabricating a channel
  * endpoint.
  */
 import { describe, it, expect } from "@jest/globals";
 import {
   DiscordChannelTriggerNode,
-  GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
+  MASTRA_NODE_MANIFESTS_BY_KIND,
   SlackChannelTriggerNode,
   TeamsChannelTriggerNode,
   TelegramChannelTriggerNode,
-} from "../../../../src/node";
+} from "../../../../src/mastra/nodes";
 import { graphNodeManifest } from "../../../../src/shared/graph";
-import { GRAPH_LOCAL_UNSUPPORTED_NODE_KIND } from "../../../../src/engine/constants";
+import { GRAPH_MASTRA_CHANNEL_UNAVAILABLE } from "../../../../src/mastra/types";
 import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 import {
   executeNode,
@@ -72,7 +72,7 @@ describe("channel trigger nodes (SAA-836 M6) — manifest surface", () => {
     describe(testCase.name, () => {
       const manifest = graphNodeManifest(testCase.node);
       const builtIn =
-        GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[testCase.kind];
+        MASTRA_NODE_MANIFESTS_BY_KIND[testCase.kind];
 
       it("publishes the platform channel trigger kind", () => {
         expect(manifest.kind).toBe(testCase.kind);
@@ -115,18 +115,18 @@ describe("channel trigger nodes (SAA-836 M6) — manifest surface", () => {
 
 describe("channel trigger nodes (SAA-836 M6) — fail-closed execute", () => {
   for (const testCase of CASES) {
-    it(`fails closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND for ${testCase.name}`, () => {
+    it(`fails closed with GRAPH_MASTRA_CHANNEL_UNAVAILABLE for ${testCase.name}`, async () => {
       const context = buildNodeContext(testCase.kind);
       let thrown: unknown;
       try {
-        executeNode(testCase.node, nodeExecutionRequest({}), context);
+        await executeNode(testCase.node, nodeExecutionRequest({}), context);
         thrown = undefined;
       } catch (error) {
         thrown = error;
       }
       expect(thrown).toBeInstanceOf(GraphExecutionError);
       expect((thrown as GraphExecutionError).graphCode).toBe(
-        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
+        GRAPH_MASTRA_CHANNEL_UNAVAILABLE
       );
     });
   }

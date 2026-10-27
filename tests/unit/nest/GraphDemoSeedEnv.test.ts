@@ -14,7 +14,9 @@ import { describe, it, expect } from "@jest/globals";
 import {
   graphDemoSeedEnabledFromEnv,
   loadGraphDemoWorkflows,
+  GRAPH_ENGINE_VARIANTS,
   GRAPH_SEED_DEMO_ENV,
+  type GraphEngineVariant,
 } from "../../../src/nest/graph/GraphBackendHost";
 
 /** Builds a minimal env bag holding only the seed flag. */
@@ -29,11 +31,12 @@ function env(value: string | undefined): NodeJS.ProcessEnv {
  * `graphDemoSeedEnabledFromEnv(env) ? loadGraphDemoWorkflows() : []`.
  */
 async function composedDemoWorkflows(
-  value: string | undefined
+  value: string | undefined,
+  variant: GraphEngineVariant = "local"
 ): Promise<readonly { id: string }[]> {
   const bag = env(value);
   return graphDemoSeedEnabledFromEnv(bag)
-    ? await loadGraphDemoWorkflows()
+    ? await loadGraphDemoWorkflows(variant)
     : [];
 }
 
@@ -72,4 +75,21 @@ describe("graphDemoSeedEnabledFromEnv (SAA-798 F5)", () => {
     const suppressed = await composedDemoWorkflows("off");
     expect(suppressed).toEqual([]);
   });
+
+  it.each(GRAPH_ENGINE_VARIANTS)(
+    "suppresses the %s variant's resolved registry when GRAPH_SEED_DEMO=off",
+    async (variant) => {
+      const enabled = await composedDemoWorkflows(undefined, variant);
+      const suppressed = await composedDemoWorkflows("off", variant);
+      expect(suppressed).toEqual([]);
+      if (variant === "dagster") {
+        // Dagster has no synthetic demo set even when seeding is enabled.
+        expect(enabled).toEqual([]);
+      } else {
+        // The enabled composition proves the suppression is the flag's doing,
+        // not an already-empty registry.
+        expect(enabled.length).toBeGreaterThan(0);
+      }
+    }
+  );
 });

@@ -7,7 +7,7 @@
  */
 import { MastraWorkflowCompiler } from "../../../../src/mastra/MastraWorkflowCompiler";
 import { graphRunDocumentFingerprint } from "../../../../src/engine/runs/GraphRunFingerprint";
-import { GRAPH_MASTRA_RESUME_SCHEMA_UNSAFE, GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../../src/mastra/types";
+import { GRAPH_MASTRA_RESUME_SCHEMA_UNSAFE, GRAPH_MASTRA_UNSUPPORTED_KIND, GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY } from "../../../../src/mastra/types";
 import { document, node } from "../../../../src/workflows/builders";
 import {
   graphCodeOf,
@@ -117,7 +117,7 @@ describe("MastraWorkflowCompiler", () => {
     );
   });
 
-  it("throws GRAPH_MASTRA_UNSUPPORTED_KIND for a cyclic document", () => {
+  it("throws GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY for a cyclic document", () => {
     const compiler = new MastraWorkflowCompiler({
       stepHandlers: [leafHandler("test.leaf")],
     });
@@ -141,7 +141,7 @@ describe("MastraWorkflowCompiler", () => {
     });
 
     expect(graphCodeOf(() => compiler.compile(source))).toBe(
-      GRAPH_MASTRA_UNSUPPORTED_KIND
+      GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY
     );
   });
 });

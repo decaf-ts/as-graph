@@ -10,14 +10,16 @@
  */
 import { describe, expect, it } from "@jest/globals";
 import { GRAPH_CODE_MAX_TIMEOUT_MS } from "../../../src/engine/constants";
-import { AgentToolSelectorNode } from "../../../src/node/agents/tools/tool-selector/node";
-import { AgentToolDenyNode } from "../../../src/node/agents/hooks/tool-deny/node";
-import { AgentDelegationHookNode } from "../../../src/node/agents/hooks/delegation/node";
-import { AgentSkillNode } from "../../../src/node/agents/skills/skill/node";
-import { AgentSkillSelectorNode } from "../../../src/node/agents/skills/skill-selector/node";
-import { AgentSandboxNode } from "../../../src/node/agents/sandbox/node";
-import { AgentScorerNode } from "../../../src/node/agents/scorers/scorer/node";
-import { AgentScorerSelectorNode } from "../../../src/node/agents/scorers/scorer-selector/node";
+import { AgentToolSelectorNode } from "../../../src/mastra/nodes/tools/tool-selector/node";
+import { AgentToolDenyNode } from "../../../src/mastra/nodes/hooks/tool-deny/node";
+import { AgentDelegationHookNode } from "../../../src/mastra/nodes/hooks/delegation/node";
+import { AgentSkillNode } from "../../../src/mastra/nodes/skills/skill/node";
+import { AgentSkillSelectorNode } from "../../../src/mastra/nodes/skills/skill-selector/node";
+import { AgentScorerNode } from "../../../src/mastra/nodes/scorers/scorer/node";
+import { AgentScorerSelectorNode } from "../../../src/mastra/nodes/scorers/scorer-selector/node";
+import { createMastraRagStepHandlers } from "../../../src/mastra/MastraRagStepHandlers";
+import { MastraWorkflowCompiler } from "../../../src/mastra/MastraWorkflowCompiler";
+import { document, node } from "../../../src/workflows/builders";
 import { runNode } from "../graph/nodes/real-service-support";
 
 const LIVE_BACKING = "in-process real node (mastra descriptor kind)";
@@ -103,16 +105,27 @@ describe(`core.agent.skillSelector — live node (${LIVE_BACKING})`, () => {
 
 describe(`core.agent.sandbox — live node (${LIVE_BACKING})`, () => {
   it("resolves the sandbox descriptor and clamps the timeout ceiling", async () => {
-    const result = await runNode(
-      AgentSandboxNode,
-      "core.agent.sandbox",
-      {
-        workingDirectory: "/tmp",
-        isolation: "process",
-        timeoutMs: Number.MAX_SAFE_INTEGER,
-      },
-      {}
+    const compiler = new MastraWorkflowCompiler({
+      stepHandlers: createMastraRagStepHandlers(),
+    });
+    const { steps } = compiler.compile(
+      document({
+        id: "saa-1144-sandbox-live",
+        name: "saa-1144-sandbox-live",
+        nodes: [
+          node("target", "core.agent.sandbox", {
+            workingDirectory: "/tmp",
+            isolation: "process",
+            timeoutMs: Number.MAX_SAFE_INTEGER,
+          }),
+        ],
+      })
     );
+    const result = (await (
+      steps.get("target") as {
+        execute: (args: { inputData?: unknown }) => Promise<Record<string, unknown>>;
+      }
+    ).execute({ inputData: {} })) as { resource: Record<string, unknown> };
     expect(result.resource).toMatchObject({
       type: "mastra.sandbox",
       workingDirectory: "/tmp",

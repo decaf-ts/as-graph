@@ -286,7 +286,7 @@ describe("GraphEngineCapabilityManifest (SAA-197 C20)", () => {
 
       expect(verdictOf("declarativeDocument")).toBe("SUPPORTED");
       expect(verdictOf("builders")).toBe("EXTENSION_POINT");
-      expect(verdictOf("parallel")).toBe("NOT_SUPPORTED");
+      expect(verdictOf("parallel")).toBe("SUPPORTED");
       expect(verdictOf("errorBoundary")).toBe("NOT_SUPPORTED");
       for (const row of MASTRA_FEATURE_CAPABILITIES) {
         expect(verdictOf(row.feature)).toBe(

@@ -18,7 +18,7 @@ import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/Gra
 import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNodeExecutorRegistry";
 import { GRAPH_MASTRA_UNSUPPORTED_KIND } from "../../../src/mastra/types";
 import { bootEngine, demoCatalogue } from "../../unit/graph/engine-fixtures";
-import { graphWorkflowFixtures } from "../../../src/workflows";
+import { mastraWorkflowFixtures } from "../../../src/workflows/mastra";
 import {
   frameSinkHarness,
   integrationTwoLeafDocument,
@@ -46,7 +46,7 @@ async function seededBackend(owner?: string): Promise<SeededBackend> {
   const harness = frameSinkHarness(`mastra-it-seed-${owner ?? "ownerless"}`);
   await backend.execute({
     document: source,
-    plan: {} as never,
+    plan: undefined as never,
     inputs: {},
     options: (owner ? { auth: { user: owner } } : {}) as never,
     events: harness.sink,
@@ -142,11 +142,11 @@ describe("Mastra translated-workflow catalogue (SAA-307 item 3)", () => {
       mastra: {},
       stepHandlers: [realStepHandler(NODE_KIND)],
     });
-    const fixtureIds = graphWorkflowFixtures
+    const fixtureIds = mastraWorkflowFixtures
       .map((fixture) => fixture.document.id)
       .sort();
     const seeded = await backend.seedWorkflows(
-      graphWorkflowFixtures.map((fixture) => fixture.document)
+      mastraWorkflowFixtures.map((fixture) => fixture.document)
     );
     expect(seeded.map((summary) => summary.id).sort()).toEqual(fixtureIds);
 
@@ -154,7 +154,7 @@ describe("Mastra translated-workflow catalogue (SAA-307 item 3)", () => {
       const list = await backend.listWorkflows(...(args as never[]));
       expect(list.map((summary) => summary.id).sort()).toEqual(fixtureIds);
     }
-    for (const fixture of graphWorkflowFixtures) {
+    for (const fixture of mastraWorkflowFixtures) {
       await expect(
         backend.getWorkflow(fixture.document.id, userContext("bob"))
       ).resolves.toEqual(fixture.document);

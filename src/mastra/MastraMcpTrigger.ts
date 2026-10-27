@@ -1,10 +1,12 @@
 /**
  * @module as-graph/mastra/MastraMcpTrigger
- * @summary Mastra step handler for the `core.agent.trigger.mcp` kind
- * (SAA-836 M5).
- * @description Translates an MCP Server Trigger node into a mastra step that
- * resolves the trigger's MCP server descriptor and hands it to the
- * host-supplied server factory. The concrete mastra MCP server implementation
+ * @summary Run-scoped MCP service and step handler for the
+ * `core.agent.trigger.mcp` kind (SAA-836 M5, re-homed by SAA-1547).
+ * @description Builds the {@link MastraMcpNodeRuntime} service that the MCP
+ * Server Trigger node delegates to from its `execute()`, then binds it to the
+ * single step adapter. The service resolves the trigger's MCP server descriptor
+ * and hands it to the host-supplied server factory. The concrete mastra MCP
+ * server implementation
  * is packaged as `@mastra/mcp`, which as-graph does not vendor; per R2 the
  * server surface is therefore a declared extension point — the host factory
  * wraps the real server, and without one the trigger fails closed with
@@ -18,8 +20,6 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { z } from "zod";
-import { createStep } from "@mastra/core/workflows";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import { resolveMastraCredentialValue } from "./MastraEnvironment";
@@ -27,8 +27,10 @@ import {
   GRAPH_MASTRA_MCP_UNAVAILABLE,
   type MastraMcpServerDescriptor,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
 } from "./types";
+import type { MastraMcpNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { McpServerTriggerNode } from "./nodes/triggers/mcp-server/node";
 
 /** The document node kind the MCP trigger handler translates. */
 export const GRAPH_MASTRA_MCP_TRIGGER_KIND = "core.agent.trigger.mcp";
@@ -300,50 +302,53 @@ export function mastraMcpServerDescriptorOf(
 }
 
 /**
+ * Builds the run-scoped MCP service used by the MCP trigger node. The service
+ * owns the host MCP server factory and delivery guard; the node class owns the
+ * declared descriptor semantics and output mapping.
+ *
+ * @param options - The handler options (the host server factory).
+ * @returns The MCP node runtime service.
+ */
+export function createMastraMcpNodeRuntime(
+  options: MastraMcpTriggerStepHandlerOptions = {}
+): MastraMcpNodeRuntime {
+  return {
+    execute: async (node) => {
+      const descriptor = mastraMcpServerDescriptorOf(node);
+      if (!options.createMcpServer) {
+        throw new GraphExecutionError(
+          `MCP trigger node '${node.id}' has no host mastra MCP server surface configured`,
+          GRAPH_MASTRA_MCP_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind }
+        );
+      }
+      const guard = new MastraMcpDeliveryGuard(mastraMcpAuthConfigOf(node));
+      const server = await options.createMcpServer(descriptor, guard);
+      if (server === undefined || server === null) {
+        throw new GraphExecutionError(
+          `MCP trigger node '${node.id}': the host mastra MCP server factory resolved no server`,
+          GRAPH_MASTRA_MCP_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind }
+        );
+      }
+      return { resource: server };
+    },
+  };
+}
+
+/**
  * Builds the {@link MastraNodeStepHandler} registered for the
- * `core.agent.trigger.mcp` kind. The step resolves the trigger's MCP server
- * descriptor, delegates the serving to the host factory, and returns the
- * server surface on the `resource` output. Without a host factory the step
- * fails closed — no endpoint is ever fabricated.
+ * `core.agent.trigger.mcp` kind through the single node-class adapter.
  *
  * @param options - The handler options (the host server factory).
  * @returns The MCP trigger step handler.
- * @throws {GraphExecutionError} {@link GRAPH_MASTRA_MCP_UNAVAILABLE} when no
- *   host factory is configured or it yields nothing.
  */
 export function createMastraMcpTriggerStepHandler(
   options: MastraMcpTriggerStepHandlerOptions = {}
 ): MastraNodeStepHandler {
-  return {
-    kind: GRAPH_MASTRA_MCP_TRIGGER_KIND,
-    createStep: (node: GraphNodeInstance, { stepId }: MastraNodeStepOptions) =>
-      createStep({
-        id: stepId,
-        inputSchema: z.any(),
-        outputSchema: z.any(),
-        execute: async (args: { inputData?: unknown }) => {
-          void args;
-          const descriptor = mastraMcpServerDescriptorOf(node);
-          if (!options.createMcpServer) {
-            throw new GraphExecutionError(
-              `MCP trigger node '${node.id}' has no host mastra MCP server surface configured`,
-              GRAPH_MASTRA_MCP_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind }
-            );
-          }
-          const guard = new MastraMcpDeliveryGuard(
-            mastraMcpAuthConfigOf(node)
-          );
-          const server = await options.createMcpServer(descriptor, guard);
-          if (server === undefined || server === null) {
-            throw new GraphExecutionError(
-              `MCP trigger node '${node.id}': the host mastra MCP server factory resolved no server`,
-              GRAPH_MASTRA_MCP_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind }
-            );
-          }
-          return { resource: server };
-        },
-      }),
-  };
+  return createMastraNodeStepHandler(
+    GRAPH_MASTRA_MCP_TRIGGER_KIND,
+    McpServerTriggerNode,
+    { mcp: createMastraMcpNodeRuntime(options) }
+  );
 }

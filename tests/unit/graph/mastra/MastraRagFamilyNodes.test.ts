@@ -27,15 +27,16 @@ import {
   AgentStructuredOutputParserNode,
   AgentInformationExtractorNode,
   AgentLangChainCodeNode,
-  GRAPH_AGENT_RAG_NODES,
+  MASTRA_AGENT_RAG_NODES,
   chunkText,
   extractChunkTexts,
   DEFAULT_RAG_CHUNK_SIZE,
   DEFAULT_RAG_CHUNK_OVERLAP,
   MASTRA_AGENT_ZONE,
-} from "../../../../src/node";
+} from "../../../../src/mastra/nodes";
 import type { GraphNodeClass } from "../../../../src/node/base";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
+import { GRAPH_MASTRA_RAG_UNAVAILABLE } from "../../../../src/mastra/types";
 import { buildNodeContext } from "../nodes/node-test-utils";
 
 /** One row of the RAG manifest conformance table. */
@@ -146,6 +147,40 @@ const CASES: RagCase[] = [
   },
 ];
 
+/** The RAG kinds whose execution delegates to the run-scoped rag service. */
+const SERVICE_CASES = CASES.filter(
+  (entry) => entry.kind !== "core.agent.chunking"
+);
+
+/**
+ * Attaches a recording fake `rag` execution service to a node request so the
+ * node-class delegation contract can be asserted without a live store/model.
+ */
+function withRagService(
+  request: ReturnType<typeof nodeExecutionRequest>,
+  kind: string,
+  parameters: Record<string, unknown>,
+  calls: Array<{ kind: string; inputs: Record<string, unknown> }>
+): ReturnType<typeof nodeExecutionRequest> {
+  (request as unknown as { kind: string; mastra: unknown }).kind = kind;
+  (request as unknown as { mastra: unknown }).mastra = {
+    node: { id: "TestNode", kind, parameters },
+    services: {
+      rag: {
+        execute: async (
+          calledKind: string,
+          _node: unknown,
+          inputs: Record<string, unknown>
+        ) => {
+          calls.push({ kind: calledKind, inputs });
+          return { delegated: true };
+        },
+      },
+    },
+  };
+  return request;
+}
+
 describe("Mastra RAG-family nodes — manifest surface (SAA-836 M4)", () => {
   it("exposes exactly the eleven RAG kinds plus their registered constructors", () => {
     expect(CASES.map((entry) => entry.kind)).toEqual([
@@ -161,7 +196,7 @@ describe("Mastra RAG-family nodes — manifest surface (SAA-836 M4)", () => {
       "core.agent.informationExtractor",
       "core.agent.langchainCode",
     ]);
-    expect(GRAPH_AGENT_RAG_NODES).toHaveLength(11);
+    expect(MASTRA_AGENT_RAG_NODES).toHaveLength(11);
   });
 
   it.each(CASES)(
@@ -187,186 +222,30 @@ describe("Mastra RAG-family nodes — manifest surface (SAA-836 M4)", () => {
 
 describe("Mastra RAG-family nodes — execute (SAA-836 M4)", () => {
   const ctx = (kind: string) => buildNodeContext(kind);
-
-  it("embedding resolves the model config (R1) into the mastra embedding resource", async () => {
-    const result = await executeNode(
-      AgentEmbeddingNode,
-      nodeExecutionRequest(
+  it.each(SERVICE_CASES)(
+    "delegates $kind to the run-scoped rag execution service",
+    async ({ node, kind }) => {
+      const calls: Array<{ kind: string; inputs: Record<string, unknown> }> = [];
+      const request = withRagService(
+        nodeExecutionRequest({ probe: 1 }, { parameters: { probe: 1 } }),
+        kind,
         {},
-        {
-          parameters: {
-            modelAdapter: { provider: "openai", modelId: "text-embedding-3-small" },
-            dimension: 1536,
-            batchSize: 100,
-          },
-        }
-      ),
-      ctx("core.agent.embedding")
-    );
-    expect(result).toEqual({
-      resource: {
-        type: "mastra.embedding",
-        provider: "openai",
-        modelId: "text-embedding-3-small",
-        dimension: 1536,
-        batchSize: 100,
-        input: {},
-      },
-    });
-  });
-
-  it("embedding leaves the provider/modelId undefined without a modelAdapter", async () => {
-    const result = await executeNode(
-      AgentEmbeddingNode,
-      nodeExecutionRequest({}, { parameters: {} }),
-      ctx("core.agent.embedding")
-    );
-    expect(result).toEqual({
-      resource: {
-        type: "mastra.embedding",
-        provider: undefined,
-        modelId: undefined,
-        dimension: undefined,
-        batchSize: undefined,
-        input: {},
-      },
-    });
-  });
-
-  it("vectorStore resolves the provider config into the store resource (R9)", async () => {
-    const inputs = { ids: ["a", "b"], documents: [{ text: "x" }] };
-    const result = await executeNode(
-      AgentVectorStoreNode,
-      nodeExecutionRequest(inputs, {
-        parameters: {
-          provider: "pgvector",
-          storeId: "vs-1",
-          indexName: "docs",
-          dimension: 1536,
-          metric: "cosine",
-          credentialRef: { env: "PGVECTOR_URL" },
-        },
-      }),
-      ctx("core.agent.vectorStore")
-    );
-    expect(result).toEqual({
-      resource: {
-        type: "mastra.vectorStore",
-        provider: "pgvector",
-        id: "vs-1",
-        indexName: "docs",
-        dimension: 1536,
-        metric: "cosine",
-        credentialRef: { env: "PGVECTOR_URL" },
-      },
-      inserted: ["a", "b"],
-      documents: [{ text: "x" }],
-    });
-  });
-
-  it("vectorStore defaults to the in-memory provider and omits unset optional fields", async () => {
-    const result = await executeNode(
-      AgentVectorStoreNode,
-      nodeExecutionRequest({}, { parameters: {} }),
-      ctx("core.agent.vectorStore")
-    );
-    expect(result).toEqual({
-      resource: { type: "mastra.vectorStore", provider: "memory", id: "memory" },
-      inserted: [],
-      documents: [],
-    });
-  });
-
-  it("vectorStore falls back to the index name for the store id and ignores non-array ids", async () => {
-    const byIndex = await executeNode(
-      AgentVectorStoreNode,
-      nodeExecutionRequest({}, { parameters: { indexName: "docs" } }),
-      ctx("core.agent.vectorStore")
-    );
-    expect((byIndex["resource"] as { id: unknown }).id).toBe("docs");
-
-    const noIds = await executeNode(
-      AgentVectorStoreNode,
-      nodeExecutionRequest({ ids: "not-an-array" }, { parameters: {} }),
-      ctx("core.agent.vectorStore")
-    );
-    expect(noIds["inserted"]).toEqual([]);
-  });
-
-  it("retriever forwards the retrieved documents and resolves the retriever resource", async () => {
-    const inputs = {
-      store: { type: "mastra.vectorStore", provider: "pgvector" },
-      query: "what is rag?",
-      documents: ["d1", "d2"],
-    };
-    const result = await executeNode(
-      AgentRetrieverNode,
-      nodeExecutionRequest(inputs, { parameters: { topK: 5, indexName: "docs" } }),
-      ctx("core.agent.retriever")
-    );
-    expect(result).toEqual({
-      documents: ["d1", "d2"],
-      resource: {
-        type: "mastra.retriever",
-        topK: 5,
-        indexName: "docs",
-        store: inputs.store,
-        input: inputs,
-      },
-    });
-  });
-
-  it("retriever normalizes a missing/invalid documents input to an empty array", async () => {
-    const result = await executeNode(
-      AgentRetrieverNode,
-      nodeExecutionRequest(
-        { store: null, query: "q", documents: "not-an-array" },
-        { parameters: {} }
-      ),
-      ctx("core.agent.retriever")
-    );
-    expect(result["documents"]).toEqual([]);
-  });
-
-  it("rerank slices the documents to topN and resolves the reranker resource", async () => {
-    const result = await executeNode(
-      AgentRerankNode,
-      nodeExecutionRequest(
-        { documents: ["a", "b", "c"], query: "q" },
-        {
-          parameters: {
-            topN: 2,
-            modelAdapter: { provider: "openai", modelId: "gpt-4o-mini" },
-          },
-        }
-      ),
-      ctx("core.agent.rerank")
-    );
-    expect(result).toEqual({
-      documents: ["a", "b"],
-      resource: {
-        type: "mastra.rerank",
-        provider: "openai",
-        modelId: "gpt-4o-mini",
-        topN: 2,
-      },
-    });
-  });
-
-  it("rerank keeps every document without a valid topN", async () => {
-    for (const topN of [undefined, 0, -1, "many"]) {
-      const result = await executeNode(
-        AgentRerankNode,
-        nodeExecutionRequest(
-          { documents: ["a", "b"] },
-          { parameters: { topN: topN as never } }
-        ),
-        ctx("core.agent.rerank")
+        calls
       );
-      expect(result["documents"]).toEqual(["a", "b"]);
-      expect((result["resource"] as { topN: unknown }).topN).toBeUndefined();
+      const result = await executeNode(node, request, ctx(kind));
+      expect(result).toEqual({ delegated: true });
+      expect(calls).toEqual([{ kind, inputs: { probe: 1 } }]);
     }
-  });
+  );
+
+  it.each(SERVICE_CASES)(
+    "fails $kind closed with GRAPH_MASTRA_RAG_UNAVAILABLE without a rag service",
+    async ({ node, kind }) => {
+      await expect(
+        executeNode(node, nodeExecutionRequest({}, { parameters: {} }), ctx(kind))
+      ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_RAG_UNAVAILABLE });
+    }
+  );
 
   it("chunking splits with the default recursive strategy on the separator", async () => {
     expect(chunkText("a\n\nb\n\nc")).toEqual(["a", "b", "c"]);
@@ -437,244 +316,6 @@ describe("Mastra RAG-family nodes — execute (SAA-836 M4)", () => {
     expect(result).toEqual({
       chunks: ["a\n", "\nb", "c\n", "d"],
       count: 4,
-    });
-  });
-
-  it("qa chain answers with the text and honours the source-document toggle", async () => {
-    const withSources = await executeNode(
-      AgentQaChainNode,
-      nodeExecutionRequest(
-        { query: "q", context: ["c1"], text: "answer" },
-        {
-          parameters: {
-            modelAdapter: { provider: "openai", modelId: "gpt-4o-mini" },
-            returnSourceDocuments: true,
-          },
-        }
-      ),
-      ctx("core.agent.chain.qa")
-    );
-    expect(withSources).toEqual({
-      text: "answer",
-      sourceDocuments: ["c1"],
-      resource: {
-        type: "mastra.chain.qa",
-        provider: "openai",
-        modelId: "gpt-4o-mini",
-        returnSourceDocuments: true,
-      },
-    });
-
-    const withoutSources = await executeNode(
-      AgentQaChainNode,
-      nodeExecutionRequest(
-        { query: "q", documents: ["d1"], text: "answer" },
-        { parameters: {} }
-      ),
-      ctx("core.agent.chain.qa")
-    );
-    expect(withoutSources["sourceDocuments"]).toEqual([]);
-    expect(
-      (withoutSources["resource"] as { returnSourceDocuments: unknown })
-        .returnSourceDocuments
-    ).toBe(false);
-  });
-
-  it("qa chain falls back to the documents input as context and blanks non-string text", async () => {
-    const fromDocuments = await executeNode(
-      AgentQaChainNode,
-      nodeExecutionRequest(
-        { query: "q", documents: ["d1"], text: "answer" },
-        { parameters: { returnSourceDocuments: true } }
-      ),
-      ctx("core.agent.chain.qa")
-    );
-    expect(fromDocuments["sourceDocuments"]).toEqual(["d1"]);
-
-    const result = await executeNode(
-      AgentQaChainNode,
-      nodeExecutionRequest({ query: "q", documents: ["d1"], text: 42 }, {}),
-      ctx("core.agent.chain.qa")
-    );
-    // the toggle stays off unless configured
-    expect(result["sourceDocuments"]).toEqual([]);
-    expect(result["text"]).toBe("");
-  });
-
-  it("basic chain passes the text through and resolves the chain resource", async () => {
-    const result = await executeNode(
-      AgentBasicChainNode,
-      nodeExecutionRequest(
-        { input: "hi", text: "hello" },
-        {
-          parameters: {
-            modelAdapter: { provider: "openai", modelId: "gpt-4o-mini" },
-            promptTemplate: "Say {input}",
-          },
-        }
-      ),
-      ctx("core.agent.chain.basic")
-    );
-    expect(result).toEqual({
-      text: "hello",
-      resource: {
-        type: "mastra.chain.basic",
-        provider: "openai",
-        modelId: "gpt-4o-mini",
-        promptTemplate: "Say {input}",
-      },
-    });
-  });
-
-  it("summarization resolves the strategy and document count", async () => {
-    const byStrategy = await executeNode(
-      AgentSummarizationChainNode,
-      nodeExecutionRequest(
-        { documents: ["a", "b"], text: "summary" },
-        {
-          parameters: {
-            strategy: "map_reduce",
-            modelAdapter: { provider: "deepseek", modelId: "deepseek-chat" },
-          },
-        }
-      ),
-      ctx("core.agent.chain.summarization")
-    );
-    expect(byStrategy).toEqual({
-      text: "summary",
-      resource: {
-        type: "mastra.chain.summarization",
-        provider: "deepseek",
-        modelId: "deepseek-chat",
-        strategy: "map_reduce",
-        documentCount: 2,
-      },
-    });
-
-    const defaulted = await executeNode(
-      AgentSummarizationChainNode,
-      nodeExecutionRequest({ documents: "not-an-array", text: "s" }, {}),
-      ctx("core.agent.chain.summarization")
-    );
-    expect(
-      (defaulted["resource"] as Record<string, unknown>)
-    ).toEqual({
-      type: "mastra.chain.summarization",
-      provider: undefined,
-      modelId: undefined,
-      strategy: "stuff",
-      documentCount: 0,
-    });
-  });
-
-  it("structuredOutputParser parses JSON and reports null for invalid text", async () => {
-    const valid = await executeNode(
-      AgentStructuredOutputParserNode,
-      nodeExecutionRequest({ text: '{"a":1}' }, { parameters: { strict: true } }),
-      ctx("core.agent.structuredOutputParser")
-    );
-    expect(valid["object"]).toEqual({ a: 1 });
-    expect(valid["resource"]).toEqual({
-      type: "mastra.structuredOutputParser",
-      strict: true,
-      hasSchema: false,
-    });
-
-    for (const text of ["not json", "", 42, undefined]) {
-      const invalid = await executeNode(
-        AgentStructuredOutputParserNode,
-        nodeExecutionRequest({ text }, {}),
-        ctx("core.agent.structuredOutputParser")
-      );
-      expect(invalid["object"]).toBeNull();
-    }
-
-    const viaInput = await executeNode(
-      AgentStructuredOutputParserNode,
-      nodeExecutionRequest({ input: "[1,2]" }, {}),
-      ctx("core.agent.structuredOutputParser")
-    );
-    expect(viaInput["object"]).toEqual([1, 2]);
-
-    const withSchema = await executeNode(
-      AgentStructuredOutputParserNode,
-      nodeExecutionRequest(
-        { text: "{}" },
-        { parameters: { structuredOutput: { type: "object" } } }
-      ),
-      ctx("core.agent.structuredOutputParser")
-    );
-    expect(
-      (withSchema["resource"] as { hasSchema: unknown }).hasSchema
-    ).toBe(true);
-  });
-
-  it("informationExtractor forwards the extracted data and resolves the extractor resource", async () => {
-    const result = await executeNode(
-      AgentInformationExtractorNode,
-      nodeExecutionRequest(
-        { text: "raw", data: { name: "Ada" } },
-        {
-          parameters: {
-            modelAdapter: { provider: "openai", modelId: "gpt-4o-mini" },
-            instructions: "Extract people",
-            structuredOutput: { type: "object" },
-          },
-        }
-      ),
-      ctx("core.agent.informationExtractor")
-    );
-    expect(result).toEqual({
-      data: { name: "Ada" },
-      resource: {
-        type: "mastra.informationExtractor",
-        provider: "openai",
-        modelId: "gpt-4o-mini",
-        instructions: "Extract people",
-        hasSchema: true,
-      },
-    });
-
-    const noData = await executeNode(
-      AgentInformationExtractorNode,
-      nodeExecutionRequest({ text: "raw" }, {}),
-      ctx("core.agent.informationExtractor")
-    );
-    expect(noData["data"]).toBeNull();
-  });
-
-  it("langchainCode defaults to javascript/runOnce and flags authored code", async () => {
-    const configured = await executeNode(
-      AgentLangChainCodeNode,
-      nodeExecutionRequest(
-        { input: "value" },
-        { parameters: { code: "return input;", language: "typescript", mode: "runAll" } }
-      ),
-      ctx("core.agent.langchainCode")
-    );
-    expect(configured).toEqual({
-      output: "value",
-      resource: {
-        type: "mastra.langchainCode",
-        language: "typescript",
-        mode: "runAll",
-        hasCode: true,
-      },
-    });
-
-    const defaulted = await executeNode(
-      AgentLangChainCodeNode,
-      nodeExecutionRequest({}, { parameters: {} }),
-      ctx("core.agent.langchainCode")
-    );
-    expect(defaulted).toEqual({
-      output: null,
-      resource: {
-        type: "mastra.langchainCode",
-        language: "javascript",
-        mode: "runOnce",
-        hasCode: false,
-      },
     });
   });
 });

@@ -15,7 +15,7 @@ import { LocalGraphExecutionBackend } from "../../../src/engine/execution/LocalG
 import {
   LEVEL_EXPRESSION_TEMPLATE,
   MESSAGE_TEMPLATE,
-  graphWorkflowFixtures,
+  basicWorkflowFixtures,
   type GraphWorkflowFixture,
 } from "../../../src/workflows";
 import { resolveGraphValueTemplate } from "../../../src/shared/graph";
@@ -58,7 +58,7 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
   it("saves every fixture and reloads it deep-equal through the adapter", async () => {
     const service = new GraphWorkflowService();
     const ctx = anonymous();
-    for (const fixture of graphWorkflowFixtures) {
+    for (const fixture of basicWorkflowFixtures) {
       expectRoundTrip(fixture);
       const saved = await service.saveDocument(
         fixture.document.id,
@@ -74,7 +74,7 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
   it("persists GraphValueTemplate user properties verbatim", async () => {
     const service = new GraphWorkflowService();
     const ctx = anonymous();
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-value-templates"
     );
     expect(fixture).toBeDefined();
@@ -96,7 +96,7 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
     const ctx = anonymous();
     await first.saveDocument(
       "fixture-manual-log",
-      graphWorkflowFixtures[0].document,
+      basicWorkflowFixtures[0].document,
       ctx
     );
 
@@ -104,13 +104,13 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
     const fresh = new GraphWorkflowService();
     expect(fresh).not.toBe(first);
     const reloaded = await fresh.getDocument("fixture-manual-log", ctx);
-    expect(reloaded).toEqual(graphWorkflowFixtures[0].document);
+    expect(reloaded).toEqual(basicWorkflowFixtures[0].document);
   });
 
   it("resolves the persisted GraphValueTemplate user properties via resolveGraphValueTemplate", async () => {
     const service = new GraphWorkflowService();
     const ctx = anonymous();
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-value-templates"
     )!;
     await service.saveDocument(fixture.document.id, fixture.document, ctx);
@@ -138,7 +138,7 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
 
   describe("local backend seeding persists into the repository (SAA-721)", () => {
     /** The expected fixture id set, derived from the registry export. */
-    const fixtureIds = graphWorkflowFixtures
+    const fixtureIds = basicWorkflowFixtures
       .map((fixture) => fixture.document.id)
       .sort();
 
@@ -148,14 +148,14 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
       await backend.initialize({ workflowStore: service } as never);
 
       const seeded = await backend.seedWorkflows(
-        graphWorkflowFixtures.map((fixture) => fixture.document)
+        basicWorkflowFixtures.map((fixture) => fixture.document)
       );
       expect(seeded.map((summary) => summary.id).sort()).toEqual(fixtureIds);
 
       const listed = await backend.listWorkflows();
       expect(listed.map((record) => record.id).sort()).toEqual(fixtureIds);
 
-      for (const fixture of graphWorkflowFixtures) {
+      for (const fixture of basicWorkflowFixtures) {
         await expect(backend.getWorkflow(fixture.document.id)).resolves.toEqual(
           fixture.document
         );
@@ -167,13 +167,13 @@ describe("demo workflow fixtures — adapter persistence (SAA-2049)", () => {
       const backend = new LocalGraphExecutionBackend();
       await backend.initialize({ workflowStore: service } as never);
       await backend.seedWorkflows(
-        graphWorkflowFixtures.map((fixture) => fixture.document)
+        basicWorkflowFixtures.map((fixture) => fixture.document)
       );
 
       resetWorkflowServiceInjectable();
       const fresh = new GraphWorkflowService();
       expect(fresh).not.toBe(service);
-      for (const fixture of graphWorkflowFixtures) {
+      for (const fixture of basicWorkflowFixtures) {
         await expect(
           fresh.getDocument(fixture.document.id)
         ).resolves.toEqual(fixture.document);

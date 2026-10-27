@@ -11,8 +11,8 @@
 import { describe, it, expect, afterEach } from "@jest/globals";
 import { runFixtureDocument } from "../../fixtures/workflow-engine";
 import {
-  executableWorkflowFixtures,
-  graphWorkflowFixtures,
+  executableBasicWorkflowFixtures,
+  basicWorkflowFixtures,
   type GraphWorkflowFixture,
 } from "../../../src/workflows";
 import { DagsterGraphExecutionBackend } from "../../../src/dagster/DagsterGraphExecutionBackend";
@@ -21,7 +21,7 @@ import { GraphNodeExecutorRegistry } from "../../../src/engine/registry/GraphNod
 import { bootEngine, demoCatalogue } from "../../unit/graph/engine-fixtures";
 
 /** The expected fixture id set, derived from the registry (never hard-coded). */
-const FIXTURE_IDS = graphWorkflowFixtures
+const FIXTURE_IDS = basicWorkflowFixtures
   .map((fixture) => fixture.document.id)
   .sort();
 
@@ -35,7 +35,7 @@ function expectedSubset(
 }
 
 describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
-  it.each(executableWorkflowFixtures.map((fixture) => [fixture.id, fixture]))(
+  it.each(executableBasicWorkflowFixtures.map((fixture) => [fixture.id, fixture]))(
     "executes %s and asserts the workflow output",
     async (_id, fixture: GraphWorkflowFixture) => {
       const result = await runFixtureDocument(
@@ -52,7 +52,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   );
 
   it("records per-node intermediate inputs/outputs for the manual→log workflow", async () => {
-    const fixture = executableWorkflowFixtures.find(
+    const fixture = executableBasicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-manual-log"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -63,7 +63,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("records per-node intermediate inputs/outputs for the if→switch workflow", async () => {
-    const fixture = executableWorkflowFixtures.find(
+    const fixture = executableBasicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-if-switch"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -80,7 +80,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("catches the failing error-boundary try body and emits `error`", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-error-boundary"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -93,7 +93,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("emits only the `approved` branch for the human approval gate", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-human-approval"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -106,7 +106,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("stops the enclosing foreach when the break token propagates", async () => {
-    const fixture = executableWorkflowFixtures.find(
+    const fixture = executableBasicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-foreach-break"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -117,7 +117,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("runs while/until loops over distinct body seed/result ports", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-loops-while-until"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -128,7 +128,7 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
   });
 
   it("resolves GraphValueTemplate user properties at execution time", async () => {
-    const fixture = graphWorkflowFixtures.find(
+    const fixture = basicWorkflowFixtures.find(
       (candidate) => candidate.id === "fixture-value-templates"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
@@ -151,13 +151,13 @@ describe("fixture→catalog parity — dagster backend (SAA-721)", () => {
       registry: new GraphNodeExecutorRegistry(catalogue),
       catalogue,
       backend,
-      seedWorkflows: graphWorkflowFixtures.map((fixture) => fixture.document),
+      seedWorkflows: basicWorkflowFixtures.map((fixture) => fixture.document),
     });
 
     const listed = await engine.listEngineWorkflows("dagster");
     expect(listed.map((summary) => summary.id).sort()).toEqual(FIXTURE_IDS);
 
-    for (const fixture of graphWorkflowFixtures) {
+    for (const fixture of basicWorkflowFixtures) {
       await expect(
         engine.getEngineWorkflow("dagster", fixture.document.id)
       ).resolves.toEqual(fixture.document);

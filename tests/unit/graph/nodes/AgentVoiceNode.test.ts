@@ -5,20 +5,23 @@
  * @description Pins the rounded-square speaker-icon voice node (Agent family,
  * 96×96) with the speaker/speechModel/listeningModel inputs (mastra's
  * `VoiceConfig` shape) and the resource output, and proves the general/local
- * engine never fabricates a voice capability: execute fails closed with
- * `GRAPH_LOCAL_UNSUPPORTED_NODE_KIND`.
+ * engine never fabricates a voice capability: direct node execution without a
+ * host voice surface fails closed with `GRAPH_MASTRA_VOICE_UNAVAILABLE`.
  */
 import { describe, it, expect } from "@jest/globals";
-import { AgentVoiceNode, GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND } from "../../../../src/node";
+import {
+  AgentVoiceNode,
+  MASTRA_NODE_MANIFESTS_BY_KIND,
+} from "../../../../src/mastra/nodes";
 import { graphNodeManifest } from "../../../../src/shared/graph";
-import { GRAPH_LOCAL_UNSUPPORTED_NODE_KIND } from "../../../../src/engine/constants";
+import { GRAPH_MASTRA_VOICE_UNAVAILABLE } from "../../../../src/mastra/types";
 import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 import { buildNodeContext } from "./node-test-utils";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 
 describe("AgentVoiceNode", () => {
   const manifest = graphNodeManifest(AgentVoiceNode);
-  const builtIn = GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.agent.voice"];
+  const builtIn = MASTRA_NODE_MANIFESTS_BY_KIND["core.agent.voice"];
 
   describe("manifest", () => {
     it("publishes the core.agent.voice kind", () => {
@@ -69,11 +72,11 @@ describe("AgentVoiceNode", () => {
   });
 
   describe("execute", () => {
-    it("fails closed with GRAPH_LOCAL_UNSUPPORTED_NODE_KIND on the general engine", () => {
+    it("fails closed with GRAPH_MASTRA_VOICE_UNAVAILABLE without a host voice surface", async () => {
       const context = buildNodeContext("core.agent.voice");
       let thrown: unknown;
       try {
-        executeNode(
+        await executeNode(
           AgentVoiceNode,
           nodeExecutionRequest({ speaker: "alloy" }),
           context
@@ -84,7 +87,7 @@ describe("AgentVoiceNode", () => {
       }
       expect(thrown).toBeInstanceOf(GraphExecutionError);
       expect((thrown as GraphExecutionError).graphCode).toBe(
-        GRAPH_LOCAL_UNSUPPORTED_NODE_KIND
+        GRAPH_MASTRA_VOICE_UNAVAILABLE
       );
     });
   });

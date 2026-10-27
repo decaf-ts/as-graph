@@ -61,7 +61,7 @@ describe("Mastra capabilities (SAA-307 item 4)", () => {
         row.verdict
       );
     }
-    expect(mastraCapabilityOf("parallel")?.verdict).toBe("NOT-SUPPORTED");
+    expect(mastraCapabilityOf("parallel")?.verdict).toBe("SUPPORTED");
     expect(mastraCapabilityOf("pinning")?.verdict).toBe("NOT-SUPPORTED");
     expect(mastraCapabilityOf("workflowList")?.verdict).toBe("SUPPORTED");
     expect(mastraCapabilityOf("workflowLookup")?.verdict).toBe("SUPPORTED");

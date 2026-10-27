@@ -152,7 +152,7 @@ liveDescribe(
       await stream.result;
 
       expect(calls.map((call) => call.stepId)).toEqual(["first", "second"]);
-      expect(calls[1].inputData).toEqual({ out: { in: 1 } });
+      expect(calls[1].inputData).toEqual({ in: { in: 1 } });
 
       const durable = await liveCount(
         sharedLiveStorage(),

@@ -1,16 +1,17 @@
 /**
  * @module as-graph/mastra/MastraWorkflowCompiler
  * @summary Compiles canonical workflow documents into Mastra workflows
- * (SAA-196).
- * @description The compiler translates the canonical document's topological
- * order into Mastra builder calls: leaf nodes become steps via host-provided
- * handlers, `if`/`switch` nodes become branches over shared condition
- * predicates, loops nest a recursive sub-compilation, and human-approval nodes
- * translate either to a suspending step with a validated, non-degraded resume
- * schema (when the node declares one) or to a non-suspending inline approval
- * that mirrors the reference engine (when it declares none). Compiled workflows
- * are cached by document id and fingerprint; translation fails closed on
- * unsupported kinds and cyclic documents.
+ * (SAA-196, SAA-1545 §4).
+ * @description The compiler derives execution order from the validated graph
+ * topology, not from document node order: dependency layers come from the
+ * canonical planner (or the same shared edge/cycle rules when no plan is
+ * supplied). Every layer becomes a native `workflow.parallel(...)` group when it
+ * holds more than one node, and a `.then(...)` barrier otherwise. A routing map
+ * before each layer resolves input values by graph port identity, gates nodes
+ * whose branch was not selected, and keeps fan-in independent of completion
+ * order. Loops compile to nested Mastra workflows so their bodies retain the
+ * same parallelism recursively. Translation fails closed on cyclic or otherwise
+ * unrepresentable topology and on unsupported kinds.
  */
 import { z } from "zod";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
@@ -19,6 +20,8 @@ import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstan
 import type { GraphEdgeInstance } from "../shared/graph/document/GraphEdgeInstance";
 import type { Condition, SwitchNodeMetadata } from "../shared/graph";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
+import type { GraphExecutionPlan } from "../engine/planning/GraphExecutionPlan";
+import { GraphDependencyTopology } from "../engine/planning/GraphDependencyTopology";
 import { graphRunDocumentFingerprint } from "../engine/runs/GraphRunFingerprint";
 import { mastraScheduleConfigsOf } from "./MastraScheduleTrigger";
 import {
@@ -30,70 +33,64 @@ import {
   mastraConditionPredicate,
 } from "./MastraConditionBridge";
 import {
+  GRAPH_MASTRA_ROUTED_ENVELOPE,
+  GRAPH_MASTRA_SKIPPED_NODE,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
+  GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY,
   type MastraBackendConfig,
   type MastraNodeStepHandler,
 } from "./types";
+import { withMastraRunConcurrency } from "./MastraRunConcurrencyLimiter";
 
-/** Document kind translated into a Mastra `if` branch. */
+/** Document kind translated into an `if` branch. */
 export const GRAPH_MASTRA_IF_KIND = "core.flow.if";
-/** Document kind translated into a Mastra `switch` branch set. */
+/** Document kind translated into a `switch` branch set. */
 export const GRAPH_MASTRA_SWITCH_KIND = "core.flow.switch";
-/** Document kind translated into a Mastra `foreach` loop. */
+/** Document kind translated into a `foreach` loop. */
 export const GRAPH_MASTRA_FOREACH_KIND = "core.loop.foreach";
-/** Document kind translated into a Mastra `do-while` loop. */
+/** Document kind translated into a `do-while` loop. */
 export const GRAPH_MASTRA_WHILE_KIND = "core.loop.while";
-/** Document kind translated into a Mastra `do-until` loop. */
+/** Document kind translated into a `do-until` loop. */
 export const GRAPH_MASTRA_UNTIL_KIND = "core.loop.until";
-/**
- * Document kind translated into a Mastra approval step: suspending when the
- * node declares a resume schema, inline otherwise.
- */
+/** Document kind translated into a Mastra approval step. */
 export const GRAPH_MASTRA_HUMAN_APPROVAL_KIND = "core.flow.humanApproval";
 
-/**
- * Stamps the OUR-node observability origin (SAA-836 O1) onto a translated
- * Mastra step: the step's entry `metadata` carries the canonical node id and
- * kind under the `decafNode` key, which mastra attaches to the step's
- * `WORKFLOW_STEP` span attributes as `entryMetadata`. The mastra engine's
- * observability pipeline therefore exports every OUR-node span with its
- * canonical origin, and {@link DecafNodeObservabilityExporter} can isolate
- * OUR-node signals in OUR observability layer while mastra catches everything
- * on its engine.
- *
- * @param step - The translated step to stamp.
- * @param node - The canonical node the step was translated from.
- * @returns The same step, with the origin stamped into its metadata.
- */
-function stampDecafNodeOrigin(step: unknown, node: GraphNodeInstance): unknown {
-  const candidate = step as { metadata?: Record<string, unknown> } | null;
-  if (!candidate || typeof candidate !== "object") return step;
-  candidate.metadata = {
-    ...(candidate.metadata ?? {}),
-    decafNode: { id: node.id, kind: node.kind },
-  };
-  return step;
+interface MastraWorkflowBuilderLike {
+  then(step: unknown): MastraWorkflowBuilderLike;
+  parallel(steps: unknown): MastraWorkflowBuilderLike;
+  map(mapping: unknown, options?: unknown): MastraWorkflowBuilderLike;
+  commit(): unknown;
 }
 
-/**
- * Structural subset of the Mastra workflow builder the compiler drives. Kept
- * loose (`unknown` step/condition payloads) so the compiler compiles against
- * any `@mastra/core` minor without type coupling.
- */interface MastraWorkflowBuilderLike {
-  then(step: unknown): MastraWorkflowBuilderLike;
-  branch(branches: unknown): MastraWorkflowBuilderLike;
-  foreach(step: unknown, options?: unknown): MastraWorkflowBuilderLike;
-  dowhile(step: unknown, condition: unknown): MastraWorkflowBuilderLike;
-  dountil(step: unknown, condition: unknown): MastraWorkflowBuilderLike;
-  parallel(steps: unknown): MastraWorkflowBuilderLike;
-  map(mapping: unknown): MastraWorkflowBuilderLike;
-  commit(): unknown;
+interface MastraStepLike {
+  id?: string;
+  execute?: (args: Record<string, unknown>) => unknown;
+  [key: string]: unknown;
+}
+
+interface MastraRoutingArgs {
+  inputData?: unknown;
+  runId?: string;
+  getInitData?: () => unknown;
+  getStepResult?: (step: string) => unknown;
+}
+
+interface MastraRoutedNode {
+  inputs: Record<string, unknown>;
+  skipped: boolean;
 }
 
 /**
  * A compiled Mastra workflow plus everything resume and capability reporting
  * need: the translated steps by node id, the validated resume schemas by
- * suspendable node id, and the node ids whose output schemas degraded.
+ * suspendable node id, the dependency layers, and the node ids whose output
+ * schemas degraded.
+ *
+ * @summary The cached translation result for one document revision.
+ * @description The result is cached per document fingerprint, so calling
+ * {@link MastraWorkflowCompiler.compile} again with the same document returns
+ * this exact object. `layers` mirrors the dependency layers the workflow was
+ * built from: one layer per native parallel group or sequential barrier.
  */
 export interface MastraCompiledWorkflow {
   /** The canonical workflow id the workflow was compiled from. */
@@ -106,13 +103,23 @@ export interface MastraCompiledWorkflow {
   workflow: unknown;
   /** The translated Mastra steps, keyed by document node id. */
   steps: Map<string, unknown>;
+  /**
+   * Dependency layers in execution order; each layer is emitted as a native
+   * parallel group (several nodes) or a sequential barrier (one node).
+   */
+  layers: string[][];
   /** Validated resume schemas, keyed by suspendable node id. */
   resumeSchemas: Map<string, z.ZodTypeAny>;
   /** Node ids whose declared output schema degraded during conversion. */
   degradedSchemas: string[];
 }
 
-/** Options a {@link MastraWorkflowCompiler} is created with. */
+/**
+ * Options a {@link MastraWorkflowCompiler} is created with.
+ *
+ * @description Step handlers are keyed by the document node kind they
+ * translate. Handlers supplied later for the same kind replace earlier ones.
+ */
 export interface MastraWorkflowCompilerOptions {
   /** Node-kind step handlers used to translate leaf nodes. */
   stepHandlers?: MastraNodeStepHandler[];
@@ -121,22 +128,31 @@ export interface MastraWorkflowCompilerOptions {
 }
 
 /**
- * Structural check for a plain (non-array) object value.
+ * Options supplied per compilation.
  *
- * @param value - The value to test.
- * @returns `true` when the value is a non-array object.
+ * @summary Per-run inputs that refine how a document is compiled.
  */
+export interface MastraCompilerRunOptions {
+  /**
+   * The planner-produced execution plan for the document.
+   *
+   * When supplied, its layers are authoritative: the compiler uses them
+   * verbatim and rejects a plan that does not cover exactly the document's
+   * node ids with `GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY`. When omitted, the
+   * compiler derives the same layers from the document's data/connection edges
+   * through {@link GraphDependencyTopology}.
+   */
+  plan?: GraphExecutionPlan;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-/**
- * Resolves the node-scoped endpoint id of an edge side.
- *
- * @param edge - The edge to inspect.
- * @param side - Which side of the edge to read.
- * @returns The node id when the endpoint is node-scoped, else `undefined`.
- */
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
 function nodeEndpointId(
   edge: GraphEdgeInstance,
   side: "source" | "target"
@@ -145,74 +161,106 @@ function nodeEndpointId(
   return endpoint.scope === "node" ? endpoint.nodeId : undefined;
 }
 
-/**
- * Orders a document's nodes topologically over its node-scoped data edges.
- *
- * @param document - The document to order.
- * @returns The nodes in dependency order.
- * @throws {GraphExecutionError} {@link GRAPH_MASTRA_UNSUPPORTED_KIND} when the
- *   document contains a data-edge cycle.
- */
-function topologicalOrder(
-  document: GraphWorkflowDocument
-): GraphNodeInstance[] {
-  const nodes = document.nodes ?? [];
-  const indegree = new Map<string, number>();
+function endpointPort(
+  edge: GraphEdgeInstance,
+  side: "source" | "target"
+): string {
+  return edge[side].port;
+}
+
+function dependencyEdgesOf(document: GraphWorkflowDocument): Array<{
+  type: "data" | "connection";
+  sourceNodeId: string;
+  targetNodeId: string;
+}> {
+  return (document.edges ?? []).flatMap((edge) => {
+    const sourceNodeId = nodeEndpointId(edge, "source");
+    const targetNodeId = nodeEndpointId(edge, "target");
+    return sourceNodeId && targetNodeId
+      ? [
+          {
+            type: edge.type,
+            sourceNodeId,
+            targetNodeId,
+          },
+        ]
+      : [];
+  });
+}
+
+interface MastraBranchGating {
+  /** Nodes reachable from a branch control along data edges. */
+  sensitive: Set<string>;
+  /** Branch control node ids (`core.flow.if` / `core.flow.switch`). */
+  controls: Set<string>;
+}
+
+function branchGatingOf(document: GraphWorkflowDocument): MastraBranchGating {
+  const nodeById = new Map((document.nodes ?? []).map((node) => [node.id, node]));
   const outgoing = new Map<string, string[]>();
-  for (const node of nodes) {
-    indegree.set(node.id, 0);
-    outgoing.set(node.id, []);
-  }
   for (const edge of document.edges ?? []) {
     if (edge.type !== "data") continue;
     const source = nodeEndpointId(edge, "source");
     const target = nodeEndpointId(edge, "target");
     if (!source || !target) continue;
-    if (!indegree.has(target) || !outgoing.has(source)) continue;
-    indegree.set(target, (indegree.get(target) ?? 0) + 1);
-    outgoing.get(source)!.push(target);
+    const list = outgoing.get(source) ?? [];
+    list.push(target);
+    outgoing.set(source, list);
   }
-  const queue = nodes
-    .filter((node) => (indegree.get(node.id) ?? 0) === 0)
-    .map((node) => node.id);
-  const ordered: GraphNodeInstance[] = [];
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const node = byId.get(id);
-    if (node) ordered.push(node);
-    for (const next of outgoing.get(id) ?? []) {
-      const remaining = (indegree.get(next) ?? 0) - 1;
-      indegree.set(next, remaining);
-      if (remaining === 0) queue.push(next);
+  const sensitive = new Set<string>();
+  const controls = new Set<string>();
+  const queue: string[] = [];
+  for (const node of document.nodes ?? []) {
+    if (
+      node.kind === GRAPH_MASTRA_IF_KIND ||
+      node.kind === GRAPH_MASTRA_SWITCH_KIND
+    ) {
+      controls.add(node.id);
+      queue.push(node.id);
     }
   }
-  if (ordered.length !== nodes.length) {
-    throw new GraphExecutionError(
-      `Mastra translation requires an acyclic workflow document (${document.id})`,
-      GRAPH_MASTRA_UNSUPPORTED_KIND,
-      { workflowId: document.id }
-    );
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const target of outgoing.get(id) ?? []) {
+      if (sensitive.has(target) || !nodeById.has(target)) continue;
+      sensitive.add(target);
+      queue.push(target);
+    }
   }
-  return ordered;
+  return { sensitive, controls };
+}
+
+function skippedStepOutput(): Record<string, unknown> {
+  return { [GRAPH_MASTRA_SKIPPED_NODE]: true, reason: "branchNotSelected" };
 }
 
 /**
- * Translates canonical documents into cached Mastra workflows. Leaf node
- * translation is delegated entirely to host-provided step handlers, so the
- * compiler has no node executors of its own and fails closed when a kind has no
- * handler.
+ * Translates canonical documents into cached Mastra workflows.
+ *
+ * @summary Builds a Mastra workflow from graph dependency layers, native
+ * parallel groups, per-layer routing, and recursive loop compilation.
+ * @description Leaf step translation is delegated to host-provided handlers;
+ * control nodes (if/switch/loops/human approval) are translated by the compiler
+ * itself. Each dependency layer is prefixed with a router that resolves node
+ * inputs by graph port identity, then emitted as a `.then(...)` barrier for one
+ * node or a native `workflow.parallel(...)` group for several. A node whose
+ * branch was not selected receives the skip sentinel
+ * ({@link GRAPH_MASTRA_SKIPPED_NODE}) instead of executing. Fan-in does not
+ * depend on completion order because every layer reads the previous layers'
+ * step results through the routing envelope. Loop bodies are compiled
+ * recursively with the same parallelism. Translation fails closed on cyclic or
+ * otherwise unrepresentable topology and on missing node kinds.
  */
 export class MastraWorkflowCompiler {
-  /** Compiled workflows keyed by `workflowId::fingerprint`. */
   private readonly cache = new Map<string, MastraCompiledWorkflow>();
-  /** Node-kind step handlers used for leaf translation. */
   private readonly handlers = new Map<string, MastraNodeStepHandler>();
 
   /**
-   * Creates the compiler with an optional set of step handlers.
+   * Creates a compiler and indexes the supplied node-kind handlers.
    *
-   * @param options - Step handlers and optional backend configuration.
+   * @param {MastraWorkflowCompilerOptions} [options] - Step handlers, optionally
+   * with backend configuration reserved for handler plumbing. Defaults to no
+   * handlers.
    */
   constructor(options: MastraWorkflowCompilerOptions = {}) {
     for (const handler of options.stepHandlers ?? []) {
@@ -220,52 +268,108 @@ export class MastraWorkflowCompiler {
     }
   }
 
-  /** Clears the compiled-workflow cache. */
+  /**
+   * Clears the compiled-workflow cache.
+   *
+   * @summary Drops every cached translation so the next compile rebuilds.
+   * @returns {void}
+   */
   clear(): void {
     this.cache.clear();
   }
 
   /**
-   * Whether a workflow is cached under the given cache key.
+   * Whether a compiled workflow is cached under a cache key.
    *
-   * @param cacheKey - The cache key to probe.
-   * @returns `true` when a compilation is cached.
+   * @param {string} cacheKey - The `workflowId::fingerprint` key.
+   * @returns {boolean} `true` when a translation is cached for the key.
    */
   has(cacheKey: string): boolean {
     return this.cache.has(cacheKey);
   }
 
   /**
-   * Returns the cached compilation for a document, if any.
+   * Returns the cached translation for a document revision.
    *
-   * @param document - The document whose compilation to look up.
-   * @returns The cached compilation, or `undefined` on a cache miss.
+   * @param {GraphWorkflowDocument} document - The canonical document to look up.
+   * @returns {MastraCompiledWorkflow | undefined} The cached translation for the
+   * document's current fingerprint, or `undefined` when it has not been compiled.
    */
   get(document: GraphWorkflowDocument): MastraCompiledWorkflow | undefined {
     return this.cache.get(this.cacheKeyOf(document));
   }
 
   /**
-   * Computes the compilation cache key of a document.
+   * Builds the cache key for a document revision.
    *
-   * @param document - The document to key.
-   * @returns The `workflowId::fingerprint` cache key.
+   * @param {GraphWorkflowDocument} document - The canonical document.
+   * @returns {string} The `workflowId::fingerprint` cache key. Any content
+   * change produces a new fingerprint and therefore a new cache entry.
    */
   cacheKeyOf(document: GraphWorkflowDocument): string {
     return `${document.id}::${graphRunDocumentFingerprint(document)}`;
   }
 
   /**
-   * Compiles a document into a Mastra workflow, returning the cached
-   * compilation on a cache hit. Steps are applied in the document's topological
-   * order and the resulting builder is committed.
+   * Compiles a document into a Mastra workflow.
    *
-   * @param document - The canonical document to compile.
-   * @returns The compiled workflow, steps, and resume-schema bookkeeping.
-   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_UNSUPPORTED_KIND} when the
-   *   document is cyclic or a node kind has no step handler.
+   * @summary Translates one document revision, reusing the cached translation
+   * for that revision when one already exists.
+   * @description The cache key is the document id plus its fingerprint; options
+   * do not participate, so only the first compile of a revision runs and later
+   * calls for the same revision return that translation regardless of options.
+   * When the compile runs and the caller supplies the planner's execution plan,
+   * its validated layers are authoritative and must cover exactly the document's
+   * node ids; otherwise the compiler derives the same layers from the shared
+   * dependency topology. Each layer is preceded by a routing map and emitted as
+   * a native parallel group (more than one node) or a sequential barrier (one
+   * node). Nodes not selected by a branch receive a skip sentinel that the event
+   * bridge maps to `NODE_SKIPPED`. Loop bodies are compiled recursively as
+   * nested Mastra workflows.
+   * @param {GraphWorkflowDocument} document - The canonical workflow document to
+   * translate.
+   * @param {MastraCompilerRunOptions} [options] - Per-run options; pass the
+   * execution plan to make its layers authoritative.
+   * @returns {MastraCompiledWorkflow} The committed workflow, translated steps,
+   * dependency layers, resume schemas, and degraded-schema node ids.
+   * @throws {GraphExecutionError} with `GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY` when a
+   * supplied plan does not cover the document, the document is cyclic, a loop is
+   * conditionally activated, or a loop has no body; with
+   * `GRAPH_MASTRA_UNSUPPORTED_KIND` when a node kind has no registered handler.
+   * @example
+   * const compiler = new MastraWorkflowCompiler({ stepHandlers });
+   * const compiled = compiler.compile(document, { plan });
+   * // compiled.layers mirrors the planner's dependency layers.
+   * @mermaid
+   * sequenceDiagram
+   *   autonumber
+   *   participant C as MastraWorkflowCompiler
+   *   participant P as Plan / Topology
+   *   participant W as Mastra workflow
+   *   C->>C: cacheKeyOf(document)
+   *   alt cached
+   *     C-->>C: return cached translation
+   *   else not cached
+   *     C->>P: layersOf(document, plan)
+   *     activate P
+   *     P-->>C: dependency layers
+   *     deactivate P
+   *     loop each layer
+   *       C->>W: map(router)
+   *       alt one node
+   *         C->>W: then(step)
+   *       else several nodes
+   *         C->>W: parallel(steps)
+   *       end
+   *     end
+   *     C->>W: commit()
+   *     C-->>C: cache and return translation
+   *   end
    */
-  compile(document: GraphWorkflowDocument): MastraCompiledWorkflow {
+  compile(
+    document: GraphWorkflowDocument,
+    options: MastraCompilerRunOptions = {}
+  ): MastraCompiledWorkflow {
     const cacheKey = this.cacheKeyOf(document);
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
@@ -273,11 +377,7 @@ export class MastraWorkflowCompiler {
     const steps = new Map<string, unknown>();
     const resumeSchemas = new Map<string, z.ZodTypeAny>();
     const degradedSchemas: string[] = [];
-    // SAA-836 M6: schedule trigger nodes declare mastra's native
-    // scheduled-workflow functionality — the compiled workflow is created
-    // with the declarative `schedule` input so the mastra scheduler starts
-    // runs on each cron fire. A schedule trigger without a resolvable cron
-    // fails closed (see `mastraScheduleConfigsOf`).
+    const layers = this.layersOf(document, options.plan);
     const schedule = mastraScheduleConfigsOf(document);
     const builder = createWorkflow({
       id: document.id,
@@ -286,18 +386,40 @@ export class MastraWorkflowCompiler {
       ...(schedule ? { schedule } : {}),
     }) as unknown as MastraWorkflowBuilderLike;
 
-    const ordered = topologicalOrder(document);
+    const nodeById = new Map(
+      (document.nodes ?? []).map((node) => [node.id, node])
+    );
+    const branchGating = branchGatingOf(document);
     let cursor: MastraWorkflowBuilderLike = builder;
-    for (const node of ordered) {
-      cursor = this.applyNode(
-        cursor,
-        node,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
+    for (const layer of layers) {
+      cursor = cursor.map(
+        this.buildLayerRouter(document, layer, branchGating)
       );
+      const layerSteps = layer.map((nodeId) => {
+        const node = nodeById.get(nodeId);
+        if (!node) {
+          throw new GraphExecutionError(
+            `Mastra compilation plan references unknown node '${nodeId}'`,
+            GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY,
+            { workflowId: document.id, nodeId }
+          );
+        }
+        return this.buildNodeStep(
+          node,
+          document,
+          steps,
+          resumeSchemas,
+          degradedSchemas
+        );
+      });
+      cursor =
+        layerSteps.length === 1
+          ? cursor.then(layerSteps[0])
+          : cursor.parallel(layerSteps);
     }
+
+    const outputMapping = this.buildWorkflowOutputMapping(document);
+    if (outputMapping) cursor = cursor.map(outputMapping);
     const workflow = cursor.commit();
 
     const compiled: MastraCompiledWorkflow = {
@@ -306,6 +428,7 @@ export class MastraWorkflowCompiler {
       cacheKey,
       workflow,
       steps,
+      layers,
       resumeSchemas,
       degradedSchemas,
     };
@@ -313,287 +436,366 @@ export class MastraWorkflowCompiler {
     return compiled;
   }
 
-  /**
-   * Applies one node to the builder, dispatching on its kind: branch, switch,
-   * loop, human approval, or leaf step.
-   *
-   * @param cursor - The builder position to extend.
-   * @param node - The document node to translate.
-   * @param document - The document being compiled.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The extended builder position.
-   */
-  private applyNode(
-    cursor: MastraWorkflowBuilderLike,
+  private layersOf(
+    document: GraphWorkflowDocument,
+    plan?: GraphExecutionPlan
+  ): string[][] {
+    const nodeIds = (document.nodes ?? []).map((node) => node.id);
+    const known = new Set(nodeIds);
+    if (plan) {
+      const planned = plan.layers.map((layer) =>
+        layer.nodes.map((node) => node.id)
+      );
+      const flattened = planned.flat();
+      const matches =
+        flattened.length === nodeIds.length &&
+        flattened.every((id) => known.has(id)) &&
+        nodeIds.every((id) => flattened.includes(id));
+      if (!matches) {
+        throw new GraphExecutionError(
+          `Mastra compilation plan does not cover workflow '${document.id}'`,
+          GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY,
+          {
+            workflowId: document.id,
+            plannedNodes: flattened,
+            documentNodes: nodeIds,
+          }
+        );
+      }
+      return planned;
+    }
+    try {
+      return GraphDependencyTopology.layers(
+        document.nodes ?? [],
+        dependencyEdgesOf(document),
+        document.id
+      );
+    } catch (error) {
+      throw new GraphExecutionError(
+        `Mastra translation requires an acyclic workflow document (${document.id})`,
+        GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY,
+        {
+          workflowId: document.id,
+          cause:
+            error instanceof Error ? error.message : "unsupported topology",
+        }
+      );
+    }
+  }
+
+  private buildNodeStep(
     node: GraphNodeInstance,
     document: GraphWorkflowDocument,
     steps: Map<string, unknown>,
     resumeSchemas: Map<string, z.ZodTypeAny>,
     degradedSchemas: string[]
-  ): MastraWorkflowBuilderLike {
+  ): unknown {
+    let step: unknown;
     if (node.kind === GRAPH_MASTRA_IF_KIND) {
-      return this.applyIf(
-        cursor,
-        node,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
-    }
-    if (node.kind === GRAPH_MASTRA_SWITCH_KIND) {
-      return this.applySwitch(
-        cursor,
-        node,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
-    }
-    if (
+      step = this.buildIfStep(node);
+    } else if (node.kind === GRAPH_MASTRA_SWITCH_KIND) {
+      step = this.buildSwitchStep(node);
+    } else if (
       node.kind === GRAPH_MASTRA_FOREACH_KIND ||
       node.kind === GRAPH_MASTRA_WHILE_KIND ||
       node.kind === GRAPH_MASTRA_UNTIL_KIND
     ) {
-      return this.applyLoop(
-        cursor,
-        node,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
+      step = this.buildLoopWorkflow(node, document);
+    } else if (node.kind === GRAPH_MASTRA_HUMAN_APPROVAL_KIND) {
+      step = this.buildHumanApprovalStep(node, resumeSchemas);
+    } else {
+      step = this.buildLeafStep(node, degradedSchemas, document);
     }
-    if (node.kind === GRAPH_MASTRA_HUMAN_APPROVAL_KIND) {
-      return this.applyHumanApproval(
-        cursor,
-        node,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
-    }
-    const step = this.buildLeafStep(node, steps, degradedSchemas, document);
-    return cursor.then(step);
+    const wrapped =
+      node.kind === GRAPH_MASTRA_FOREACH_KIND ||
+      node.kind === GRAPH_MASTRA_WHILE_KIND ||
+      node.kind === GRAPH_MASTRA_UNTIL_KIND
+        ? step
+        : this.wrapStep(step, node);
+    steps.set(node.id, wrapped);
+    return wrapped;
   }
 
-  /**
-   * Translates an `if` node into a Mastra branch over its `then` and optional
-   * `else` targets, guarded by the node's condition.
-   *
-   * @param cursor - The builder position to extend.
-   * @param node - The `if` node to translate.
-   * @param document - The document being compiled.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The extended builder position.
-   * @throws {GraphExecutionError} When the condition is missing or code-mode.
-   */
-  private applyIf(
-    cursor: MastraWorkflowBuilderLike,
-    node: GraphNodeInstance,
+  private wrapStep(step: unknown, node: GraphNodeInstance): unknown {
+    const candidate = step as MastraStepLike;
+    if (typeof candidate?.execute !== "function") return step;
+    const execute = candidate.execute.bind(step);
+    return {
+      ...candidate,
+      id: node.id,
+      metadata: {
+        ...(isRecord(candidate.metadata) ? candidate.metadata : {}),
+        decafNode: { id: node.id, kind: node.kind },
+      },
+      execute: async (args: MastraRoutingArgs) => {
+        const envelope = asRecord(args?.inputData)[GRAPH_MASTRA_ROUTED_ENVELOPE];
+        const routed = asRecord(envelope)[node.id] as
+          | MastraRoutedNode
+          | undefined;
+        if (routed?.skipped) return skippedStepOutput();
+        const inputData =
+          routed && isRecord(routed.inputs)
+            ? routed.inputs
+            : asRecord(args?.inputData);
+        return await withMastraRunConcurrency(args?.runId, () =>
+          execute({ ...args, inputData })
+        );
+      },
+    };
+  }
+
+  private buildLayerRouter(
     document: GraphWorkflowDocument,
-    steps: Map<string, unknown>,
-    resumeSchemas: Map<string, z.ZodTypeAny>,
-    degradedSchemas: string[]
-  ): MastraWorkflowBuilderLike {
-    const condition = this.conditionOf(node);
+    layer: string[],
+    branchGating: MastraBranchGating
+  ): (args: MastraRoutingArgs) => Promise<Record<string, unknown>> {
+    return async (args: MastraRoutingArgs) => {
+      const initData = asRecord(args?.getInitData?.());
+      const routed: Record<string, MastraRoutedNode> = {};
+      for (const nodeId of layer) {
+        routed[nodeId] = this.routeNodeInputs(
+          document,
+          nodeId,
+          initData,
+          args?.getStepResult,
+          branchGating
+        );
+      }
+      return { [GRAPH_MASTRA_ROUTED_ENVELOPE]: routed };
+    };
+  }
+
+  private routeNodeInputs(
+    document: GraphWorkflowDocument,
+    nodeId: string,
+    initData: Record<string, unknown>,
+    getStepResult: ((step: string) => unknown) | undefined,
+    branchGating: MastraBranchGating
+  ): MastraRoutedNode {
+    const incoming = (document.edges ?? []).filter(
+      (edge) =>
+        edge.type === "data" && nodeEndpointId(edge, "target") === nodeId
+    );
+    const node = (document.nodes ?? []).find((entry) => entry.id === nodeId);
+
+    const valueOf = (edge: GraphEdgeInstance): unknown => {
+      const sourcePort = endpointPort(edge, "source");
+      if (edge.source.scope === "workflow") {
+        return initData[sourcePort];
+      }
+      const sourceId = nodeEndpointId(edge, "source");
+      if (!sourceId) return undefined;
+      let output: unknown;
+      try {
+        output = getStepResult?.(sourceId);
+      } catch {
+        output = undefined;
+      }
+      return isRecord(output) && Object.prototype.hasOwnProperty.call(output, sourcePort)
+        ? output[sourcePort]
+        : undefined;
+    };
+
+    const emitted = (edge: GraphEdgeInstance): boolean => {
+      if (edge.source.scope === "workflow") return true;
+      const sourceId = nodeEndpointId(edge, "source");
+      if (!sourceId) return false;
+      let output: unknown;
+      try {
+        output = getStepResult?.(sourceId);
+      } catch {
+        return false;
+      }
+      return (
+        isRecord(output) &&
+        Object.prototype.hasOwnProperty.call(
+          output,
+          endpointPort(edge, "source")
+        )
+      );
+    };
+
+    const gatedByBranch = branchGating.sensitive.has(nodeId);
+    const branchEdges = gatedByBranch
+      ? incoming.filter((edge) => {
+          if (edge.source.scope === "workflow") return false;
+          const sourceId = nodeEndpointId(edge, "source");
+          return (
+            sourceId !== undefined &&
+            (branchGating.sensitive.has(sourceId) ||
+              branchGating.controls.has(sourceId))
+          );
+        })
+      : [];
+
+    const active =
+      !gatedByBranch ||
+      branchEdges.length === 0 ||
+      branchEdges.some((edge) => emitted(edge));
+    if (!active) {
+      return { inputs: {}, skipped: true };
+    }
+
+    const inputs: Record<string, unknown> = incoming.length === 0
+      ? { ...initData }
+      : {};
+    if (incoming.length > 0) {
+      const byTargetPort = new Map<string, GraphEdgeInstance[]>();
+      for (const edge of incoming) {
+        const list = byTargetPort.get(edge.target.port) ?? [];
+        list.push(edge);
+        byTargetPort.set(edge.target.port, list);
+      }
+      for (const [targetPort, edges] of byTargetPort) {
+        if (edges.length === 1) {
+          inputs[targetPort] = valueOf(edges[0]);
+          continue;
+        }
+        let definedValue: unknown;
+        let hasDefined = false;
+        for (const edge of edges) {
+          const value = valueOf(edge);
+          inputs[endpointPort(edge, "source")] = value;
+          if (value !== undefined) {
+            definedValue = value;
+            hasDefined = true;
+          }
+        }
+        if (hasDefined && inputs[targetPort] === undefined) {
+          inputs[targetPort] = definedValue;
+        }
+      }
+    }
+
+    for (const [port, binding] of Object.entries(node?.inputBindings ?? {})) {
+      if (isRecord(binding) && binding.mode === "literal") {
+        inputs[port] = binding.value;
+      }
+    }
+    return { inputs, skipped: false };
+  }
+
+  private buildWorkflowOutputMapping(
+    document: GraphWorkflowDocument
+  ):
+    | ((args: MastraRoutingArgs) => Promise<Record<string, unknown>>)
+    | undefined {
+    const outputEdges = (document.edges ?? []).filter(
+      (edge) => edge.type === "data" && edge.target.scope === "workflow"
+    );
+    if (outputEdges.length === 0) return undefined;
+    return async (args: MastraRoutingArgs) => {
+      const initData = asRecord(args?.getInitData?.());
+      const outputs: Record<string, unknown> = {};
+      for (const edge of outputEdges) {
+        const sourcePort = endpointPort(edge, "source");
+        const targetPort = endpointPort(edge, "target");
+        let value: unknown;
+        if (edge.source.scope === "workflow") {
+          value = initData[sourcePort];
+        } else {
+          const sourceId = nodeEndpointId(edge, "source");
+          let output: unknown;
+          try {
+            output = sourceId ? args?.getStepResult?.(sourceId) : undefined;
+          } catch {
+            output = undefined;
+          }
+          if (
+            !isRecord(output) ||
+            !Object.prototype.hasOwnProperty.call(output, sourcePort)
+          ) {
+            continue;
+          }
+          value = output[sourcePort];
+        }
+        if (value !== undefined || outputs[targetPort] === undefined) {
+          outputs[targetPort] = value;
+        }
+      }
+      return outputs;
+    };
+  }
+
+  private buildIfStep(node: GraphNodeInstance): unknown {
+    const parameters = node.parameters ?? {};
+    const metadata = node.metadata ?? {};
+    const condition = (parameters["condition"] ?? metadata["condition"]) as
+      | Condition
+      | undefined;
     assertMastraConditionSupported(condition, node.id);
-    const thenStep = this.targetStep(
-      node.id,
-      "then",
-      document,
-      steps,
-      resumeSchemas,
-      degradedSchemas
-    );
-    const elseStep = this.targetStep(
-      node.id,
-      "else",
-      document,
-      steps,
-      resumeSchemas,
-      degradedSchemas
-    );
-    const branches: Array<[unknown, unknown]> = [
-      [mastraConditionPredicate(condition!, "if"), thenStep],
-    ];
-    if (elseStep) {
-      branches.push([() => true, elseStep]);
-    }
-    return cursor.branch(branches);
+    const predicate = mastraConditionPredicate(condition!, "if");
+    const elseEnabled = parameters["else"] === true;
+    return createStep({
+      id: node.id,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+      execute: async (args: { inputData?: unknown }) => {
+        const input = asRecord(args?.inputData);
+        const value = input["value"] ?? input;
+        if (predicate({ inputData: input })) return { then: value };
+        if (elseEnabled) return { else: value };
+        throw new GraphExecutionError(
+          `If node '${node.id}' condition evaluated to false and the else branch is disabled`,
+          "GRAPH_IF_ELSE_DISABLED",
+          { nodeId: node.id }
+        );
+      },
+    });
   }
 
-  /**
-   * Translates a `switch` node into a Mastra branch set over its declared
-   * cases and optional default port; fails when no branch is translatable.
-   *
-   * @param cursor - The builder position to extend.
-   * @param node - The `switch` node to translate.
-   * @param document - The document being compiled.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The extended builder position.
-   * @throws {GraphExecutionError} When a case condition is untranslatable or
-   *   no branch could be translated.
-   */
-  private applySwitch(
-    cursor: MastraWorkflowBuilderLike,
-    node: GraphNodeInstance,
-    document: GraphWorkflowDocument,
-    steps: Map<string, unknown>,
-    resumeSchemas: Map<string, z.ZodTypeAny>,
-    degradedSchemas: string[]
-  ): MastraWorkflowBuilderLike {
+  private buildSwitchStep(node: GraphNodeInstance): unknown {
     const metadata = this.switchMetadataOf(node);
-    const branches: Array<[unknown, unknown]> = [];
     for (const switchCase of metadata.cases) {
       assertMastraConditionSupported(switchCase.condition, node.id);
-      const step = this.targetStep(
-        node.id,
-        switchCase.outputPort,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
-      if (!step) continue;
-      branches.push([
-        mastraConditionPredicate(switchCase.condition, "switch case"),
-        step,
-      ]);
     }
-    if (metadata.hasDefault === true && metadata.defaultPort) {
-      const defaultStep = this.targetStep(
-        node.id,
-        metadata.defaultPort,
-        document,
-        steps,
-        resumeSchemas,
-        degradedSchemas
-      );
-      if (defaultStep) branches.push([() => true, defaultStep]);
-    }
-    if (branches.length === 0) {
-      throw new GraphExecutionError(
-        `Mastra switch node '${node.id}' has no translatable branches`,
-        GRAPH_MASTRA_UNSUPPORTED_KIND,
-        { nodeId: node.id }
-      );
-    }
-    return cursor.branch(branches);
+    return createStep({
+      id: node.id,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+      execute: async (args: { inputData?: unknown }) => {
+        const input = asRecord(args?.inputData);
+        const value = input["value"] ?? input;
+        for (const switchCase of metadata.cases) {
+          const predicate = mastraConditionPredicate(
+            switchCase.condition,
+            "switch case"
+          );
+          if (predicate({ inputData: input })) {
+            return { [switchCase.outputPort]: value };
+          }
+        }
+        if (metadata.hasDefault === true && metadata.defaultPort) {
+          return { [metadata.defaultPort]: value };
+        }
+        throw new GraphExecutionError(
+          `No switch case matched for node '${node.id}' and default port is not enabled`,
+          "GRAPH_SWITCH_NO_MATCH",
+          { nodeId: node.id, cases: metadata.cases.map((entry) => entry.id) }
+        );
+      },
+    });
   }
 
-  /**
-   * Translates a loop node by recursively compiling its body document and
-   * applying it as a `foreach`, `do-while`, or `do-until` loop.
-   *
-   * @param cursor - The builder position to extend.
-   * @param node - The loop node to translate.
-   * @param document - The document being compiled.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The extended builder position.
-   * @throws {GraphExecutionError} When the loop has no body or the condition
-   *   is untranslatable.
-   */
-  private applyLoop(
-    cursor: MastraWorkflowBuilderLike,
+  private buildHumanApprovalStep(
     node: GraphNodeInstance,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    document: GraphWorkflowDocument,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    steps: Map<string, unknown>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    resumeSchemas: Map<string, z.ZodTypeAny>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    degradedSchemas: string[]
-  ): MastraWorkflowBuilderLike {
-    const loop = node.loop;
-    if (!loop || !loop.body) {
-      throw new GraphExecutionError(
-        `Mastra loop node '${node.id}' has no loop body to translate`,
-        GRAPH_MASTRA_UNSUPPORTED_KIND,
-        { nodeId: node.id }
-      );
-    }
-    const body = new MastraWorkflowCompiler({
-      stepHandlers: [...this.handlers.values()],
-    }).compile(loop.body);
-    if (node.kind === GRAPH_MASTRA_FOREACH_KIND) {
-      const concurrency =
-        typeof loop.concurrency === "number" ? loop.concurrency : undefined;
-      return cursor.foreach(
-        body.workflow,
-        concurrency !== undefined ? { concurrency } : undefined
-      );
-    }
-    const condition = this.conditionOf(node);
-    assertMastraConditionSupported(condition, node.id);
-    const predicate = mastraConditionPredicate(condition!, "loop");
-    if (node.kind === GRAPH_MASTRA_WHILE_KIND) {
-      return cursor.dowhile(body.workflow, predicate);
-    }
-    return cursor.dountil(body.workflow, predicate);
-  }
-
-  /**
-   * Translates a human-approval node into a suspending or non-suspending Mastra
-   * step (C15; SAA-1360 D6).
-   *
-   * - When the node declares `parameters.resumeSchema`, the step suspends and
-   *   the schema passes through {@link assertMastraResumeSchemaSafe}, so a
-   *   missing, `any`, or otherwise degraded schema fails closed. The validated
-   *   schema is recorded in `resumeSchemas`, and a non-approved resume is
-   *   reported as a rejected outcome.
-   * - When the node declares no `resumeSchema`, the step is a non-suspending
-   *   inline approval that mirrors the reference engine: `parameters.approved
-   *   === false` yields `{ rejected: value }`, otherwise `{ approved: value }`,
-   *   and no resume schema is recorded.
-   *
-   * @param cursor - The builder position to extend.
-   * @param node - The human-approval node to translate.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The extended builder position.
-   * @throws {GraphExecutionError} When the node declares a resume schema that
-   *   is missing or degraded.
-   */
-  private applyHumanApproval(
-    cursor: MastraWorkflowBuilderLike,
-    node: GraphNodeInstance,
-    steps: Map<string, unknown>,
-    resumeSchemas: Map<string, z.ZodTypeAny>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    degradedSchemas: string[]
-  ): MastraWorkflowBuilderLike {
+    resumeSchemas: Map<string, z.ZodTypeAny>
+  ): unknown {
     const parameters = node.parameters ?? {};
     const declaredResumeSchema = parameters["resumeSchema"];
     if (declaredResumeSchema === undefined) {
-      const step = stampDecafNodeOrigin(
-        createStep({
-          id: node.id,
-          inputSchema: z.any(),
-          outputSchema: z.any(),
-          execute: async (args: { inputData?: unknown }) => {
-            const inputData = isRecord(args.inputData) ? args.inputData : {};
-            const value = inputData["value"] ?? inputData;
-            return parameters["approved"] === false
-              ? { rejected: value }
-              : { approved: value };
-          },
-        }),
-        node
-      );
-      steps.set(node.id, step);
-      return cursor.then(step);
+      return createStep({
+        id: node.id,
+        inputSchema: z.any(),
+        outputSchema: z.any(),
+        execute: async (args: { inputData?: unknown }) => {
+          const inputData = asRecord(args?.inputData);
+          const value = inputData["value"] ?? inputData;
+          return parameters["approved"] === false
+            ? { rejected: value }
+            : { approved: value };
+        },
+      });
     }
     const suspendSchema = toMastraZodSchema(
       parameters["suspendSchema"] as never
@@ -602,52 +804,189 @@ export class MastraWorkflowCompiler {
       declaredResumeSchema as never
     );
     resumeSchemas.set(node.id, resumeSchema);
-    const step = stampDecafNodeOrigin(
-      createStep({
+    return createStep({
+      id: node.id,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+      suspendSchema: suspendSchema.schema,
+      resumeSchema,
+      execute: async (args: {
+        inputData?: unknown;
+        suspend?: (payload?: unknown) => unknown;
+        resumeData?: unknown;
+      }) => {
+        if (args.resumeData === undefined) {
+          await args.suspend?.({
+            message: parameters["message"],
+            approvers: parameters["approvers"],
+          });
+        }
+        const resumeData = args.resumeData as
+          | { approved?: unknown; value?: unknown }
+          | undefined;
+        const value = resumeData?.value ?? resumeData;
+        return resumeData?.approved === false
+          ? { rejected: value }
+          : { approved: value };
+      },
+    });
+  }
+
+  private buildLoopWorkflow(
+    node: GraphNodeInstance,
+    document: GraphWorkflowDocument
+  ): unknown {
+    if (!node.loop || !node.loop.body) {
+      throw new GraphExecutionError(
+        `Mastra loop node '${node.id}' has no loop body to translate`,
+        GRAPH_MASTRA_UNSUPPORTED_KIND,
+        { nodeId: node.id }
+      );
+    }
+    if (branchGatingOf(document).sensitive.has(node.id)) {
+      throw new GraphExecutionError(
+        `Mastra loop node '${node.id}' is conditionally activated by a branch, which cannot be represented faithfully`,
+        GRAPH_MASTRA_UNSUPPORTED_TOPOLOGY,
+        { nodeId: node.id, workflowId: document.id }
+      );
+    }
+    const parameters = node.parameters ?? {};
+    const body = new MastraWorkflowCompiler({
+      stepHandlers: [...this.handlers.values()],
+    }).compile(node.loop.body);
+
+    if (node.kind === GRAPH_MASTRA_FOREACH_KIND) {
+      const itemPort =
+        (parameters["itemPort"] as string | undefined) ?? "item";
+      const resultPort =
+        (parameters["resultPort"] as string | undefined) ?? "result";
+      const concurrency =
+        typeof node.loop.concurrency === "number"
+          ? node.loop.concurrency
+          : undefined;
+      const bodyInput = this.buildLoopBodyInput(
+        node.id,
+        body.workflow,
+        (inputData) => ({ [itemPort]: inputData })
+      );
+      const loopWorkflow = createWorkflow({
         id: node.id,
         inputSchema: z.any(),
         outputSchema: z.any(),
-        suspendSchema: suspendSchema.schema,
-        resumeSchema,
-        execute: async (args: {
-          suspend?: (payload?: unknown) => unknown;
-          resumeData?: unknown;
-        }) => {
-          if (args.resumeData === undefined) {
-            await args.suspend?.({
-              message: parameters["message"],
-              approvers: parameters["approvers"],
-            });
-          }
-          const resumeData = args.resumeData as
-            | { approved?: unknown; value?: unknown }
-            | undefined;
-          const value = resumeData?.value ?? resumeData;
-          return resumeData?.approved === false
-            ? { rejected: value }
-            : { approved: value };
-        },
-      }),
-      node
+      })
+        .map(
+          this.buildLoopInputMapping(node.id, (inputs) => inputs["items"])
+        )
+        .foreach(
+          bodyInput as never,
+          concurrency !== undefined ? { concurrency } : undefined
+        )
+        .map(async (args: { inputData?: unknown }) => {
+          const results = Array.isArray(args?.inputData)
+            ? args.inputData
+            : [];
+          const completed = results.map((entry) =>
+            isRecord(entry) &&
+            Object.prototype.hasOwnProperty.call(entry, resultPort)
+              ? entry[resultPort]
+              : entry
+          );
+          return {
+            completed,
+            results,
+            iterations: results.length,
+            broken: false,
+          };
+        })
+        .commit();
+      return loopWorkflow;
+    }
+
+    const statePort =
+      (parameters["statePort"] as string | undefined) ?? "state";
+    const inputPort =
+      (parameters["inputPort"] as string | undefined) ?? statePort;
+    const outputPort =
+      (parameters["outputPort"] as string | undefined) ?? statePort;
+    const condition = (parameters["condition"] ?? node.metadata?.["condition"]) as
+      | Condition
+      | undefined;
+    assertMastraConditionSupported(condition, node.id);
+    const predicate = mastraConditionPredicate(condition!, "loop");
+    const asyncPredicate = async (args: {
+      inputData?: unknown;
+      state?: unknown;
+    }): Promise<boolean> => predicate(args);
+    const bodyInput = this.buildLoopBodyInput(
+      node.id,
+      body.workflow,
+      (inputData) => ({ [inputPort]: inputData })
     );
-    steps.set(node.id, step);
-    return cursor.then(step);
+    const rawBody = createWorkflow({
+      id: `${node.id}::body`,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+    })
+      .then(bodyInput as never)
+      .map(async (args: { inputData?: unknown }) => {
+        const output = asRecord(args?.inputData);
+        return Object.prototype.hasOwnProperty.call(output, outputPort)
+          ? output[outputPort]
+          : output;
+      })
+      .commit();
+    const mapped = createWorkflow({
+      id: node.id,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+    }).map(
+      this.buildLoopInputMapping(node.id, (inputs) => inputs[statePort])
+    );
+    const looped =
+      node.kind === GRAPH_MASTRA_WHILE_KIND
+        ? mapped.dowhile(rawBody as never, asyncPredicate)
+        : mapped.dountil(rawBody as never, asyncPredicate);
+    return looped
+      .map(async (args: { inputData?: unknown }) => ({
+        [outputPort]: args?.inputData,
+        state: args?.inputData,
+      }))
+      .commit();
   }
 
-  /**
-   * Translates a leaf node through its registered step handler and records
-   * degraded output schemas.
-   *
-   * @param node - The leaf node to translate.
-   * @param steps - Accumulated steps by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The created Mastra step.
-   * @throws {GraphExecutionError} {@link GRAPH_MASTRA_UNSUPPORTED_KIND} when no
-   *   handler is registered for the node kind.
-   */
+  private buildLoopBodyInput(
+    nodeId: string,
+    bodyWorkflow: unknown,
+    shape: (inputData: unknown) => Record<string, unknown>
+  ): unknown {
+    return createWorkflow({
+      id: `${nodeId}::body-input`,
+      inputSchema: z.any(),
+      outputSchema: z.any(),
+    })
+      .map(async (args: { inputData?: unknown }) => shape(args?.inputData))
+      .then(bodyWorkflow as never)
+      .commit();
+  }
+
+  private buildLoopInputMapping(
+    nodeId: string,
+    select: (inputs: Record<string, unknown>) => unknown
+  ): (args: MastraRoutingArgs) => Promise<unknown> {
+    return async (args: MastraRoutingArgs) => {
+      const envelope = asRecord(args?.inputData)[GRAPH_MASTRA_ROUTED_ENVELOPE];
+      const routed = asRecord(envelope)[nodeId] as MastraRoutedNode | undefined;
+      if (routed?.skipped) return [];
+      const inputs =
+        routed && isRecord(routed.inputs)
+          ? routed.inputs
+          : asRecord(args?.inputData);
+      return select(inputs);
+    };
+  }
+
   private buildLeafStep(
     node: GraphNodeInstance,
-    steps: Map<string, unknown>,
     degradedSchemas: string[],
     document?: GraphWorkflowDocument
   ): unknown {
@@ -659,73 +998,15 @@ export class MastraWorkflowCompiler {
         { nodeId: node.id, kind: node.kind }
       );
     }
-    const step = stampDecafNodeOrigin(
-      handler.createStep(node, { stepId: node.id, document }),
-      node
-    );
-    steps.set(node.id, step);
+    const step = handler.createStep(node, {
+      stepId: node.id,
+      document,
+    });
     const schema = toMastraZodSchema(node.metadata?.["outputSchema"] as never);
     if (schema.degraded) degradedSchemas.push(node.id);
     return step;
   }
 
-  /**
-   * Resolves the Mastra step a control node's output port routes to, by
-   * following the first data edge leaving that port.
-   *
-   * @param nodeId - The control node id the port belongs to.
-   * @param port - The output port whose routing edge to follow.
-   * @param document - The document being compiled.
-   * @param steps - Accumulated steps by node id.
-   * @param resumeSchemas - Accumulated resume schemas by node id.
-   * @param degradedSchemas - Accumulated degraded-schema node ids.
-   * @returns The target step, or `undefined` when the port routes nowhere.
-   */
-  private targetStep(
-    nodeId: string,
-    port: string,
-    document: GraphWorkflowDocument,
-    steps: Map<string, unknown>,
-    resumeSchemas: Map<string, z.ZodTypeAny>,
-    degradedSchemas: string[]
-  ): unknown {
-    const target = (document.edges ?? []).find(
-      (edge) =>
-        edge.type === "data" &&
-        nodeEndpointId(edge, "source") === nodeId &&
-        edge.source.port === port
-    );
-    if (!target) return undefined;
-    const targetId = nodeEndpointId(target, "target");
-    if (!targetId) return undefined;
-    const existing = steps.get(targetId);
-    if (existing) return existing;
-    const targetNode = (document.nodes ?? []).find(
-      (candidate) => candidate.id === targetId
-    );
-    if (!targetNode) return undefined;
-    return this.buildLeafStep(targetNode, steps, degradedSchemas, document);
-  }
-
-  /**
-   * Reads the canonical condition attached to a node's parameters.
-   *
-   * @param node - The node whose condition to read.
-   * @returns The condition, or `undefined` when none is declared.
-   */
-  private conditionOf(node: GraphNodeInstance): Condition | undefined {
-    const parameters = node.parameters ?? {};
-    const candidate = parameters["condition"];
-    return candidate as Condition | undefined;
-  }
-
-  /**
-   * Resolves a switch node's case metadata, preferring node metadata and
-   * falling back to parameter-declared cases.
-   *
-   * @param node - The `switch` node to read.
-   * @returns The resolved switch metadata.
-   */
   private switchMetadataOf(node: GraphNodeInstance): SwitchNodeMetadata {
     const metadata = node.metadata?.["switch"];
     if (isRecord(metadata) && Array.isArray(metadata["cases"])) {
@@ -741,3 +1022,4 @@ export class MastraWorkflowCompiler {
     };
   }
 }
+

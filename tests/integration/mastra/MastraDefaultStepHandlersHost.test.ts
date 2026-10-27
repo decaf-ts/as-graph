@@ -21,12 +21,14 @@ import {
 import { createGraphBackendHost } from "../../../src/nest/graph/GraphBackendHost";
 import { createMastraDefaultStepHandlers } from "../../../src/mastra/MastraDefaultStepHandlers";
 import {
+  GRAPH_MASTRA_AGENT_UNAVAILABLE,
   GRAPH_MASTRA_UNSUPPORTED_KIND,
   type MastraBackendConfig,
 } from "../../../src/mastra/types";
 import type { MastraGraphExecutionBackend } from "../../../src/mastra/MastraGraphExecutionBackend";
 import { GraphExecutionBackendRegistry } from "../../../src/engine/execution/GraphExecutionBackendRegistry";
-import { graphWorkflowFixturesById } from "../../../src/workflows";
+import { basicWorkflowFixturesById } from "../../../src/workflows";
+import { mastraWorkflowFixturesById } from "../../../src/workflows/mastra";
 import { frameSinkHarness, rejectionGraphCodeOf } from "./helpers";
 
 /**
@@ -80,13 +82,13 @@ describe("Mastra default step handlers — host wiring (SAA-820)", () => {
         stepHandlers: createMastraDefaultStepHandlers(),
       });
       const backend = host.backend!;
-      const fixture = graphWorkflowFixturesById[fixtureId];
+      const fixture = basicWorkflowFixturesById[fixtureId];
       expect(fixture).toBeDefined();
       const harness = frameSinkHarness(`saa-820-${fixtureId}`);
 
       const result = await backend.execute({
         document: fixture.document,
-        plan: {} as never,
+        plan: undefined as never,
         inputs: fixture.inputs ?? {},
         options: {} as never,
         events: harness.sink,
@@ -105,13 +107,13 @@ describe("Mastra default step handlers — host wiring (SAA-820)", () => {
       stepHandlers: createMastraDefaultStepHandlers(),
     });
     const backend = host.backend!;
-    const fixture = graphWorkflowFixturesById[FAIL_CLOSED_FIXTURE_ID];
+    const fixture = mastraWorkflowFixturesById[FAIL_CLOSED_FIXTURE_ID];
     expect(fixture).toBeDefined();
     const harness = frameSinkHarness(`saa-859-${FAIL_CLOSED_FIXTURE_ID}`);
 
     const result = await backend.execute({
       document: fixture.document,
-      plan: {} as never,
+      plan: undefined as never,
       inputs: fixture.inputs ?? {},
       options: {} as never,
       events: harness.sink,
@@ -124,18 +126,28 @@ describe("Mastra default step handlers — host wiring (SAA-820)", () => {
     const types = harness.events.map((event) => event.type);
     expect(types).toContain(GraphExecutionEventType.WORKFLOW_FAILED);
     expect(types).not.toContain(GraphExecutionEventType.WORKFLOW_COMPLETED);
+    const failed = harness.events.find(
+      (event) => event.type === GraphExecutionEventType.WORKFLOW_FAILED
+    ) as { error?: { code?: string } } | undefined;
+    expect(failed).toBeDefined();
+    const nodeFailed = harness.events.find(
+      (event) =>
+        event.type === GraphExecutionEventType.NODE_FAILED &&
+        event.nodeId === "agent"
+    ) as { error?: { code?: string } } | undefined;
+    expect(nodeFailed?.error?.code).toBe(GRAPH_MASTRA_AGENT_UNAVAILABLE);
   });
 
   it("still fails closed with GRAPH_MASTRA_UNSUPPORTED_KIND when no stepHandlers are wired", async () => {
     const host = await bootHost({ mastra: {} });
     const backend = host.backend!;
-    const fixture = graphWorkflowFixturesById["fixture-manual-log"];
+    const fixture = basicWorkflowFixturesById["fixture-manual-log"];
     const harness = frameSinkHarness("saa-820-unhandled");
 
     const code = await rejectionGraphCodeOf(() =>
       backend.execute({
         document: fixture.document,
-        plan: {} as never,
+        plan: undefined as never,
         inputs: fixture.inputs ?? {},
         options: {} as never,
         events: harness.sink,

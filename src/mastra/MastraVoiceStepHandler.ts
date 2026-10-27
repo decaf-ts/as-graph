@@ -1,25 +1,28 @@
 /**
  * @module as-graph/mastra/MastraVoiceStepHandler
- * @summary Mastra step handler for the `core.agent.voice` kind (SAA-836 M6).
- * @description Translates a voice node into a mastra step that resolves the
- * node's voice configuration descriptor — mirroring mastra's `VoiceConfig`
- * shape — and hands it to the host-supplied voice factory, which resolves the
- * live mastra voice surface (for example the wired agent's `getVoice()`). The
+ * @summary Run-scoped voice service and step handler for the `core.agent.voice`
+ * kind (SAA-836 M6, re-homed by SAA-1547).
+ * @description Builds the {@link MastraVoiceNodeRuntime} service that the voice
+ * node delegates to from its `execute()`, then binds it to the single step
+ * adapter. The service resolves the node's voice configuration descriptor —
+ * mirroring mastra's `VoiceConfig` shape — and hands it to the host-supplied
+ * voice factory, which resolves the live mastra voice surface (for example the
+ * wired agent's `getVoice()`). The
  * concrete `@mastra/voice-*` provider packages are not vendored, so per R2
  * the voice surface is a declared extension point: without one the node fails
  * closed with {@link GRAPH_MASTRA_VOICE_UNAVAILABLE} instead of fabricating a
  * voice capability.
  */
-import { z } from "zod";
-import { createStep } from "@mastra/core/workflows";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
   GRAPH_MASTRA_VOICE_UNAVAILABLE,
   type MastraNodeStepHandler,
-  type MastraNodeStepOptions,
   type MastraVoiceConfigDescriptor,
 } from "./types";
+import type { MastraVoiceNodeRuntime } from "./nodes/MastraNodeExecutionServices";
+import { createMastraNodeStepHandler } from "./nodes/MastraNodeStepAdapter";
+import { AgentVoiceNode } from "./nodes/voice/node";
 
 /** The document node kind the voice step handler translates. */
 export const GRAPH_MASTRA_VOICE_KIND = "core.agent.voice";
@@ -76,48 +79,50 @@ export function mastraVoiceConfigDescriptorOf(
 }
 
 /**
+ * Builds the run-scoped voice service used by the voice node. The service owns
+ * the host voice-provider resolution; the node class owns the declared voice
+ * configuration descriptor.
+ *
+ * @param options - The handler options (the host voice factory).
+ * @returns The voice node runtime service.
+ */
+export function createMastraVoiceNodeRuntime(
+  options: MastraVoiceStepHandlerOptions = {}
+): MastraVoiceNodeRuntime {
+  return {
+    execute: async (node) => {
+      const descriptor = mastraVoiceConfigDescriptorOf(node);
+      if (!options.resolveVoice) {
+        throw new GraphExecutionError(
+          `Voice node '${node.id}' has no host mastra voice surface configured`,
+          GRAPH_MASTRA_VOICE_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind }
+        );
+      }
+      const voice = await options.resolveVoice(descriptor);
+      if (voice === undefined || voice === null) {
+        throw new GraphExecutionError(
+          `Voice node '${node.id}': the host mastra voice factory resolved no voice surface`,
+          GRAPH_MASTRA_VOICE_UNAVAILABLE,
+          { nodeId: node.id, kind: node.kind }
+        );
+      }
+      return { resource: voice };
+    },
+  };
+}
+
+/**
  * Builds the {@link MastraNodeStepHandler} registered for the
- * `core.agent.voice` kind. The step resolves the node's voice configuration
- * descriptor, delegates the live voice surface to the host factory, and
- * returns it on the `resource` output (R9 resource-output preferred). Without
- * a host factory the step fails closed — no voice capability is ever
- * fabricated.
+ * `core.agent.voice` kind through the single node-class adapter.
  *
  * @param options - The handler options (the host voice factory).
  * @returns The voice step handler.
- * @throws {GraphExecutionError} {@link GRAPH_MASTRA_VOICE_UNAVAILABLE} when no
- *   host factory is configured or it yields nothing.
  */
 export function createMastraVoiceStepHandler(
   options: MastraVoiceStepHandlerOptions = {}
 ): MastraNodeStepHandler {
-  return {
-    kind: GRAPH_MASTRA_VOICE_KIND,
-    createStep: (node: GraphNodeInstance, { stepId }: MastraNodeStepOptions) =>
-      createStep({
-        id: stepId,
-        inputSchema: z.any(),
-        outputSchema: z.any(),
-        execute: async (args: { inputData?: unknown }) => {
-          void args;
-          const descriptor = mastraVoiceConfigDescriptorOf(node);
-          if (!options.resolveVoice) {
-            throw new GraphExecutionError(
-              `Voice node '${node.id}' has no host mastra voice surface configured`,
-              GRAPH_MASTRA_VOICE_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind }
-            );
-          }
-          const voice = await options.resolveVoice(descriptor);
-          if (voice === undefined || voice === null) {
-            throw new GraphExecutionError(
-              `Voice node '${node.id}': the host mastra voice factory resolved no voice surface`,
-              GRAPH_MASTRA_VOICE_UNAVAILABLE,
-              { nodeId: node.id, kind: node.kind }
-            );
-          }
-          return { resource: voice };
-        },
-      }),
-  };
+  return createMastraNodeStepHandler(GRAPH_MASTRA_VOICE_KIND, AgentVoiceNode, {
+    voice: createMastraVoiceNodeRuntime(options),
+  });
 }

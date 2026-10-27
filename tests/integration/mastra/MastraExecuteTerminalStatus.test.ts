@@ -56,7 +56,7 @@ describe("MastraGraphExecutionBackend.execute — terminal status honesty (SAA-8
 
     const result = await backend.execute({
       document: failClosedCodeDocument(),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,
@@ -83,7 +83,7 @@ describe("MastraGraphExecutionBackend.execute — terminal status honesty (SAA-8
         name: "mastra-it-terminal-agent-fail-closed",
         nodes: [node("agent", "core.agent")],
       }),
-      plan: {} as never,
+      plan: undefined as never,
       inputs: {},
       options: {} as never,
       events: harness.sink,

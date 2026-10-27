@@ -15,6 +15,28 @@
       },
       "default": "./lib/esm/index.js"
     },
+    "./workflows": {
+      "import": {
+        "types": "./lib/types/workflows/index.d.mts",
+        "default": "./lib/esm/workflows/index.js"
+      },
+      "require": {
+        "types": "./lib/types/workflows/index.d.cts",
+        "default": "./lib/cjs/workflows/index.cjs"
+      },
+      "default": "./lib/esm/workflows/index.js"
+    },
+    "./workflows/mastra": {
+      "import": {
+        "types": "./lib/types/workflows/mastra/index.d.mts",
+        "default": "./lib/esm/workflows/mastra/index.js"
+      },
+      "require": {
+        "types": "./lib/types/workflows/mastra/index.d.cts",
+        "default": "./lib/cjs/workflows/mastra/index.cjs"
+      },
+      "default": "./lib/esm/workflows/mastra/index.js"
+    },
     "./shared": {
       "import": {
         "types": "./lib/types/shared/index.d.mts",

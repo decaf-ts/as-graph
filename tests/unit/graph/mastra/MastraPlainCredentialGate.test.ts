@@ -20,7 +20,7 @@
  */
 import { describe, expect, it } from "@jest/globals";
 import { LibSQLStore } from "@mastra/libsql";
-import type { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
+import { GraphExecutionError } from "../../../../src/engine/errors/GraphExecutionError";
 import { GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED } from "../../../../src/mastra/MastraEnvironment";
 import {
   mastraVectorStoreDescriptorOf,
@@ -29,7 +29,7 @@ import {
 } from "../../../../src/mastra/MastraVectorStore";
 import { resolveMastraMemoryStorage } from "../../../../src/mastra/MastraMemory";
 import type { MastraMemoryConfig } from "../../../../src/mastra/MastraMemory";
-import { AgentVectorStoreNode } from "../../../../src/node";
+import { AgentVectorStoreNode } from "../../../../src/mastra/nodes";
 import { executeNode, nodeExecutionRequest } from "../engine-fixtures";
 import { buildNodeContext } from "../nodes/node-test-utils";
 import { graphCodeOf } from "./helpers";
@@ -91,7 +91,7 @@ describe("mastra plaintext embedding credential gate (SAA-1089 regression)", () 
 
     const refusal = refusalOf(() => mastraVectorStoreDescriptorOf(config));
     expect(refusal.graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
-    expect(refusal.details).toMatchObject({
+    expect(refusal?.details).toMatchObject({
       provider: "pgvector",
       id: "vs",
       key: "apiKey",
@@ -114,9 +114,10 @@ describe("mastra plaintext embedding credential gate (SAA-1089 regression)", () 
     );
   });
 
-  it("refuses an embedding apiKey in AgentVectorStoreNode.execute before emitting a resource", () => {
-    const refusal = refusalOf(() =>
-      executeNode(
+  it("refuses an embedding apiKey in AgentVectorStoreNode.execute before emitting a resource", async () => {
+    let refusal: GraphExecutionError | undefined;
+    try {
+      await executeNode(
         AgentVectorStoreNode,
         nodeExecutionRequest({ ids: ["a"] }),
         buildNodeContext("core.agent.vectorStore", {
@@ -126,10 +127,13 @@ describe("mastra plaintext embedding credential gate (SAA-1089 regression)", () 
             embedding: plaintextEmbedding,
           },
         })
-      )
-    );
-    expect(refusal.graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
-    expect(refusal.details).toMatchObject({
+      );
+    } catch (error) {
+      refusal = error as GraphExecutionError;
+    }
+    expect(refusal).toBeInstanceOf(GraphExecutionError);
+    expect(refusal?.graphCode).toBe(GRAPH_MASTRA_PLAIN_CREDENTIAL_REFUSED);
+    expect(refusal?.details).toMatchObject({
       provider: "pgvector",
       id: "vs",
       key: "apiKey",
