@@ -318,6 +318,10 @@ export class GraphRunExecutor {
       } else if (abortReason === "user") {
         status = "cancelled";
         error = lastError;
+      } else if (result?.status === GraphExecutionStatus.SUSPENDED) {
+        // A suspended run is paused awaiting external (HITL) input, not
+        // finished: keep the non-terminal run status and emit no terminal event.
+        return await this.suspend(current, ...args);
       } else if (result?.status === GraphExecutionStatus.SUCCEEDED) {
         status = "succeeded";
       } else if (result?.status === GraphExecutionStatus.CANCELLED) {
@@ -375,6 +379,27 @@ export class GraphRunExecutor {
       type,
       error,
     });
+  }
+
+  /**
+   * Leaves a suspended run in its non-terminal `running` state. The engine
+   * paused execution awaiting external (HITL) input, so the run is neither
+   * finished nor failed: no terminal event is emitted and no `finishedAt` is
+   * stamped, so a later resume continues the same run.
+   *
+   * @param {GraphRun} current - The run to leave suspended in the run store.
+   * @param {...MaybeContextualArg<Context>} args - Optional Decaf context
+   * arguments forwarded to the run store when persisting the run.
+   * @returns {Promise<GraphRun>} The persisted run, still in its non-terminal
+   * `running` state.
+   */
+  private async suspend(
+    current: GraphRun,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRun> {
+    current.status = "running";
+    await this.persist(current, ...args);
+    return current;
   }
 
   private async finalize(

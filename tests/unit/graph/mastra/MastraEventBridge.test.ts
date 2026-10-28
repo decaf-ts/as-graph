@@ -336,7 +336,7 @@ describe("MastraEventBridge", () => {
       },
       {
         type: GraphExecutionEventType.WORKFLOW_SUSPENDED,
-        status: GraphExecutionStatus.PENDING,
+        status: GraphExecutionStatus.SUSPENDED,
         nodeId: "a",
         edgeId: undefined,
         iteration: undefined,
@@ -450,5 +450,36 @@ describe("MastraEventBridge", () => {
     expect(await terminalStatusOf({ type: "workflow-canceled" })).toBe(
       GraphExecutionStatus.CANCELLED
     );
+  });
+
+  it("records a suspended finish without emitting a terminal workflow event", async () => {
+    const { sink, events } = recordingSink();
+    const bridge = new MastraEventBridge({
+      runId: "run-1",
+      workflowId: source.id,
+      document: source,
+      sink,
+    });
+
+    await bridge.handle({
+      type: "workflow-finish",
+      payload: { workflowStatus: "suspended" },
+    });
+
+    expect(bridge.terminalStatus).toBe(GraphExecutionStatus.SUSPENDED);
+    expect(events).toEqual([]);
+    const types = events.map((event) => event.type);
+    expect(types).not.toContain(GraphExecutionEventType.WORKFLOW_COMPLETED);
+    expect(types).not.toContain(GraphExecutionEventType.WORKFLOW_FAILED);
+  });
+
+  it("keeps GraphExecutionStatus.SUSPENDED JSON-safe across a round trip", () => {
+    expect(GraphExecutionStatus.SUSPENDED).toBe("suspended");
+    expect(
+      JSON.parse(JSON.stringify({ status: GraphExecutionStatus.SUSPENDED }))
+    ).toEqual({ status: "suspended" });
+    expect(
+      JSON.parse(JSON.stringify(GraphExecutionStatus.SUSPENDED))
+    ).toBe("suspended");
   });
 });

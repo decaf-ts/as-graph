@@ -189,7 +189,7 @@ liveDescribe("Mastra suspend -> real resume (SAA-307 item 2)", () => {
     const suspended = harness.events.find(
       (event) => event.type === GraphExecutionEventType.WORKFLOW_SUSPENDED
     );
-    expect(suspended?.status).toBe(GraphExecutionStatus.PENDING);
+    expect(suspended?.status).toBe(GraphExecutionStatus.SUSPENDED);
     expect(suspended?.nodeId).toBe("approve");
   });
 

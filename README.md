@@ -533,13 +533,17 @@ workflow, runs it on the injected `@mastra/core` runtime (peer dependency
 the reviewed engine contract),
 bridges Mastra's `fullStream` onto the facade event sink, and enforces the
 schema-safe resume guard on every resume payload. The returned
-`GraphExecutionResult.status` is derived from the run's terminal outcome, never
+`GraphExecutionResult.status` is derived from the run's outcome, never
 assumed from the bare fact that the run resolved: the event bridge records the
-terminal `workflow-finish` status (`failed`/`tripwire` → `failed`,
-`canceled`/`cancelled` → `cancelled`, `success`/`succeeded` → `succeeded`), with
-the run result's/stream's raw status as fallback when the stream was not
-observed — so a failed or guardrail-tripped run reports `failed` and a
-cancelled run reports `cancelled` instead of a false `succeeded`. It reports
+final `workflow-finish` status (`failed`/`tripwire` → `failed`,
+`canceled`/`cancelled` → `cancelled`, `success`/`succeeded` → `succeeded`,
+`suspended`/`paused` → `suspended`), with the run result's/stream's raw status
+as fallback when the stream was not observed — so a failed or guardrail-tripped
+run reports `failed`, a cancelled run reports `cancelled`, and a suspended
+HITL run reports the non-terminal `suspended` instead of a false `succeeded`
+(a suspended finish is a pause awaiting external input: no terminal workflow
+event is emitted and the run record stays `running`, so a later resume
+continues the same run). It reports
 `codeMode:
 "unsupported"` (code-mode surfaces currently fail closed) and surfaces
 `workflowList`/`workflowLookup` over its compiled-workflow cache. Its full

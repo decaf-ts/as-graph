@@ -642,6 +642,10 @@ export function isGraphDisabledNodeBehavior(
 
 /**
  * Execution status for a workflow or individual node.
+ *
+ * `SUSPENDED` is a **non-terminal** pause: the run is waiting for external
+ * (HITL) input and may later resume or be cancelled. A suspended run is never
+ * reported as `SUCCEEDED` or `FAILED`.
  */
 export enum GraphExecutionStatus {
   PENDING = "pending",
@@ -652,6 +656,8 @@ export enum GraphExecutionStatus {
   SKIPPED = "skipped",
   CANCELLED = "cancelled",
   CACHED = "cached",
+  /** Non-terminal pause awaiting external (HITL) input; the run may resume. */
+  SUSPENDED = "suspended",
 }
 
 /**

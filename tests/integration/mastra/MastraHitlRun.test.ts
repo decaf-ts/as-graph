@@ -240,7 +240,7 @@ liveDescribe("mastra HITL suspend -> backend resume (SAA-836 M5)", () => {
     const suspended = seed.events.find(
       (event) => event.type === GraphExecutionEventType.WORKFLOW_SUSPENDED
     );
-    expect(suspended?.status).toBe(GraphExecutionStatus.PENDING);
+    expect(suspended?.status).toBe(GraphExecutionStatus.SUSPENDED);
 
     await backend.resume(RUN_ID, {
       step: "hitl",

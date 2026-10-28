@@ -115,16 +115,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Maps a Mastra run's terminal status (from the resolved run result
+ * Maps a Mastra run's finish status (from the resolved run result
  * `{ status }` or the stream's raw `status`) onto a canonical
  * GraphExecutionStatus. A tripwire guardrail abort and an explicit failure both
  * map to FAILED.
  *
  * @param {unknown} value - The run result object (with a `status` string) or a
  * raw status string.
- * @return {GraphExecutionStatus | undefined} The canonical terminal status, or
- * `undefined` for a non-terminal status (suspended/paused) so the caller keeps
- * its prior disposition.
+ * @returns {GraphExecutionStatus | undefined} The canonical status, or
+ * `undefined` for an unrecognised status so the caller keeps its prior
+ * disposition. A suspended/paused run maps to the non-terminal
+ * {@link GraphExecutionStatus.SUSPENDED}.
  */
 function mastraRunTerminalStatus(
   value: unknown
@@ -145,6 +146,9 @@ function mastraRunTerminalStatus(
     case "canceled":
     case "cancelled":
       return GraphExecutionStatus.CANCELLED;
+    case "suspended":
+    case "paused":
+      return GraphExecutionStatus.SUSPENDED;
     default:
       return undefined;
   }

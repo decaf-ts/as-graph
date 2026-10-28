@@ -17,10 +17,11 @@ import {
 /**
  * Maps an engine execution `GraphExecutionStatus` to the shared visual
  * state. `CACHED` collapses onto `GraphVisualState.SUCCEEDED` for
- * rendering; `CANCELLED`/`PENDING`/`PLANNING` yield `IDLE`.
+ * rendering; `SUSPENDED` renders as `BLOCKED` (paused awaiting external
+ * input); `CANCELLED`/`PENDING`/`PLANNING` yield `IDLE`.
  *
- * @param status - The engine execution status, if any.
- * @returns The visual state for the node/edge.
+ * @param {GraphExecutionStatus} [status] - The engine execution status, if any.
+ * @returns {GraphVisualState} The visual state for the node/edge.
  */
 export function mapExecutionStatus(
   status?: GraphExecutionStatus
@@ -35,6 +36,8 @@ export function mapExecutionStatus(
       return GraphVisualState.FAILED;
     case GraphExecutionStatus.SKIPPED:
       return GraphVisualState.SKIPPED;
+    case GraphExecutionStatus.SUSPENDED:
+      return GraphVisualState.BLOCKED;
     case GraphExecutionStatus.PENDING:
     case GraphExecutionStatus.PLANNING:
     case GraphExecutionStatus.CANCELLED:

@@ -108,10 +108,11 @@ export class MastraEventBridge {
   /** Document node ids; control/mapping entries are not graph nodes. */
   private readonly nodeIds: Set<string>;
   /**
-   * The run's terminal execution status, recorded from the `workflow-finish`
-   * event (or `workflow-canceled`). Kept in lock-step with the terminal workflow
-   * event this bridge emits, so a caller can never return a status that
-   * contradicts the event stream it produced.
+   * The run's final execution status, recorded from the `workflow-finish` event
+   * (or `workflow-canceled`). Kept in lock-step with the terminal workflow event
+   * this bridge emits, so a caller can never return a status that contradicts
+   * the event stream it produced. A suspended finish records
+   * {@link GraphExecutionStatus.SUSPENDED} and emits no terminal event.
    */
   private terminalWorkflowStatus?: GraphExecutionStatus;
 
@@ -142,12 +143,15 @@ export class MastraEventBridge {
   }
 
   /**
-   * The run's terminal execution status once the bridge has consumed the
-   * run's `workflow-finish`/`workflow-canceled` event.
+   * The run's final execution status once the bridge has consumed the run's
+   * `workflow-finish`/`workflow-canceled` event.
    *
-   * @return {GraphExecutionStatus | undefined} The terminal status, or
-   * `undefined` before a terminal event was consumed or when that event carries
-   * no terminal outcome (e.g. a suspended run).
+   * A suspended finish reports {@link GraphExecutionStatus.SUSPENDED}, which is
+   * a non-terminal pause (no terminal workflow event is emitted): the run is
+   * awaiting external (HITL) input and must never be read as `SUCCEEDED`.
+   *
+   * @return {GraphExecutionStatus | undefined} The final status, or
+   * `undefined` before a finishing event was consumed.
    */
   get terminalStatus(): GraphExecutionStatus | undefined {
     return this.terminalWorkflowStatus;
@@ -358,10 +362,12 @@ export class MastraEventBridge {
 
   /**
    * Emits the suspension state of a suspended step and the workflow-suspended
-   * event carrying Mastra's suspend payload.
+   * event carrying Mastra's suspend payload. The emitted event's status is
+   * {@link GraphExecutionStatus.SUSPENDED} (a non-terminal pause), never
+   * `PENDING`.
    *
-   * @param event - The raw `workflow-step-suspended` event.
-   * @returns Resolves once the derived events have been emitted.
+   * @param {MastraFullStreamEvent} event - The raw `workflow-step-suspended` event.
+   * @returns {Promise<void>} Resolves once the derived events have been emitted.
    */
   private async onStepSuspended(event: MastraFullStreamEvent): Promise<void> {
     const nodeId = this.stepId(event);
@@ -373,17 +379,23 @@ export class MastraEventBridge {
       type: GraphExecutionEventType.WORKFLOW_SUSPENDED,
       nodeId,
       path,
-      status: GraphExecutionStatus.PENDING,
+      status: GraphExecutionStatus.SUSPENDED,
       payload: { suspend: this.payloadOf(event)["suspendPayload"] },
     });
   }
 
   /**
-   * Emits the terminal workflow event: failed, cancelled, or completed with
-   * the final workflow result.
+   * Consumes the final `workflow-finish` event: failed, cancelled, suspended,
+   * or completed with the final workflow result.
    *
-   * @param event - The raw `workflow-finish` event.
-   * @returns Resolves once the derived events have been emitted.
+   * A suspended finish is a non-terminal pause: it only records the typed
+   * {@link GraphExecutionStatus.SUSPENDED} status, leaving the step-level
+   * `workflow.suspended` event as the engine's suspend signal and emitting
+   * neither `workflow.completed` nor `workflow.failed`.
+   *
+   * @param {MastraFullStreamEvent} event - The raw `workflow-finish` event.
+   * @returns {Promise<void>} Resolves once the derived events have been emitted
+   * (or immediately for a suspended finish, which emits no terminal event).
    */
   private async onWorkflowFinish(event: MastraFullStreamEvent): Promise<void> {
     const payload = this.payloadOf(event);
@@ -406,6 +418,13 @@ export class MastraEventBridge {
         type: GraphExecutionEventType.WORKFLOW_CANCELLED,
         status: GraphExecutionStatus.CANCELLED,
       });
+      return;
+    }
+    // A suspended run is paused awaiting HITL input, not complete: record the
+    // typed status without emitting a terminal workflow event. The real suspend
+    // signal is the `workflow.suspended` event from `onStepSuspended`.
+    if (workflowStatus === "suspended") {
+      this.terminalWorkflowStatus = GraphExecutionStatus.SUSPENDED;
       return;
     }
     if (workflowStatus === "success" || workflowStatus === "succeeded") {

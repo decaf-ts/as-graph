@@ -11,10 +11,10 @@
  * `expectations.mastra` is the oracle: `expectedStatus` and
  * `expectedSucceededNodeIds` are asserted against the run.
  * The HITL per-kind fixture and resume composite assert the suspend half via the
- * `workflow.suspended` event (the canonical status enum has no `suspended`
- * member, so the event is the engine's suspended signal). The resume half stays
- * the opt-in live-stack path covered by `MastraHitlRun.test.ts` (it needs a real
- * Mastra runtime + durable store).
+ * returned run status (`GraphExecutionStatus.SUSPENDED`) and the
+ * `workflow.suspended` event. The resume half stays the opt-in live-stack path
+ * covered by `MastraHitlRun.test.ts` (it needs a real Mastra runtime + durable
+ * store).
  */
 import { describe, it, expect, beforeAll, afterAll, jest } from "@jest/globals";
 
@@ -147,7 +147,8 @@ describe("Mastra per-kind fixture execution (SAA-1545 §7)", () => {
     expect(fixture).toBeDefined();
     expect(fixture.expectations?.mastra?.expectedStatus).toBe("suspended");
 
-    const { events } = await runFixture(backend, fixture);
+    const { result, events } = await runFixture(backend, fixture);
+    expect(result.status).toBe(GraphExecutionStatus.SUSPENDED);
     const types = events.map((event) => event.type);
     expect(types).toContain(GraphExecutionEventType.WORKFLOW_SUSPENDED);
     expect(types).not.toContain(GraphExecutionEventType.WORKFLOW_FAILED);
@@ -161,7 +162,8 @@ describe("Mastra per-kind fixture execution (SAA-1545 §7)", () => {
     expect(fixture).toBeDefined();
     expect(fixture.expectations?.mastra?.expectedStatus).toBe("suspended");
 
-    const { events } = await runFixture(backend, fixture);
+    const { result, events } = await runFixture(backend, fixture);
+    expect(result.status).toBe(GraphExecutionStatus.SUSPENDED);
     const types = events.map((event) => event.type);
     expect(types).toContain(GraphExecutionEventType.WORKFLOW_SUSPENDED);
     expect(types).not.toContain(GraphExecutionEventType.WORKFLOW_FAILED);
