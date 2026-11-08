@@ -22,6 +22,9 @@ import type {
 } from "../engine/types";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 
+const graphNodeMetadataIds = new WeakMap<object, number>();
+let nextGraphNodeMetadataId = 0;
+
 /**
  * Flattens a canonical {@link GraphNodeInstance} into the configuration object a
  * node class hydrates from.
@@ -86,6 +89,23 @@ export abstract class GraphNode<
   INPUT = unknown,
   OUTPUT = INPUT,
 > extends Model {
+  /**
+   * Gives each node constructor a unique metadata identity. The decoration
+   * package keys metadata with `Symbol.for([constructor.toString(),
+   * constructor.name])`; production CJS minification can make otherwise
+   * distinct node classes stringify identically. Keep the identity attached
+   * to the constructor so property decorators (which run before `@node`) and
+   * later metadata reads resolve the same key in every build format.
+   */
+  static override toString(): string {
+    let id = graphNodeMetadataIds.get(this);
+    if (id === undefined) {
+      id = nextGraphNodeMetadataId++;
+      graphNodeMetadataIds.set(this, id);
+    }
+    return `GraphNode#${id}`;
+  }
+
   /**
    * Hydrates the node instance from its flattened configuration.
    *
