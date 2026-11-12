@@ -219,18 +219,18 @@
   },
   "dependencies": {
     "@decaf-ts/as-zod": "^1.17.0",
-    "@decaf-ts/core": "^0.34.3",
+    "@decaf-ts/core": "^0.34.4",
     "@decaf-ts/crypto": "^0.16.0",
     "@decaf-ts/db-decorators": "^0.20.0",
     "@decaf-ts/decoration": "^0.20.0",
-    "@decaf-ts/decorator-validation": "^1.24.0",
-    "@decaf-ts/for-nest": "^0.18.1",
+    "@decaf-ts/decorator-validation": "^1.24.3",
+    "@decaf-ts/for-nest": "^0.18.2",
     "@decaf-ts/for-typeorm": "^0.16.0",
     "@decaf-ts/injectable-decorators": "^1.21.0",
     "@decaf-ts/integrations": "^0.15.3",
     "@decaf-ts/logging": "^0.30.3",
     "@decaf-ts/ui-decorators": "^0.22.0",
-    "@decaf-ts/for-http": "^0.22.0"
+    "@decaf-ts/for-http": "^0.22.5"
   },
   "devDependencies": {
     "@ai-sdk/openai-compatible": "^2.0.62",
