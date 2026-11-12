@@ -180,7 +180,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/decaf-ts/ts-workspace.git"
+    "url": "git+https://github.com/decaf-ts/as-graph.git"
   },
   "engines": {
     "node": ">=20.0.0",
