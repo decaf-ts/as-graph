@@ -782,7 +782,8 @@ beforeAll(async () => {
   } catch (error) {
     throw new Error(
       `Postgres is unreachable at ${BASE_PG_URL}; start the integrations harness ` +
-        `(decaf-postgres-integration on port 55435) or set DECAF_PG_URL. ${(error as Error).message}`
+        `(decaf-postgres-integration on port 55435) or set DECAF_PG_URL. ${(error as Error).message}`,
+      { cause: error }
     );
   }
 

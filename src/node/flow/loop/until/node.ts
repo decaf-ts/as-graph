@@ -24,7 +24,10 @@ import { GraphExecutionEventType } from "../../../../shared/graph";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
 import { GraphInputError } from "../../../../engine/errors/GraphInputError";
 import { GraphLoopLimitError } from "../../../../engine/errors/GraphLoopLimitError";
-import { extractLoopMetadata, resolveLoopMaxIterations } from "../loop-metadata";
+import {
+  extractLoopMetadata,
+  resolveLoopMaxIterations,
+} from "../loop-metadata";
 import { GRAPH_DEFAULT_MAX_LOOP_ITERATIONS } from "../../../../engine/constants";
 import { GraphConditionEvaluator } from "../../../../engine/loops/GraphConditionEvaluator";
 
@@ -44,8 +47,7 @@ export type GraphUntilLoopInput = Record<string, unknown>;
   labels: ["loop", "conditional", "until"],
   metadata: {
     title: "graph.node.loop.until.name",
-    description:
-      "graph.node.loop.until.description",
+    description: "graph.node.loop.until.description",
     loop: {
       maxIterations: 50,
       statePort: "state",
@@ -112,6 +114,7 @@ export class GraphUntilLoopNode extends GraphNode<
 
     await context.emit({ type: GraphExecutionEventType.LOOP_STARTED });
 
+    // eslint-disable-next-line no-useless-assignment
     let shouldStop = false;
 
     do {

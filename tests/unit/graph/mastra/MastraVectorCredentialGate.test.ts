@@ -38,6 +38,7 @@ class RecordingBinding {
 const recordingBinding = RecordingBinding as unknown as MastraVectorConstructor;
 
 const ENV_OVERRIDE = "MASTRA_TEST_VECTOR_PASSWORD";
+// eslint-disable-next-line no-unassigned-vars
 let envOriginal: string | undefined;
 
 afterEach(() => {
@@ -152,9 +153,9 @@ describe("mastra vector-store credential gate (SAA-911 F4)", () => {
     const withSecret = resolveMastraVectorStore(credentialed, {
       bindings: { redis: recordingBinding },
     });
-    expect((withSecret.store as unknown as RecordingBinding).options).toMatchObject(
-      { password: "redis-secret" }
-    );
+    expect(
+      (withSecret.store as unknown as RecordingBinding).options
+    ).toMatchObject({ password: "redis-secret" });
     expect(
       (withSecret.descriptor as unknown as Record<string, unknown>)[
         "credentialRef"
@@ -221,7 +222,10 @@ describe("mastra vector-store MASTRA_ credential-name gate (SAA-922 regression)"
       provider: "pgvector",
       id: "vs",
       connection: { host: "localhost", port: 5432, database: "db", user: "u" },
-      credentialRef: { credentialId: "LANGFUSE_SECRET_KEY", credentialType: "pg" },
+      credentialRef: {
+        credentialId: "LANGFUSE_SECRET_KEY",
+        credentialType: "pg",
+      },
     } as unknown as MastraVectorStoreConfig;
     const refusal = refusalOf(() =>
       resolveMastraVectorStore(config, {
@@ -237,7 +241,10 @@ describe("mastra vector-store MASTRA_ credential-name gate (SAA-922 regression)"
       provider: "redis",
       id: "vs",
       connection: { host: "localhost", port: 6379 },
-      credentialRef: { credentialId: "LANGFUSE_SECRET_KEY", credentialType: "redis" },
+      credentialRef: {
+        credentialId: "LANGFUSE_SECRET_KEY",
+        credentialType: "redis",
+      },
     } as unknown as MastraVectorStoreConfig;
     const refusal = refusalOf(() =>
       resolveMastraVectorStore(config, {
@@ -251,11 +258,20 @@ describe("mastra vector-store MASTRA_ credential-name gate (SAA-922 regression)"
     // A lowercase name, a foreign prefix, and a valid-looking name carrying
     // embedded junk must all fail closed — pre-fix each resolved when the
     // host variable was set.
-    for (const name of ["langfuse_secret_key", "MY_TOKEN", "MASTRA_PG\nPASSWORD"]) {
+    for (const name of [
+      "langfuse_secret_key",
+      "MY_TOKEN",
+      "MASTRA_PG\nPASSWORD",
+    ]) {
       const config = {
         provider: "pgvector",
         id: "vs",
-        connection: { host: "localhost", port: 5432, database: "db", user: "u" },
+        connection: {
+          host: "localhost",
+          port: 5432,
+          database: "db",
+          user: "u",
+        },
         credentialRef: { credentialId: name, credentialType: "pg" },
       } as unknown as MastraVectorStoreConfig;
       const refusal = refusalOf(() =>

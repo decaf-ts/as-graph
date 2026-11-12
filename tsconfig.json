@@ -5,6 +5,7 @@
     /* Basic Options */
     // "incremental": true,                         /* Enable incremental compilation */
     "target": "es2022" /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019', 'ES2020', 'ES2021', or 'ESNEXT'. */,
+    "rootDir": "." /* Keep TypeScript's inferred source root stable across per-test ts-jest compilations. */,
     "module": "esnext" /* Build targets override this in build-scripts; keep ESM-friendly defaults for tooling. */,
     "lib": [
       "es2022"

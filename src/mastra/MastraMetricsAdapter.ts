@@ -40,7 +40,10 @@ import {
 } from "./MastraMetricsModels";
 import { MastraMetricsStatement } from "./MastraMetricsStatement";
 import { MastraMetricsPaginator } from "./MastraMetricsStatement";
-import { GRAPH_MASTRA_METRICS_UNAVAILABLE, GRAPH_MASTRA_METRICS_READ_ONLY } from "./types";
+import {
+  GRAPH_MASTRA_METRICS_UNAVAILABLE,
+  GRAPH_MASTRA_METRICS_READ_ONLY,
+} from "./types";
 
 /** The flavour id the read-only mastra metrics adapter registers under. */
 export const MASTRA_METRICS_FLAVOUR = "mastra-metrics";
@@ -89,7 +92,12 @@ export interface MastraMetricsObservabilityStoreLike {
     pagination?: { page?: number; perPage?: number };
   }) => Promise<{
     spans: unknown[];
-    pagination?: { total?: number; page?: number; perPage?: number; hasMore?: boolean };
+    pagination?: {
+      total?: number;
+      page?: number;
+      perPage?: number;
+      hasMore?: boolean;
+    };
   }>;
 }
 
@@ -122,7 +130,10 @@ export function mastraMetricsStorageOf(
 ): MastraMetricsCompositeStoreLike {
   const candidate = runtime as MastraMetricsRuntimeLike | undefined;
   const storage = candidate?.getStorage?.();
-  if (!storage || typeof (storage as MastraMetricsCompositeStoreLike).getStore !== "function") {
+  if (
+    !storage ||
+    typeof (storage as MastraMetricsCompositeStoreLike).getStore !== "function"
+  ) {
     throw new GraphExecutionError(
       "Mastra metrics reads require the wired Mastra runtime to expose storage",
       GRAPH_MASTRA_METRICS_UNAVAILABLE
@@ -201,7 +212,12 @@ export class MastraMetricsAdapter extends Adapter<
     size: number,
     clazz: Constructor<M>
   ): MastraMetricsPaginator<M> {
-    return new MastraMetricsPaginator<M>(this, query as MastraMetricsQuery, size, clazz);
+    return new MastraMetricsPaginator<M>(
+      this,
+      query as MastraMetricsQuery,
+      size,
+      clazz
+    );
   }
 
   /**
@@ -273,22 +289,31 @@ export class MastraMetricsAdapter extends Adapter<
     void _args;
     const storage = mastraMetricsStorageOf(this.config.mastra);
     if (clazz === (MastraRunMetricModel as unknown as Constructor<M>)) {
-      const store = (await mastraMetricsDomainStoreOf(storage, "workflows")) as MastraMetricsWorkflowsStoreLike;
+      const store = (await mastraMetricsDomainStoreOf(
+        storage,
+        "workflows"
+      )) as MastraMetricsWorkflowsStoreLike;
       const row = (await store.getWorkflowRunById({
         runId: String(id),
       })) as MastraStorageRunRow | null;
-      if (!row) throw new NotFoundError(`No mastra run found for id '${String(id)}'`);
+      if (!row)
+        throw new NotFoundError(`No mastra run found for id '${String(id)}'`);
       const model = mastraRunRowToModel(
         row,
         typeof row.workflowName === "string" ? row.workflowName : ""
       );
       if (!model) {
-        throw new NotFoundError(`Mastra run '${String(id)}' is not projectable`);
+        throw new NotFoundError(
+          `Mastra run '${String(id)}' is not projectable`
+        );
       }
       return model as unknown as Record<string, any>;
     }
     if (clazz === (MastraScoreMetricModel as unknown as Constructor<M>)) {
-      const store = (await mastraMetricsDomainStoreOf(storage, "scores")) as MastraMetricsScoresStoreLike & {
+      const store = (await mastraMetricsDomainStoreOf(
+        storage,
+        "scores"
+      )) as MastraMetricsScoresStoreLike & {
         getScoreById?: (args: { id: string }) => Promise<unknown | null>;
       };
       if (typeof store.getScoreById !== "function") {
@@ -297,11 +322,16 @@ export class MastraMetricsAdapter extends Adapter<
           GRAPH_MASTRA_METRICS_UNAVAILABLE
         );
       }
-      const row = (await store.getScoreById({ id: String(id) })) as MastraStorageScoreRow | null;
-      if (!row) throw new NotFoundError(`No mastra score found for id '${String(id)}'`);
+      const row = (await store.getScoreById({
+        id: String(id),
+      })) as MastraStorageScoreRow | null;
+      if (!row)
+        throw new NotFoundError(`No mastra score found for id '${String(id)}'`);
       const model = mastraScoreRowToModel(row, "");
       if (!model) {
-        throw new NotFoundError(`Mastra score '${String(id)}' is not projectable`);
+        throw new NotFoundError(
+          `Mastra score '${String(id)}' is not projectable`
+        );
       }
       return model as unknown as Record<string, any>;
     }
@@ -336,9 +366,13 @@ export class MastraMetricsAdapter extends Adapter<
     void _args;
     const storage = mastraMetricsStorageOf(this.config.mastra);
     const rows: MastraMetricModel[] = [];
+    // eslint-disable-next-line no-useless-assignment
     let count = 0;
     if (query.kind === "runs") {
-      const store = (await mastraMetricsDomainStoreOf(storage, "workflows")) as MastraMetricsWorkflowsStoreLike;
+      const store = (await mastraMetricsDomainStoreOf(
+        storage,
+        "workflows"
+      )) as MastraMetricsWorkflowsStoreLike;
       const result = await store.listWorkflowRuns({
         ...(query.workflowName ? { workflowName: query.workflowName } : {}),
         ...(query.page !== undefined && query.perPage !== undefined
@@ -363,12 +397,17 @@ export class MastraMetricsAdapter extends Adapter<
           GRAPH_MASTRA_METRICS_UNAVAILABLE
         );
       }
-      const store = (await mastraMetricsDomainStoreOf(storage, "scores")) as MastraMetricsScoresStoreLike;
+      const store = (await mastraMetricsDomainStoreOf(
+        storage,
+        "scores"
+      )) as MastraMetricsScoresStoreLike;
       const result = await store.listScoresByRunId({
         runId: query.runId,
         pagination: {
           page: query.page ?? 0,
-          ...(query.perPage !== undefined ? { perPage: query.perPage } : { perPage: false }),
+          ...(query.perPage !== undefined
+            ? { perPage: query.perPage }
+            : { perPage: false }),
         },
       });
       count = result.pagination?.total ?? result.scores.length;
@@ -383,7 +422,10 @@ export class MastraMetricsAdapter extends Adapter<
           GRAPH_MASTRA_METRICS_UNAVAILABLE
         );
       }
-      const store = (await mastraMetricsDomainStoreOf(storage, "observability")) as MastraMetricsObservabilityStoreLike;
+      const store = (await mastraMetricsDomainStoreOf(
+        storage,
+        "observability"
+      )) as MastraMetricsObservabilityStoreLike;
       const result = await store.listTraces({
         mode: "page",
         filters: { runId: query.runId },
@@ -401,7 +443,10 @@ export class MastraMetricsAdapter extends Adapter<
       }
     }
     const projected = rows as unknown as R;
-    return (docsOnly ? projected : { data: projected, count }) as RawResult<R, D>;
+    return (docsOnly ? projected : { data: projected, count }) as RawResult<
+      R,
+      D
+    >;
   }
 
   /**

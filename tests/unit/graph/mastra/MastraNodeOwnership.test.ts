@@ -49,7 +49,9 @@ const NEUTRAL_KIND_COUNT = 89;
 const MASTRA_KIND_COUNT = 38;
 
 /** True when a class overrides the base `GraphNode.execute`. */
-function hasConcreteExecute(ctor: { prototype?: { execute?: unknown } }): boolean {
+function hasConcreteExecute(ctor: {
+  prototype?: { execute?: unknown };
+}): boolean {
   const prototype = ctor.prototype;
   return (
     !!prototype &&
@@ -73,10 +75,18 @@ function typescriptFilesUnder(directory: string): string[] {
 }
 
 /** Resolves one relative import specifier to an existing source file. */
-function resolveSourceSpecifier(fromFile: string, specifier: string): string | undefined {
+function resolveSourceSpecifier(
+  fromFile: string,
+  specifier: string
+): string | undefined {
   if (!specifier.startsWith(".")) return undefined;
   const base = resolve(dirname(fromFile), specifier);
-  const candidates = [base, `${base}.ts`, `${base}.d.ts`, resolve(base, "index.ts")];
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.d.ts`,
+    resolve(base, "index.ts"),
+  ];
   for (const candidate of candidates) {
     try {
       if (statSync(candidate).isFile()) return candidate;
@@ -203,8 +213,10 @@ describe("Mastra static implementation coverage (SAA-1547 §7)", () => {
       const { kind } = implementation;
       expect({
         kind,
-        registeredClass: MASTRA_NODE_CLASSES_BY_KIND[kind] === implementation.nodeClass,
-        manifest: MASTRA_NODE_MANIFESTS_BY_KIND[kind] === implementation.manifest,
+        registeredClass:
+          MASTRA_NODE_CLASSES_BY_KIND[kind] === implementation.nodeClass,
+        manifest:
+          MASTRA_NODE_MANIFESTS_BY_KIND[kind] === implementation.manifest,
         concreteExecute: hasConcreteExecute(implementation.nodeClass),
       }).toEqual({
         kind,
@@ -321,9 +333,16 @@ describe("Mastra per-kind behaviour audit (SAA-1547 §7)", () => {
       const step = compiled.steps.get("subject") as {
         execute: (args: { inputData?: unknown }) => Promise<unknown>;
       };
+
+      // eslint-disable-next-line no-useless-assignment
       let outcome: { output?: Record<string, unknown>; code?: string } = {};
       try {
-        outcome = { output: (await step.execute({ inputData: {} })) as Record<string, unknown> };
+        outcome = {
+          output: (await step.execute({ inputData: {} })) as Record<
+            string,
+            unknown
+          >,
+        };
       } catch (error) {
         outcome = { code: (error as { graphCode?: string }).graphCode };
       }
@@ -439,7 +458,10 @@ describe("Mastra manifest locale and round-trip invariants (SAA-1547 §7)", () =
 
   it("every Mastra manifest is JSON-safe and round-trips unchanged", () => {
     for (const manifest of MASTRA_NODE_MANIFESTS) {
-      expect({ kind: manifest.kind, jsonSafe: isGraphJsonSafeValue(manifest) }).toEqual({
+      expect({
+        kind: manifest.kind,
+        jsonSafe: isGraphJsonSafeValue(manifest),
+      }).toEqual({
         kind: manifest.kind,
         jsonSafe: true,
       });
@@ -449,7 +471,10 @@ describe("Mastra manifest locale and round-trip invariants (SAA-1547 §7)", () =
 
   it("every Mastra manifest declares default ports (documented source-trigger exceptions)", () => {
     for (const manifest of MASTRA_NODE_MANIFESTS) {
-      expect({ kind: manifest.kind, outputs: manifest.outputs.length > 0 }).toEqual({
+      expect({
+        kind: manifest.kind,
+        outputs: manifest.outputs.length > 0,
+      }).toEqual({
         kind: manifest.kind,
         outputs: true,
       });

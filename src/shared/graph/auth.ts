@@ -99,6 +99,8 @@ export function graphRolesOfMetadata(
  */
 export function graphNamespacesOfModel(model: unknown): string[] {
   if (model === undefined || model === null) return [];
+
+  // eslint-disable-next-line no-useless-assignment
   let resolved: unknown = model;
   try {
     resolved = Metadata.constr(model as Constructor);

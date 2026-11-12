@@ -45,6 +45,9 @@ const config = {
   // other. Pin every bare `@decaf-ts/*` import to this package's own copy so the
   // whole test graph shares one instance of each package.
   moduleNameMapper: {
+    // for-nest's Nest 12 dependency is ESM-only; the app and test runtime use
+    // the compatible Nest 11 installation at the package root.
+    "^@nestjs/common$": "<rootDir>/node_modules/@nestjs/common",
     "^@decaf-ts/([^/]+)$": "<rootDir>/node_modules/@decaf-ts/$1",
   },
   // `TEST_TARGET=lib` retargets the source-relative imports to `lib/cjs`;

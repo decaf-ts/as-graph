@@ -17,7 +17,14 @@
 const { existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
-const ENV_FILE = join(__dirname, "..", "..", "var", "as-graph-it", ".it-env.json");
+const ENV_FILE = join(
+  __dirname,
+  "..",
+  "..",
+  "var",
+  "as-graph-it",
+  ".it-env.json"
+);
 
 if (existsSync(ENV_FILE)) {
   let parsed;
@@ -27,7 +34,8 @@ if (existsSync(ENV_FILE)) {
     throw new Error(
       `prepare-it-tests wrote an unreadable ${ENV_FILE}: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
+      { cause: error }
     );
   }
   for (const [name, value] of Object.entries(parsed)) {
