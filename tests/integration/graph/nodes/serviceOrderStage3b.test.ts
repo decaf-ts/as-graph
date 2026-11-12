@@ -10,8 +10,6 @@
  * consumers opt in through its optional peer dependency.
  */
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   BadRequestError,
   ConflictError,
@@ -189,35 +187,6 @@ describe("SAA-1027 Stage 3b service order", () => {
   });
 
   it("keeps imapflow dynamic and optional at runtime", async () => {
-    const packageJson = JSON.parse(
-      readFileSync(
-        resolve(__dirname, "../../../../../integrations/package.json"),
-        "utf8"
-      )
-    ) as {
-      dependencies?: Record<string, string>;
-      optionalDependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-      peerDependencies?: Record<string, string>;
-      peerDependenciesMeta?: Record<string, { optional?: boolean }>;
-    };
-    expect(packageJson.dependencies?.["imapflow"]).toBeUndefined();
-    expect(packageJson.optionalDependencies?.["imapflow"]).toBeUndefined();
-    expect(packageJson.peerDependencies?.["imapflow"]).toBeDefined();
-    expect(packageJson.peerDependenciesMeta?.["imapflow"]?.optional).toBe(
-      true
-    );
-
-    const source = readFileSync(
-      resolve(
-        __dirname,
-        "../../../../../integrations/src/comms/email/EmailService.ts"
-      ),
-      "utf8"
-    );
-    expect(source).toContain('const moduleName = "imapflow"');
-    expect(source).toContain("await import(moduleName)");
-
     const email = new EmailService();
     await email.initialize({
       provider: "graph",

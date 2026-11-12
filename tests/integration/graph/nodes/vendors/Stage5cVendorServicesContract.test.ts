@@ -17,8 +17,6 @@ import {
   beforeEach,
   afterAll,
 } from "@jest/globals";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   BadRequestError,
   ConflictError,
@@ -1142,13 +1140,7 @@ describe("Stage 5c vendor service contracts — environment slices", () => {
 });
 
 describe("Stage 5c vendor service contracts — public subpath exports", () => {
-  it("publishes a package subpath export for every vendor service", () => {
-    const packageJson = JSON.parse(
-      readFileSync(
-        resolve(__dirname, "../../../../../../integrations/package.json"),
-        "utf8"
-      )
-    ) as { exports?: Record<string, unknown> };
+  it("resolves every vendor service through its public package subpath", () => {
     const expected = [
       "./comms/discord",
       "./comms/whatsapp",
@@ -1161,7 +1153,9 @@ describe("Stage 5c vendor service contracts — public subpath exports", () => {
       "./calendar/google-calendar",
     ];
     for (const subpath of expected) {
-      expect(packageJson.exports?.[subpath]).toBeDefined();
+      expect(() =>
+        require.resolve(`@decaf-ts/integrations/${subpath.slice(2)}`)
+      ).not.toThrow();
     }
   });
 });
