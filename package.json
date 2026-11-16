@@ -238,12 +238,13 @@
     "@decaf-ts/logging": "^0.30.3",
     "@decaf-ts/ui-decorators": "^0.23.0",
     "@opentelemetry/api": "~1.9.1",
-    "@opentelemetry/exporter-metrics-otlp-http": "^0.208.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.220.0",
     "@opentelemetry/exporter-prometheus": "^0.219.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.208.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
     "@opentelemetry/sdk-metrics": "^2.2.0",
     "@opentelemetry/sdk-trace-node": "^2.12.1",
-    "bullmq": "^5.81.5"
+    "bullmq": "^6.7.6",
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
     "@ai-sdk/openai-compatible": "^2.0.62",
@@ -374,6 +375,7 @@
     "@decaf-ts/ui-decorators": "$@decaf-ts/ui-decorators",
     "@decaf-ts/for-testing": "$@decaf-ts/for-testing",
     "@decaf-ts/utils": "$@decaf-ts/utils",
-    "@decaf-ts/transactional-decorators": "$@decaf-ts/transactional-decorators"
+    "@decaf-ts/transactional-decorators": "$@decaf-ts/transactional-decorators",
+    "ioredis": "^6.0.0"
   }
 }
