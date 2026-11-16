@@ -234,7 +234,7 @@
     "@decaf-ts/for-nest": "^0.19.0",
     "@decaf-ts/for-typeorm": "^0.17.0",
     "@decaf-ts/injectable-decorators": "^1.22.0",
-    "@decaf-ts/integrations": "^0.15.5",
+    "@decaf-ts/integrations": "^0.16.0",
     "@decaf-ts/logging": "^0.30.3",
     "@decaf-ts/ui-decorators": "^0.23.0",
     "@opentelemetry/api": "~1.9.1",
@@ -374,6 +374,6 @@
     "@decaf-ts/ui-decorators": "$@decaf-ts/ui-decorators",
     "@decaf-ts/for-testing": "$@decaf-ts/for-testing",
     "@decaf-ts/utils": "$@decaf-ts/utils",
-    "@decaf-ts/transactional-decorators": "^0.15.0"
+    "@decaf-ts/transactional-decorators": "$@decaf-ts/transactional-decorators"
   }
 }
