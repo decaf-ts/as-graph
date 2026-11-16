@@ -13,7 +13,7 @@
  * run-scoped MCP service. Square (rectangular) node under the agent category
  * (R4).
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -42,6 +42,7 @@ export interface McpServerTriggerOutput {
 @node("core.agent.trigger.mcp", {
   kind: "core.agent.trigger.mcp",
   category: "Agent",
+  capabilities: ["trigger"],
   width: 128,
   height: 112,
   labels: ["agent", "ai", "trigger", "mcp", "server"],
@@ -109,6 +110,7 @@ export class McpServerTriggerNode extends GraphNode<
   instructions?: string;
 
   /** The transport the host server surface starts with (`http` or `stdio`). */
+  @option(["http", "stdio"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.mcp_trigger.fields.transport.label",
     type: "select",
@@ -120,6 +122,7 @@ export class McpServerTriggerNode extends GraphNode<
    * The C6 delivery-authentication scheme clients must use (`token` or
    * `hmac`). Defaults to `token`.
    */
+  @option(["hmac", "token"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.mcp_trigger.fields.authMode.label",
     type: "select",

@@ -54,6 +54,7 @@ import { GraphCredentialReferenceValidator } from "./GraphCredentialReferenceVal
 import type { GraphCredentialAuthorizer } from "./GraphCredentialReferenceValidator";
 import { GraphDocumentValidationError } from "./GraphValidationErrors";
 import type { GraphValidationIssue, GraphWorkflowValidationResult } from "./GraphValidationIssue";
+import { graphNestLoopBodies } from "../../shared/graph/document/GraphLoopBodyLayout";
 import type {
   GraphResolvedEdgeInstance,
   GraphResolvedNodeInstance,
@@ -255,11 +256,27 @@ export class GraphWorkflowDocumentValidator {
    *   the resolved workflow.
    */
   async validate(
-    document: GraphWorkflowDocument,
+    submitted: GraphWorkflowDocument,
     depth = 0,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphWorkflowValidationResult> {
     const issues: GraphValidationIssue[] = [];
+    // Loop bodies drawn on the canvas are nested into `node.loop.body` first:
+    // the nine stages (and the resolved workflow) see the canonical form only.
+    const nested =
+      submitted && Array.isArray(submitted.nodes) && Array.isArray(submitted.edges)
+        ? graphNestLoopBodies(submitted)
+        : { document: submitted, issues: [] };
+    const document = nested.document;
+    for (const issue of nested.issues) {
+      issues.push({
+        code: issue.code,
+        path: `nodes[${issue.loopId}].loop`,
+        message: issue.message,
+        nodeId: issue.loopId,
+        details: { subject: issue.subject },
+      });
+    }
     const limits = {
       ...DEFAULT_GRAPH_WORKFLOW_VALIDATION_LIMITS,
       ...this.options.limits,

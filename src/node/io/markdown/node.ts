@@ -8,7 +8,7 @@
  */
 import { marked } from "marked";
 import TurndownService from "turndown";
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -127,6 +127,7 @@ export class MarkdownNode extends GraphNode<
   value?: unknown;
 
   /** Conversion direction (default `htmlToMarkdown`). */
+  @option(["markdownToHtml", "htmlToMarkdown"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.markdown.fields.mode.label",
     type: "select",
@@ -160,6 +161,7 @@ export class MarkdownNode extends GraphNode<
   destinationKey?: string;
 
   /** Turndown heading style (default `atx`). */
+  @option(["setext", "atx"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.markdown.fields.headingStyle.label",
     type: "select",
@@ -208,6 +210,7 @@ export class MarkdownNode extends GraphNode<
   strongDelimiter?: string;
 
   /** Link output style (default `inlined`). */
+  @option(["inlined", "referenced"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.markdown.fields.linkStyle.label",
     type: "select",

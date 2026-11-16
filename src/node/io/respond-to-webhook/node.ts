@@ -14,7 +14,7 @@
  * correlation key the webhook trigger awaits on — and progress is reported;
  * `delivered` reports whether a waiter was actually registered.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -149,6 +149,7 @@ export class RespondToWebhookNode extends GraphNode<
   @input({ handle: "value" })
   value?: unknown;
 
+  @option(["text", "json", "firstIncomingItem", "allIncomingItems", "noData"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.respond_to_webhook.fields.respondWith.label",
     type: "select",

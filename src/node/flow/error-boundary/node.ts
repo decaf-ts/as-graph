@@ -10,7 +10,7 @@ import {
   GraphExecutionStatus,
   type GraphExecutionErrorPayload,
 } from "../../../shared/graph";
-import { GraphNode } from "../../base";
+import { GraphNode, graphDefaultInput } from "../../base";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import type {
   GraphExecutionValues,
@@ -93,7 +93,7 @@ export class ErrorBoundaryFlowNode extends GraphNode<
   ): Promise<GraphExecutionValues> {
     const config = context.node.errorBoundary;
     if (!config?.try) {
-      return { result: request.inputs["value"] ?? request.inputs };
+      return { result: graphDefaultInput(request.inputs) };
     }
 
     const engine = context.engine;

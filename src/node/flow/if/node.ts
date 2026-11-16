@@ -15,7 +15,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import type { Condition } from "../../../shared/graph";
-import { GraphNode } from "../../base";
+import { GraphNode, graphDefaultInput } from "../../base";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -60,6 +60,7 @@ function ifConditionState(
 @node("core.flow.if", {
   kind: "core.flow.if",
   category: "Flow Control",
+  capabilities: ["branching"],
   color: "#f59e0b",
   icon: "ti-arrows-split-2",
   width: 96,
@@ -93,7 +94,7 @@ export class IfFlowNode extends GraphNode<IfFlowInput, IfFlowOutput> {
     context: GraphExecutionContext
   ): GraphExecutionValues | Promise<GraphExecutionValues> {
     const input = request.inputs;
-    const inputValue = input["value"] ?? input;
+    const inputValue = graphDefaultInput(input);
 
     if (!this.condition) {
       throw new GraphExecutionError(
@@ -148,7 +149,11 @@ export class IfFlowNode extends GraphNode<IfFlowInput, IfFlowOutput> {
   value!: unknown;
 
   /** Output carrying the input value when the condition evaluates truthy. */
-  @required()
+  /**
+   * The branch taken when the condition holds. Never `@required`: a
+   * branching node emits only the port of the branch it selected, so the
+   * `else` branch legitimately leaves `then` unset.
+   */
   @output({ handle: "then" })
   then!: unknown;
 

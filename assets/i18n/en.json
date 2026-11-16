@@ -606,24 +606,31 @@
       "utility": {
         "map": {
           "name": "Map",
-          "description": "Transforms the current input into a new output object using the configured mapper.",
+          "description": "Evaluates an expression once per input item and emits the mapped items.",
           "ports": {
             "input": {
               "value": {
-                "label": "Input value",
-                "placeholder": "Value to transform"
+                "label": "Items",
+                "placeholder": "List (or single value) to map"
+              },
+              "expression": {
+                "label": "Expression",
+                "placeholder": "$item.price * $item.qty"
               }
             },
             "output": {
               "result": {
                 "label": "Result"
+              },
+              "count": {
+                "label": "Count"
               }
             }
           },
           "fields": {
-            "value": {
-              "label": "Input value",
-              "placeholder": "Value to transform"
+            "expression": {
+              "label": "Expression",
+              "placeholder": "$item.price * $item.qty"
             }
           }
         },
@@ -848,6 +855,14 @@
               },
               "iterations": {
                 "label": "Iterations"
+              },
+              "body": {
+                "label": "Body"
+              }
+            },
+            "connection": {
+              "loop": {
+                "label": "Loop body"
               }
             }
           },
@@ -889,6 +904,14 @@
               },
               "iterations": {
                 "label": "Iterations"
+              },
+              "body": {
+                "label": "Body"
+              }
+            },
+            "connection": {
+              "loop": {
+                "label": "Loop body"
               }
             }
           },
@@ -932,6 +955,9 @@
               },
               "actions": {
                 "label": "Actions"
+              },
+              "object": {
+                "label": "Structured output"
               }
             },
             "model": {
@@ -952,11 +978,6 @@
             "scorers": {
               "scorers": {
                 "label": "Scorers"
-              }
-            },
-            "embedding": {
-              "embedding": {
-                "label": "Embedding"
               }
             },
             "hooks": {
@@ -987,6 +1008,11 @@
             "outputProcessors": {
               "outputProcessors": {
                 "label": "Output processors"
+              }
+            },
+            "subagents": {
+              "subagents": {
+                "label": "Sub-agents"
               }
             }
           },
@@ -1135,13 +1161,22 @@
         },
         "delegation_hook": {
           "name": "Delegation hook",
-          "description": "Represents an onDelegationStart/onDelegationComplete hook for a sub-agent.",
+          "description": "Runs when a supervisor delegates to the sub-agent it is attached to (onDelegationStart / onDelegationComplete): rewrite or reject the delegation, or replace its result.",
           "fields": {
             "phase": {
               "label": "Delegation phase"
             },
-            "subAgentId": {
-              "label": "Sub-agent id"
+            "prompt": {
+              "label": "Prompt (use {{prompt}} for the original)"
+            },
+            "instructions": {
+              "label": "Sub-agent instructions"
+            },
+            "maxSteps": {
+              "label": "Max steps"
+            },
+            "feedback": {
+              "label": "Feedback to the supervisor"
             }
           },
           "ports": {
@@ -1331,6 +1366,11 @@
               "memory": {
                 "label": "Memory"
               }
+            },
+            "embedding": {
+              "embedding": {
+                "label": "Embedding"
+              }
             }
           }
         },
@@ -1377,11 +1417,19 @@
             "output": {
               "resource": {
                 "label": "Embedding resource"
+              },
+              "vectors": {
+                "label": "Vectors"
               }
             },
             "embedding": {
               "embedding": {
                 "label": "Embedding"
+              }
+            },
+            "input": {
+              "text": {
+                "label": "Text"
               }
             }
           }
@@ -1410,6 +1458,9 @@
             },
             "credentialRef": {
               "label": "Credential reference"
+            },
+            "topK": {
+              "label": "Top K"
             }
           },
           "ports": {
@@ -1422,6 +1473,26 @@
               },
               "documents": {
                 "label": "Documents"
+              }
+            },
+            "input": {
+              "documents": {
+                "label": "Documents"
+              },
+              "ids": {
+                "label": "Ids"
+              },
+              "query": {
+                "label": "Query"
+              },
+              "queryVector": {
+                "label": "Query vector"
+              },
+              "filter": {
+                "label": "Filter"
+              },
+              "topK": {
+                "label": "Top K"
               }
             }
           }
@@ -1484,6 +1555,14 @@
               },
               "count": {
                 "label": "Chunk count"
+              }
+            },
+            "input": {
+              "text": {
+                "label": "Text"
+              },
+              "documents": {
+                "label": "Documents"
               }
             }
           }
@@ -2053,6 +2132,20 @@
             "output": {
               "resource": {
                 "label": "Voice surface"
+              },
+              "audio": {
+                "label": "Speech"
+              },
+              "transcript": {
+                "label": "Transcript"
+              }
+            },
+            "input": {
+              "text": {
+                "label": "Text"
+              },
+              "audio": {
+                "label": "Audio"
               }
             }
           },
@@ -2065,6 +2158,25 @@
             },
             "listeningModel": {
               "label": "Listening model"
+            }
+          }
+        },
+        "sub_agent": {
+          "name": "Sub-agent",
+          "description": "An agent a supervisor agent delegates to. Connect it to an agent's Sub-agents zone; the supervisor's model calls it as a tool.",
+          "ports": {
+            "output": {
+              "resource": {
+                "label": "Sub-agent resource"
+              }
+            },
+            "subagents": {
+              "parent": {
+                "label": "Supervisor"
+              },
+              "subagents": {
+                "label": "Sub-agents"
+              }
             }
           }
         }
@@ -2786,6 +2898,10 @@
             },
             "failOnError": {
               "label": "Fail on non-2xx status"
+            },
+            "fileName": {
+              "label": "File name",
+              "placeholder": "Used when the response names no file"
             }
           }
         },
@@ -2822,7 +2938,7 @@
         },
         "read_write_file": {
           "name": "Read/Write Files from Disk",
-          "description": "Read a file from disk or write content to a file.",
+          "description": "Read a file from disk as a binary file, or write content or a file to disk.",
           "ports": {
             "input": {
               "value": {
@@ -2831,7 +2947,7 @@
             },
             "output": {
               "result": {
-                "label": "Result"
+                "label": "File or write result"
               },
               "bytes": {
                 "label": "Byte count"
@@ -2987,7 +3103,7 @@
         },
         "spreadsheet_file": {
           "name": "Spreadsheet File",
-          "description": "Parse or write CSV, TSV, and JSON spreadsheet data locally.",
+          "description": "Read a spreadsheet file (CSV, TSV, JSON, XLSX, ODS) into rows, or write rows into a spreadsheet file (CSV, TSV, JSON, XLSX, ODS, XLS).",
           "fields": {
             "operation": {
               "label": "Operation"
@@ -3009,6 +3125,13 @@
             },
             "hasHeader": {
               "label": "Has header"
+            },
+            "sheetName": {
+              "label": "Sheet name"
+            },
+            "fileName": {
+              "label": "File name",
+              "placeholder": "e.g. report.xlsx"
             }
           }
         },
@@ -3035,19 +3158,19 @@
         },
         "convert_to_file": {
           "name": "Convert to File",
-          "description": "Convert JSON data to a file payload (CSV, HTML, JSON, text, or base64 binary).",
+          "description": "Convert JSON data to a file (CSV, HTML, iCal, RTF, XLSX, XLS, ODS, JSON, text, or binary).",
           "ports": {
             "input": {
               "value": {
                 "label": "Input data"
+              },
+              "sheetName": {
+                "label": "Sheet name"
               }
             },
             "output": {
               "result": {
                 "label": "File payload"
-              },
-              "content": {
-                "label": "Text content"
               },
               "bytes": {
                 "label": "Byte length"
@@ -3057,9 +3180,6 @@
           "fields": {
             "operation": {
               "label": "Operation"
-            },
-            "binaryPropertyName": {
-              "label": "Put output file in field"
             },
             "sourceProperty": {
               "label": "Source property",
@@ -3081,9 +3201,6 @@
             "headerRow": {
               "label": "Header row"
             },
-            "sheetName": {
-              "label": "Sheet name"
-            },
             "addBOM": {
               "label": "Add byte order mark (BOM)"
             },
@@ -3101,6 +3218,9 @@
             },
             "capitalize": {
               "label": "Capitalize headers"
+            },
+            "sheetName": {
+              "label": "Sheet name"
             }
           }
         },

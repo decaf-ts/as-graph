@@ -45,8 +45,8 @@ const SOURCE_ROOT = resolve(PACKAGE_ROOT, "src");
 
 /** The 89 engine-neutral kinds (SAA-1547 §2). */
 const NEUTRAL_KIND_COUNT = 89;
-/** The 38 Mastra-owned kinds (SAA-1547 §2). */
-const MASTRA_KIND_COUNT = 38;
+/** The 39 Mastra-owned kinds (SAA-1547 §2, plus core.agent.subAgent). */
+const MASTRA_KIND_COUNT = 39;
 
 /** True when a class overrides the base `GraphNode.execute`. */
 function hasConcreteExecute(ctor: {
@@ -170,7 +170,7 @@ function localeKeysOf(value: unknown, keys = new Set<string>()): Set<string> {
 }
 
 describe("Mastra node catalogue ownership (SAA-1547 §2)", () => {
-  it("splits 127 built-in kinds into 89 neutral and 38 Mastra kinds", () => {
+  it("splits 128 built-in kinds into 89 neutral and 39 Mastra kinds", () => {
     expect(Object.keys(GRAPH_BUILT_IN_NODE_CLASSES_BY_KIND)).toHaveLength(
       NEUTRAL_KIND_COUNT
     );

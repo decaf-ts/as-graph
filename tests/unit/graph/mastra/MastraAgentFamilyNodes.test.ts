@@ -81,7 +81,7 @@ const CASES: FamilyCase[] = [
     name: "delegationHook",
     node: AgentDelegationHookNode,
     kind: "core.agent.delegationHook",
-    inputs: ["phase", "subAgentId", "value"],
+    inputs: ["phase", "prompt", "instructions", "maxSteps", "feedback", "value"],
     outputs: ["fromAgentId", "toAgentId", "input", "output", "error", "value"],
     connection: ["hook", MASTRA_AGENT_ZONE.hooks],
   },
@@ -151,7 +151,7 @@ describe("Mastra AI-family nodes — manifest surface (SAA-836 M3)", () => {
     expect(MASTRA_AGENT_ZONES).toEqual([
       "memory",
       "scorers",
-      "embedding",
+      "subagents",
       "hooks",
       "sandbox",
       "tools",
@@ -286,8 +286,8 @@ describe("Mastra AI-family nodes — execute (SAA-836 M3)", () => {
     const result = await executeNode(
       AgentDelegationHookNode,
       nodeExecutionRequest(
-        { fromAgentId: "parent", input: { task: "x" } },
-        { parameters: { subAgentId: "child", phase: "start" } }
+        { fromAgentId: "parent", toAgentId: "child", input: { task: "x" } },
+        { parameters: { phase: "start" } }
       ),
       ctx("core.agent.delegationHook")
     );
@@ -297,7 +297,7 @@ describe("Mastra AI-family nodes — execute (SAA-836 M3)", () => {
       input: { task: "x" },
       output: undefined,
       error: undefined,
-      value: { fromAgentId: "parent", input: { task: "x" } },
+      value: { fromAgentId: "parent", toAgentId: "child", input: { task: "x" } },
     });
   });
 

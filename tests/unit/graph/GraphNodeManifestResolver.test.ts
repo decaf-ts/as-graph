@@ -217,8 +217,10 @@ describe("GraphNodeManifestResolver", () => {
       "Case B",
       "graph.node.flow_control.switch.ports.output.default.label",
     ]);
+    // `defaultPort` is a form-only field (no port): it is published too.
     expect(resolved.parameters.map((parameter) => parameter.id)).toEqual([
       "value",
+      "defaultPort",
       "cases",
       "hasDefault",
       "switch",

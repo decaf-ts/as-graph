@@ -182,16 +182,20 @@ liveDescribe("mastra resume without host getRun (SAA-926 §6.3)", () => {
   beforeEach(async () => {
     await purgeLiveRuns(
       sharedLiveStorage(),
-      [RUN_ID, SEED_RUN_ID],
-      ["mastra-it-human-approval"]
+      [RUN_ID, SEED_RUN_ID]
+      // Purged by run id only: the workflow name is shared with another
+      // suite running in parallel against the same database, and purging by
+      // name deleted that suite\'s suspended snapshot mid-test.
     );
   });
 
   afterAll(async () => {
     await purgeLiveRuns(
       sharedLiveStorage(),
-      [RUN_ID, SEED_RUN_ID],
-      ["mastra-it-human-approval"]
+      [RUN_ID, SEED_RUN_ID]
+      // Purged by run id only: the workflow name is shared with another
+      // suite running in parallel against the same database, and purging by
+      // name deleted that suite\'s suspended snapshot mid-test.
     );
     await closeLiveStores();
   });

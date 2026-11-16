@@ -13,10 +13,11 @@
  * `ConfluenceService` is initialized per execution and shut down in a
  * `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { defaultInputText, isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -79,6 +80,12 @@ export class ConfluenceNode extends GraphNode<
   ConfluenceNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the page body when `body` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Confluence operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `confluence` credential supplies the token, username, and base URL.
@@ -90,6 +97,11 @@ export class ConfluenceNode extends GraphNode<
     request: GraphNodeExecutionRequest<ConfluenceNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.body) && routed !== undefined) {
+      this.body = defaultInputText(routed) as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Confluence node requires an operation",
@@ -200,6 +212,7 @@ export class ConfluenceNode extends GraphNode<
   }
 
   /** Confluence operation to perform (default `getPage`). */
+  @option(["getPage", "listSpaces", "createPage", "updatePage", "deletePage", "search"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.confluence.fields.operation.label",
     type: "select",

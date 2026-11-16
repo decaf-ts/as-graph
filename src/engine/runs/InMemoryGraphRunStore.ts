@@ -1,5 +1,11 @@
-import type { GraphRun, GraphRunStore } from "./types";
-import type { GraphRunModel } from "../../shared/graph";
+import {
+  GRAPH_RUN_ACTIVE_STATUSES,
+  type GraphRun,
+  type GraphRunPruneQuery,
+  type GraphRunRetentionEntry,
+  type GraphRunStore,
+} from "./types";
+import { isGraphRunTerminalStatus, type GraphRunModel } from "../../shared/graph";
 import { runToModel } from "./GraphRunConverters";
 
 /**
@@ -54,5 +60,81 @@ export class InMemoryGraphRunStore implements GraphRunStore {
    */
   release(runId: string): void {
     this.runs.delete(runId);
+  }
+
+  /**
+   * One batch of prunable finished runs (see {@link GraphRunStore.listPrunableRuns}).
+   *
+   * @return {Promise<GraphRunRetentionEntry[]>} The batch.
+   */
+  async listPrunableRuns(query: GraphRunPruneQuery): Promise<GraphRunRetentionEntry[]> {
+    const at = (run: GraphRun) => new Date(run.finishedAt ?? run.createdAt).getTime();
+    const finished = [...this.runs.values()].filter((run) =>
+      isGraphRunTerminalStatus(run.status)
+    );
+    const ordered =
+      query.before !== undefined
+        ? finished
+            .filter((run) => at(run) < (query.before as Date).getTime())
+            .sort((a, b) => at(a) - at(b))
+        : finished.sort((a, b) => at(b) - at(a)).slice(query.keepNewest ?? 0);
+    return ordered.slice(0, query.limit).map((run) => ({
+      runId: run.runId,
+      status: run.status,
+      createdAt: new Date(run.createdAt),
+      ...(run.finishedAt ? { finishedAt: new Date(run.finishedAt) } : {}),
+    }));
+  }
+
+  /**
+   * Deletes a run (no-op for an unknown id).
+   *
+   * @param {string} runId - Id of the run to delete.
+   * @return {Promise<void>} Resolves once the run is gone.
+   */
+  async deleteRun(runId: string): Promise<void> {
+    this.runs.delete(runId);
+  }
+
+  async listStaleRuns(query: { before: Date; includeQueued: boolean }): Promise<GraphRun[]> {
+    return [...this.runs.values()]
+      .filter((run) => (GRAPH_RUN_ACTIVE_STATUSES as readonly string[]).includes(run.status))
+      .filter((run) => query.includeQueued || run.status !== "queued")
+      .filter((run) => !run.suspendedAt)
+      .filter((run) => {
+        const beat = run.heartbeatAt ?? run.startedAt ?? run.createdAt;
+        return new Date(beat).getTime() < query.before.getTime();
+      })
+      .map((run) => ({ ...run }));
+  }
+
+  async heartbeat(runId: string, workerId: string, at: Date): Promise<void> {
+    const run = this.runs.get(runId);
+    if (run) this.runs.set(runId, { ...run, workerId, heartbeatAt: at.toISOString() });
+  }
+
+  async countActiveRuns(callerKey: string): Promise<number> {
+    return [...this.runs.values()].filter(
+      (run) =>
+        run.callerKey === callerKey &&
+        (GRAPH_RUN_ACTIVE_STATUSES as readonly string[]).includes(run.status)
+    ).length;
+  }
+
+  async countRunsSince(callerKey: string, since: Date): Promise<number> {
+    return [...this.runs.values()].filter(
+      (run) => run.callerKey === callerKey && new Date(run.createdAt) >= since
+    ).length;
+  }
+
+  async findByIdempotencyKey(idempotencyKey: string): Promise<GraphRun | null> {
+    const run = [...this.runs.values()].find((r) => r.idempotencyKey === idempotencyKey);
+    return run ? { ...run } : null;
+  }
+
+  async sumStoredBytes(callerKey: string): Promise<number> {
+    return [...this.runs.values()]
+      .filter((run) => run.callerKey === callerKey)
+      .reduce((total, run) => total + (run.storedBytes ?? 0), 0);
   }
 }

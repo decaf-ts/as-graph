@@ -10,7 +10,8 @@
  * sequenced event stream the SSE controller replays.
  */
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
-import type { Context, MaybeContextualArg } from "@decaf-ts/core";
+import { Context, type MaybeContextualArg } from "@decaf-ts/core";
+import { graphAuthDataOf, type GraphAuthData } from "../auth";
 import {
   GraphExecutionEventType,
   isGraphJsonSafeValue,
@@ -38,6 +39,8 @@ import {
   type GraphRunCreateRequest,
   type GraphRunDocumentResolver,
   type GraphRunEventStore,
+  type GraphRunPruneQuery,
+  type GraphRunRetentionOptions,
   type GraphRunStore,
 } from "./types";
 import {
@@ -47,6 +50,19 @@ import {
 } from "./ownership";
 import type { GraphRunModel } from "../../shared/graph";
 import { GraphRunEventPublisher } from "./GraphRunEventPublisher";
+import { graphRunTimeOf } from "./GraphRunConverters";
+import { createHash, randomUUID } from "node:crypto";
+import { hostname } from "node:os";
+import { InlineGraphRunQueue, type GraphRunQueue } from "./queue/GraphRunQueue";
+import { InProcessGraphRunBus, type GraphRunBus } from "./bus/GraphRunBus";
+import {
+  InMemoryGraphRunDataStore,
+  graphRunResultExpanded,
+  type GraphRunDataStore,
+} from "./GraphRunDataStore";
+import type { GraphRunQuotaResolver } from "./GraphRunQuotas";
+import { graphMetrics, withGraphSpan } from "../telemetry/GraphTelemetry";
+import type { GraphExecutionErrorPayload } from "../../shared/graph";
 import { GraphRunDocumentProvider, GraphRunExecutor } from "./GraphRunExecutor";
 
 /** Construction options for {@link GraphRunService}. */
@@ -66,7 +82,51 @@ export interface GraphRunServiceOptions {
    * `false` — ownership checks fail closed for absent identities (SAA-595).
    */
   allowAnonymousAccess?: boolean;
+  /**
+   * Run retention: prune finished runs by age and count, with their events
+   * and the files only they hold. Unset: runs are kept.
+   */
+  retention?: GraphRunRetentionOptions;
+  /** Where created runs wait for a worker (default: inline, this process). */
+  queue?: GraphRunQueue;
+  /** Cross-process event/control bus (default: in-process). */
+  bus?: GraphRunBus;
+  /** `all` (default) enqueues and executes; `api` only enqueues; `worker` only executes. */
+  role?: "all" | "api" | "worker";
+  /** This process's worker id (default `hostname:pid:uuid`). */
+  workerId?: string;
+  /** Where finished runs' full results (and run requests) live (default: in memory). */
+  runData?: GraphRunDataStore;
+  /** Worker heartbeat period (default 10 s). */
+  heartbeatMs?: number;
+  /** A run whose worker has not beaten for this long is orphaned (default 60 s). */
+  leaseMs?: number;
+  /** Orphan recovery period (default 30 s; `0` disables it). */
+  recoveryIntervalMs?: number;
+  /** Runs waiting in the queue above which creation is rejected (429). */
+  maxQueueDepth?: number;
+  /** Per-tenant quotas (default: none). */
+  quotas?: GraphRunQuotaResolver;
+  /** How long an idempotency key is honoured (default 24 h). */
+  idempotencyTtlMs?: number;
 }
+
+/** Default worker heartbeat period. */
+export const DEFAULT_GRAPH_RUN_HEARTBEAT_MS = 10_000;
+/** Default worker lease (no beat for this long = orphaned). */
+export const DEFAULT_GRAPH_RUN_LEASE_MS = 60_000;
+/** Default orphan recovery period. */
+export const DEFAULT_GRAPH_RUN_RECOVERY_INTERVAL_MS = 30_000;
+/** Default idempotency window. */
+export const DEFAULT_GRAPH_RUN_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Runs pruned per batch. */
+const PRUNE_BATCH = 500;
+/** Upper bound on prune batches per pass. */
+const MAX_PRUNE_ROUNDS = 1000;
+
+/** Default period of the retention timer: one hour. */
+export const DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * Run lifecycle service (DECAF-50 §4.16): creates, tracks, cancels, and
@@ -104,17 +164,346 @@ export class GraphRunService {
     this.runStore = runStore;
     this.eventStore = eventStore;
     this.publisher = new GraphRunEventPublisher(eventStore, options.limits);
+    this.runData = options.runData ?? new InMemoryGraphRunDataStore();
+    this.queue = options.queue ?? new InlineGraphRunQueue();
+    this.bus = options.bus ?? new InProcessGraphRunBus();
+    this.workerId = options.workerId ?? `${hostname()}:${process.pid}:${randomUUID()}`;
     this.executor = new GraphRunExecutor(
       engine,
       runStore,
       this.publisher,
-      { onRunCompleted: options.onRunCompleted },
+      {
+        runData: this.runData,
+        onRunCompleted: async (run, result) => {
+          await options.onRunCompleted?.(run, result);
+          // Every finished run is a chance to enforce retention.
+          if (this.options.retention) void this.pruneRuns().catch(() => {});
+        },
+      },
       options.limits
     );
     this.options = {
       ...options,
       limits: { ...DEFAULT_GRAPH_RUN_LIMITS, ...options.limits },
     };
+    const intervalMs =
+      options.retention?.intervalMs ?? DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MS;
+    if (options.retention && intervalMs > 0) {
+      this.pruneTimer = setInterval(() => {
+        void this.pruneRuns().catch(() => {});
+      }, intervalMs);
+      this.pruneTimer.unref?.();
+    }
+    const pinSweepMs =
+      options.retention?.pinSweepIntervalMs ?? DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MS;
+    if (options.retention && pinSweepMs > 0) {
+      this.pinSweepTimer = setInterval(() => {
+        void this.engine.sweepExpiredPins().catch(() => {});
+      }, pinSweepMs);
+      this.pinSweepTimer.unref?.();
+    }
+  }
+
+  /** Periodic expired-pin sweep, when retention is configured. */
+  private pinSweepTimer?: ReturnType<typeof setInterval>;
+
+  /** Periodic retention timer, when retention is configured. */
+  private pruneTimer?: ReturnType<typeof setInterval>;
+  /** Periodic orphan recovery timer. */
+  private recoveryTimer?: ReturnType<typeof setInterval>;
+  private readonly runData: GraphRunDataStore;
+  private readonly queue: GraphRunQueue;
+  private readonly bus: GraphRunBus;
+  /** This process's worker id. */
+  readonly workerId: string;
+  private starting?: Promise<void>;
+  /** Runs this process is executing. */
+  private readonly executing = new Set<string>();
+  private stopControl?: () => void;
+  private stopping = false;
+
+  /** The run queue (for readiness and depth). */
+  get runQueue(): GraphRunQueue {
+    return this.queue;
+  }
+
+  /** The run bus (for readiness). */
+  get runBus(): GraphRunBus {
+    return this.bus;
+  }
+
+  /** The run data store. */
+  get runDataStore(): GraphRunDataStore {
+    return this.runData;
+  }
+
+  /**
+   * Starts the queue (claiming runs unless the role is `api`), listens to
+   * control messages and starts orphan recovery. Idempotent; `createRun`
+   * starts the service on first use.
+   */
+  start(): Promise<void> {
+    this.starting ??= (async () => {
+      const role = this.options.role ?? "all";
+      await this.queue.start(
+        role === "api" ? undefined : (runId) => this.executeQueuedRun(runId)
+      );
+      this.stopControl = await this.bus.onControl((message) => {
+        if (message.type === "cancel") this.executor.abort(message.runId, "user");
+      });
+      const every =
+        this.options.recoveryIntervalMs ?? DEFAULT_GRAPH_RUN_RECOVERY_INTERVAL_MS;
+      if (every > 0 && role !== "api") {
+        void this.recoverOrphanedRuns().catch(() => undefined);
+        this.recoveryTimer = setInterval(() => {
+          void this.recoverOrphanedRuns().catch(() => undefined);
+        }, every);
+        this.recoveryTimer.unref?.();
+      }
+    })();
+    return this.starting;
+  }
+
+  /**
+   * Executes one queued run in this process (the queue's worker): loads the
+   * run and its request, beats while it executes, and returns once it is
+   * finished or suspended. A run already finished or cancelled is skipped.
+   */
+  async executeQueuedRun(runId: string): Promise<void> {
+    const run = await this.runStore.readRun(runId);
+    if (!run || run.status !== "queued") return;
+    const data = await this.runData.load(runId);
+    const request = data?.request;
+    const provider = this.documentProviderFor(
+      request?.document
+        ? { workflow: request.document }
+        : { workflowId: request?.workflowId ?? run.workflowId },
+      run.ownerUser
+    );
+    const createdMs = graphRunTimeOf(run.createdAt);
+    if (Number.isFinite(createdMs)) {
+      graphMetrics.queueWait.record((Date.now() - createdMs) / 1000);
+    }
+    run.workerId = this.workerId;
+    run.attempt = (run.attempt ?? 0) + 1;
+    run.heartbeatAt = new Date().toISOString();
+    this.executor.begin(runId);
+    this.executor.setAuth(runId, request?.auth as GraphAuthData | undefined);
+    this.executing.add(runId);
+    const beat = setInterval(() => {
+      void this.runStore
+        .heartbeat?.(runId, this.workerId, new Date())
+        .catch(() => undefined);
+    }, this.options.heartbeatMs ?? DEFAULT_GRAPH_RUN_HEARTBEAT_MS);
+    beat.unref?.();
+    graphMetrics.activeRuns.add(1);
+    try {
+      await withGraphSpan(
+        "graph.run",
+        { "graph.run.id": runId, "graph.workflow.id": run.workflowId },
+        () => this.executor.schedule(run, provider, request?.inputs ?? {})
+      );
+    } finally {
+      clearInterval(beat);
+      graphMetrics.activeRuns.add(-1);
+      this.executing.delete(runId);
+      this.finishActiveRun(runId);
+    }
+  }
+
+  /**
+   * Fails runs whose worker stopped beating (crashed process, lost lease):
+   * not finished, not waiting for external input, last beat older than the
+   * lease. Queued runs count only when the queue is not durable (an inline
+   * queue loses them with the process). Each gets `GRAPH_RUN_ORPHANED` and a
+   * terminal event continuing its stored sequence; its files and data stay
+   * until retention prunes it.
+   *
+   * @param now - The reference time.
+   * @returns The ids of the runs failed.
+   */
+  async recoverOrphanedRuns(now: Date = new Date()): Promise<string[]> {
+    if (!this.runStore.listStaleRuns) return [];
+    const leaseMs = this.options.leaseMs ?? DEFAULT_GRAPH_RUN_LEASE_MS;
+    const stale = await this.runStore.listStaleRuns({
+      before: new Date(now.getTime() - leaseMs),
+      includeQueued: !this.queue.durable,
+    });
+    const recovered: string[] = [];
+    for (const run of stale) {
+      if (this.executor.waitFor(run.runId)) continue;
+      const error: GraphExecutionErrorPayload = {
+        name: "GraphRunOrphanedError",
+        message: `Graph run '${run.runId}' lost its worker${run.workerId ? ` (${run.workerId})` : ""} and was failed by recovery`,
+        code: "GRAPH_RUN_ORPHANED",
+      };
+      const sequence = (await this.eventStore.lastSequence?.(run.runId)) ?? 0;
+      this.publisher.resumeFrom(run.runId, sequence);
+      await this.publisher
+        .publish({
+          runId: run.runId,
+          workflowId: run.workflowId,
+          type: GraphExecutionEventType.WORKFLOW_FAILED,
+          error,
+        })
+        .catch(() => undefined);
+      this.publisher.release(run.runId);
+      await this.runStore.saveRun({
+        ...run,
+        status: "failed",
+        error,
+        finishedAt: now.toISOString(),
+      });
+      graphMetrics.runsFinished.add(1, { status: "failed" });
+      recovered.push(run.runId);
+    }
+    return recovered;
+  }
+
+  /**
+   * Graceful shutdown: stops claiming runs, waits up to `graceMs` for the
+   * runs this process executes, then interrupts the rest
+   * (`GRAPH_RUN_INTERRUPTED`), and closes the bus.
+   */
+  async shutdown(graceMs = Number(process.env["GRAPH_SHUTDOWN_GRACE_MS"] ?? 30_000)): Promise<void> {
+    if (this.stopping) return;
+    this.stopping = true;
+    this.dispose();
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    this.recoveryTimer = undefined;
+    await this.queue.stop().catch(() => undefined);
+    const inFlight = [...this.executing]
+      .map((runId) => this.executor.waitFor(runId))
+      .filter((completion): completion is Promise<GraphRun> => completion !== undefined);
+    const drained = Promise.allSettled(inFlight);
+    const deadline = new Promise((resolve) => {
+      const timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    });
+    await Promise.race([drained, deadline]);
+    for (const runId of [...this.executing]) {
+      this.executor.abort(runId, "shutdown");
+    }
+    await Promise.race([
+      drained,
+      new Promise((resolve) => setTimeout(resolve, 5_000).unref?.()),
+    ]);
+    this.stopControl?.();
+    await this.bus.close().catch(() => undefined);
+  }
+  /** The prune in progress; concurrent requests share it. */
+  private pruning?: Promise<string[]>;
+
+  /**
+   * Applies run retention now: deletes the finished runs older than
+   * `retention.maxAgeMs` and those beyond the newest `retention.maxCount`,
+   * each with its events and the files no other run or pin holds. Runs still
+   * queued or running are never touched. Concurrent calls share one prune.
+   *
+   * @param now - The reference time (defaults to the current time).
+   * @returns The ids of the pruned runs.
+   */
+  pruneRuns(now: Date = new Date()): Promise<string[]> {
+    if (!this.pruning) {
+      this.pruning = this.prune(now).finally(() => {
+        this.pruning = undefined;
+      });
+    }
+    return this.pruning;
+  }
+
+  private async prune(now: Date): Promise<string[]> {
+    const retention = this.options.retention;
+    const store = this.runStore;
+    if (!retention || !store.listPrunableRuns || !store.deleteRun) return [];
+    const pruned: string[] = [];
+    const drain = async (query: Omit<GraphRunPruneQuery, "limit">) => {
+      // Batches until nothing matches; the bound guards against a store that
+      // keeps returning rows it cannot delete.
+      for (let round = 0; round < MAX_PRUNE_ROUNDS; round++) {
+        const batch = await store.listPrunableRuns!({ ...query, limit: PRUNE_BATCH });
+        const victims = batch.filter((entry) => !this.executing.has(entry.runId));
+        for (const { runId } of victims) {
+          await this.purgeRun(runId);
+          pruned.push(runId);
+          graphMetrics.runsPruned.add(1);
+        }
+        if (batch.length < PRUNE_BATCH || victims.length === 0) return;
+      }
+    };
+    if (retention.maxAgeMs !== undefined) {
+      await drain({ before: new Date(now.getTime() - retention.maxAgeMs) });
+    }
+    if (retention.maxCount !== undefined) {
+      await drain({ keepNewest: retention.maxCount });
+    }
+    // Files released by the pruned runs (and earlier releases) are deleted
+    // once their grace period has passed.
+    await this.engine.binaryStore?.sweep?.(now);
+    return pruned;
+  }
+
+  /**
+   * Removes a finished run: its events, the files no other run or pin holds,
+   * and finally the run row (last, so a failure part-way is retried).
+   */
+  private async purgeRun(
+    runId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<void> {
+    this.releaseRunState(runId);
+    await this.eventStore.release?.(runId);
+    await this.engine.binaryStore?.deleteRun(runId);
+    await this.runData.delete(runId);
+    await this.runStore.deleteRun?.(runId, ...args);
+  }
+
+  /**
+   * Deletes a finished run on request (n8n's "delete execution"): the run,
+   * its events and the files only it holds. A run still queued or running
+   * must be cancelled first.
+   *
+   * @param runId - The run to delete.
+   * @param ownerUser - The caller; must own the run (write ownership).
+   * @returns The deleted run as it was.
+   * @throws NotFoundError when the run does not exist.
+   * @throws GraphExecutionError `GRAPH_RUN_DELETE_ACTIVE` for an unfinished
+   * run, `GRAPH_RUN_DELETE_UNSUPPORTED` when the run store cannot delete.
+   */
+  async deleteRun(
+    runId: string,
+    ownerUser: string | null,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphRun> {
+    const run = await this.runStore.readRun(runId, ...args);
+    if (!run) {
+      throw new NotFoundError(`No graph run found for runId '${runId}'`);
+    }
+    this.assertWriteOwnership(run, ownerUser);
+    if (!isGraphRunTerminalStatus(run.status)) {
+      throw new GraphExecutionError(
+        `Graph run '${runId}' is ${run.status}; cancel it before deleting it`,
+        "GRAPH_RUN_DELETE_ACTIVE",
+        { runId, status: run.status }
+      );
+    }
+    if (!this.runStore.deleteRun) {
+      throw new GraphExecutionError(
+        "The configured run store cannot delete runs",
+        "GRAPH_RUN_DELETE_UNSUPPORTED",
+        { runId }
+      );
+    }
+    await this.purgeRun(runId, ...args);
+    return run;
+  }
+
+  /** Stops the retention timer (for hosts shutting the service down). */
+  dispose(): void {
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
+    this.pruneTimer = undefined;
+    if (this.pinSweepTimer) clearInterval(this.pinSweepTimer);
+    this.pinSweepTimer = undefined;
   }
 
   /** Effective run limits, with defaults applied. */
@@ -143,6 +532,13 @@ export class GraphRunService {
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRun> {
     this.validateCreateRequest(request);
+    if (this.stopping) {
+      throw new GraphExecutionError(
+        "The graph backend is shutting down",
+        "GRAPH_RUN_SHUTTING_DOWN"
+      );
+    }
+    await this.start();
 
     const workflowId = request.workflowId ?? request.workflow?.id ?? "";
     if (!workflowId) {
@@ -157,13 +553,34 @@ export class GraphRunService {
     }
 
     const callerKey = concurrencyKey ?? ownerUser ?? "anonymous";
-    const activeForCaller =
-      this.activeByCaller.get(callerKey) ?? new Set<string>();
-    if (activeForCaller.size >= this.options.limits.maxConcurrentRuns) {
-      throw new ValidationError(
-        `Graph run rejected: the configured limit of ${this.options.limits.maxConcurrentRuns} concurrent runs per caller is exhausted`
-      );
+    const requestHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          workflowId: request.workflowId,
+          workflow: request.workflow,
+          inputs: request.inputs ?? {},
+        })
+      )
+      .digest("hex");
+    const idempotencyKey = request.idempotencyKey
+      ? `${ownerUser ?? callerKey}:${request.idempotencyKey}`
+      : undefined;
+    if (idempotencyKey && this.runStore.findByIdempotencyKey) {
+      const existing = await this.runStore.findByIdempotencyKey(idempotencyKey, ...args);
+      const ttl = this.options.idempotencyTtlMs ?? DEFAULT_GRAPH_RUN_IDEMPOTENCY_TTL_MS;
+      if (existing && Date.now() - graphRunTimeOf(existing.createdAt) < ttl) {
+        if (existing.requestHash !== requestHash) {
+          throw new GraphExecutionError(
+            "The Idempotency-Key was already used with a different request",
+            "GRAPH_RUN_IDEMPOTENCY_CONFLICT",
+            { runId: existing.runId }
+          );
+        }
+        return existing;
+      }
     }
+
+    await this.assertAdmission(callerKey, ...args);
 
     const runId = this.generateRunId();
     const run: GraphRun = {
@@ -172,29 +589,124 @@ export class GraphRunService {
       ownerUser,
       status: "queued",
       createdAt: new Date().toISOString(),
+      callerKey,
+      attempt: 0,
+      requestHash,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     };
 
-    this.executor.begin(runId);
+    // The request — and the caller's principal — travel with the run, so a
+    // worker in any process runs it as the caller.
+    const ctx = args.find((arg) => arg instanceof Context) as Context | undefined;
+    const auth = graphAuthDataOf(ctx);
+    await this.runData.save(runId, {
+      request: {
+        ...(request.workflow ? { document: request.workflow } : {}),
+        workflowId,
+        inputs: request.inputs ?? {},
+        ...(Object.keys(auth ?? {}).length > 0
+          ? { auth: JSON.parse(JSON.stringify(auth)) as Record<string, unknown> }
+          : {}),
+      },
+    });
     await this.runStore.saveRun({ ...run }, ...args);
-
-    const provider = this.documentProviderFor(request, ownerUser);
-    activeForCaller.add(runId);
-    this.activeByCaller.set(callerKey, activeForCaller);
-    this.callerKeysByRun.set(runId, callerKey);
-    const completion = this.executor.schedule(
-      run,
-      provider,
-      request.inputs ?? {},
-      ...args
-    );
-    void completion
-      .catch(() => undefined)
-      .finally(() => this.finishActiveRun(runId));
-
+    if (!this.queue.durable) {
+      // Executed in this process: track it for the per-caller fallback count.
+      const activeForCaller = this.activeByCaller.get(callerKey) ?? new Set<string>();
+      activeForCaller.add(runId);
+      this.activeByCaller.set(callerKey, activeForCaller);
+      this.callerKeysByRun.set(runId, callerKey);
+    }
+    graphMetrics.runsStarted.add(1);
+    try {
+      await this.queue.enqueue(runId);
+    } catch (e: unknown) {
+      this.finishActiveRun(runId);
+      throw e;
+    }
     return run;
   }
 
+  /**
+   * Admission control for a new run: per-caller concurrency, the tenant's
+   * quotas and queue backpressure. Rejections count in
+   * `graph_runs_rejected_total` and map to HTTP 429 (403 for storage).
+   */
+  private async assertAdmission(
+    callerKey: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<void> {
+    const reject = (code: string, message: string, reason: string, details = {}) => {
+      graphMetrics.runsRejected.add(1, { reason });
+      return new GraphExecutionError(message, code, { callerKey, ...details });
+    };
+    const active = this.runStore.countActiveRuns
+      ? await this.runStore.countActiveRuns(callerKey, ...args)
+      : (this.activeByCaller.get(callerKey)?.size ?? 0);
+    if (active >= this.options.limits.maxConcurrentRuns) {
+      throw reject(
+        "GRAPH_RUN_CONCURRENCY_LIMIT",
+        `Graph run rejected: the configured limit of ${this.options.limits.maxConcurrentRuns} concurrent runs per caller is exhausted`,
+        "concurrency"
+      );
+    }
+    const quota = await this.options.quotas?.resolve(callerKey);
+    if (quota?.maxActiveRuns !== undefined && active >= quota.maxActiveRuns) {
+      throw reject(
+        "GRAPH_QUOTA_EXCEEDED",
+        `Graph run rejected: the tenant quota of ${quota.maxActiveRuns} active runs is reached`,
+        "quota-active",
+        { quota: "maxActiveRuns" }
+      );
+    }
+    if (quota?.maxRunsPerMinute !== undefined && this.runStore.countRunsSince) {
+      const recent = await this.runStore.countRunsSince(
+        callerKey,
+        new Date(Date.now() - 60_000),
+        ...args
+      );
+      if (recent >= quota.maxRunsPerMinute) {
+        throw reject(
+          "GRAPH_QUOTA_EXCEEDED",
+          `Graph run rejected: the tenant quota of ${quota.maxRunsPerMinute} runs per minute is reached`,
+          "quota-rate",
+          { quota: "maxRunsPerMinute" }
+        );
+      }
+    }
+    if (quota?.maxStoredBytes !== undefined && this.runStore.sumStoredBytes) {
+      const stored = await this.runStore.sumStoredBytes(callerKey, ...args);
+      if (stored >= quota.maxStoredBytes) {
+        throw reject(
+          "GRAPH_QUOTA_STORAGE_EXCEEDED",
+          `Graph run rejected: the tenant's runs store ${stored} bytes, above the quota of ${quota.maxStoredBytes}`,
+          "quota-storage",
+          { quota: "maxStoredBytes", stored }
+        );
+      }
+    }
+    if (this.options.maxQueueDepth !== undefined) {
+      const depth = await this.queue.depth();
+      if (depth >= this.options.maxQueueDepth) {
+        throw reject(
+          "GRAPH_RUN_QUEUE_FULL",
+          `Graph run rejected: ${depth} runs are waiting for a worker (limit ${this.options.maxQueueDepth})`,
+          "backpressure",
+          { depth }
+        );
+      }
+    }
+  }
+
   /** Reads a run, asserting it belongs to `ownerUser`. */
+  /**
+   * Reads a run row without ownership checks or result expansion (internal
+   * use: readiness probes, recovery).
+   */
+  getRunRecord(runId: string): Promise<GraphRun | null> {
+    return this.runStore.readRun(runId);
+  }
+
   async getRun(
     runId: string,
     ownerUser: string | null,
@@ -205,6 +717,11 @@ export class GraphRunService {
       throw new NotFoundError(`No graph run found for runId '${runId}'`);
     }
     this.assertOwnership(run, ownerUser);
+    if (run.result) {
+      // The row holds the summary; the full result lives in the run data.
+      const data = await this.runData.load(runId).catch(() => undefined);
+      run.result = graphRunResultExpanded(run.result, data);
+    }
     return run;
   }
 
@@ -243,8 +760,14 @@ export class GraphRunService {
         })
       )
       .sort((a, b) => {
-        const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : NaN;
-        const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : NaN;
+        // Rows read from the durable lane have no `updatedAt` (not in its
+        // DDL): order them by their latest lifecycle timestamp instead.
+        const timeOf = (model: GraphRunModel) => {
+          const at = model.updatedAt ?? model.finishedAt ?? model.startedAt ?? model.createdAt;
+          return at ? new Date(at as Date).getTime() : NaN;
+        };
+        const aTime = timeOf(a);
+        const bTime = timeOf(b);
         return (
           (Number.isFinite(bTime) ? bTime : 0) -
           (Number.isFinite(aTime) ? aTime : 0)
@@ -277,7 +800,10 @@ export class GraphRunService {
       return run;
     }
 
-    this.executor.abort(runId, "user");
+    // The worker may live in another process: tell every process.
+    if (!this.executor.abort(runId, "user")) {
+      await this.bus.publishControl({ type: "cancel", runId }).catch(() => undefined);
+    }
     run.status = "cancelled";
     run.finishedAt = new Date().toISOString();
     await this.runStore.saveRun({ ...run }, ...args);
@@ -332,6 +858,10 @@ export class GraphRunService {
       throw sanitizeResumeError(e);
     }
 
+    if (run.suspendedAt) {
+      // No longer waiting for input: liveness applies again.
+      await this.runStore.saveRun({ ...run, suspendedAt: undefined }, ...args);
+    }
     const record: GraphResumeAudit = {
       ...audit,
       runId,
@@ -365,7 +895,15 @@ export class GraphRunService {
     ...args: MaybeContextualArg<Context>
   ): Promise<() => void> {
     await this.getRun(runId, ownerUser, ...args);
-    return this.eventStore.subscribe(runId, listener);
+    const unsubscribe = this.eventStore.subscribe(runId, listener);
+    graphMetrics.sseSubscribers.add(1);
+    let open = true;
+    return () => {
+      if (!open) return;
+      open = false;
+      graphMetrics.sseSubscribers.add(-1);
+      unsubscribe();
+    };
   }
 
   /** Subscribes a listener to a run's event stream without re-reading the run. */
@@ -383,7 +921,23 @@ export class GraphRunService {
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRun> {
     const completion = this.executor.waitFor(runId);
-    if (completion) await completion;
+    if (completion) {
+      await completion;
+      return this.getRun(runId, ownerUser, ...args);
+    }
+    // Executed by another process: poll the run row until it settles.
+    const deadline = Date.now() + this.options.limits.executionTimeoutMs + 30_000;
+    while (Date.now() < deadline) {
+      const run = await this.runStore.readRun(runId, ...args);
+      if (!run) break;
+      if (isGraphRunTerminalStatus(run.status) || run.suspendedAt) break;
+      const local = this.executor.waitFor(runId);
+      if (local) {
+        await local;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
     return this.getRun(runId, ownerUser, ...args);
   }
 
@@ -413,6 +967,12 @@ export class GraphRunService {
    * and any pending auto-release timer.
    */
   release(runId: string): void {
+    this.releaseRunState(runId);
+    void Promise.resolve(this.eventStore.release?.(runId)).catch(() => {});
+  }
+
+  /** Drops the in-process bookkeeping of a run, leaving its stored events. */
+  private releaseRunState(runId: string): void {
     this.finishActiveRun(runId);
     const pending = this.releaseTimers.get(runId);
     if (pending) {
@@ -420,7 +980,6 @@ export class GraphRunService {
       this.releaseTimers.delete(runId);
     }
     this.executor.release(runId);
-    this.eventStore.release?.(runId);
   }
 
   /**

@@ -155,9 +155,9 @@ describe("node framework overhaul — removed kinds", () => {
     expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)).toHaveLength(89);
   });
 
-  it("registers exactly the 38 Mastra-owned kinds alongside the neutral catalogue", () => {
-    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND)).toHaveLength(38);
-    expect(Object.keys(MASTRA_NODE_CLASSES_BY_KIND)).toHaveLength(38);
+  it("registers exactly the 39 Mastra-owned kinds alongside the neutral catalogue", () => {
+    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND)).toHaveLength(39);
+    expect(Object.keys(MASTRA_NODE_CLASSES_BY_KIND)).toHaveLength(39);
   });
 });
 

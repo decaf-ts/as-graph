@@ -73,10 +73,19 @@ export function graphDateTypeNameToFormat(typeName: string | undefined): string 
   return GRAPH_DATE_TYPE_NAME_FORMATS[typeName.toLowerCase()];
 }
 
+/**
+ * Reads the configured value of one validator from a validation record.
+ *
+ * `@decaf-ts/decorator-validation` stores a validator's argument under the
+ * validator's own key (`@option([...])` → `{ enum: { enum: [...] } }`,
+ * `@min(3)` → `{ min: { min: 3 } }`). The generic `value` member is accepted
+ * as well for hand-built records. Reading only `value` dropped every
+ * decorator-declared constraint from the compiled schema.
+ */
 function validationValue(validation: GraphValidationRecord, key: string): unknown {
   const entry = validation[key] as Record<string, unknown> | undefined;
   if (!entry || typeof entry !== "object") return undefined;
-  return entry["value"];
+  return entry[key] !== undefined ? entry[key] : entry["value"];
 }
 
 function numericConstraintOf(validation: GraphValidationRecord, key: string): number | undefined {

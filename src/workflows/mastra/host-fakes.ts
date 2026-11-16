@@ -166,7 +166,13 @@ export function createDeterministicMastraHost(
     },
     resolveVoice: (descriptor) => {
       record("resolveVoice", { nodeId: descriptor.nodeId });
-      return { __fakeVoice: true, speaker: descriptor.speaker };
+      return {
+        __fakeVoice: true,
+        speaker: descriptor.speaker,
+        // Deterministic speech and transcription for the fixtures.
+        speak: async (text: string) => Buffer.from(`spoken:${text}`, "utf8"),
+        listen: async () => "fake transcript",
+      };
     },
     embedText,
     generateText,

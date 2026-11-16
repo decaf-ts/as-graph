@@ -12,6 +12,7 @@
 import { z } from "zod";
 import { createStep } from "@mastra/core/workflows";
 import { graphNodeConfig } from "../../node/base";
+import { graphNodeManifest } from "../../shared/graph";
 import type { GraphNodeClass } from "../../node/base";
 import type {
   GraphExecutionValues,
@@ -101,6 +102,67 @@ export function mastraNodeExecutionRequest(
   };
 }
 
+const configurablePortsByClass = new WeakMap<object, readonly string[]>();
+
+function configurablePortsOf(nodeClass: GraphNodeClass): readonly string[] {
+  const key = nodeClass as unknown as object;
+  let ports = configurablePortsByClass.get(key);
+  if (!ports) {
+    try {
+      ports = graphNodeManifest(nodeClass as never)
+        .inputs.filter((port) => port.configurable === true)
+        .map((port) => port.id);
+    } catch {
+      ports = [];
+    }
+    configurablePortsByClass.set(key, ports);
+  }
+  return ports;
+}
+
+/**
+ * Folds the values routed onto a node's expose-as-port inputs into its
+ * parameters.
+ *
+ * Only ports the document actually binds (a data edge or an input binding
+ * targeting the port) are considered, so a root node that receives the whole
+ * run payload does not mistake a payload member for a configuration value.
+ *
+ * @param nodeClass - The node's class (its manifest names the ports).
+ * @param node - The canonical node instance.
+ * @param document - The document being executed, when known.
+ * @param inputs - The inputs routed to the node.
+ * @returns The node instance with wired configuration applied, or `node`
+ * itself when nothing is wired.
+ */
+export function withWiredMastraConfiguration(
+  nodeClass: GraphNodeClass,
+  node: GraphNodeInstance,
+  document: { edges?: readonly unknown[] } | undefined,
+  inputs: Record<string, unknown>
+): GraphNodeInstance {
+  const bound = new Set<string>(Object.keys(node.inputBindings ?? {}));
+  for (const raw of document?.edges ?? []) {
+    const edge = raw as {
+      type?: string;
+      target?: { scope?: string; nodeId?: string; port?: string };
+    };
+    if (edge.type !== "data") continue;
+    if (edge.target?.scope !== "node" || edge.target.nodeId !== node.id) continue;
+    if (edge.target.port) bound.add(edge.target.port);
+  }
+  if (bound.size === 0) return node;
+  const wired: Record<string, unknown> = {};
+  for (const port of configurablePortsOf(nodeClass)) {
+    if (bound.has(port) && inputs[port] !== undefined) wired[port] = inputs[port];
+  }
+  if (Object.keys(wired).length === 0) return node;
+  return {
+    ...node,
+    parameters: { ...(node.parameters ?? {}), ...wired } as never,
+  };
+}
+
 /**
  * Instantiates a registered node class and invokes its `execute()`
  * implementation for one Mastra step invocation.
@@ -121,8 +183,22 @@ export async function runMastraNodeClass(
   services: MastraNodeExecutionServices,
   args: MastraNodeStepExecuteArgs
 ): Promise<GraphExecutionValues> {
-  const instance = nodeClass.instantiate(graphNodeConfig(node));
-  const request = mastraNodeExecutionRequest(node, options, services, args);
+  // A value routed onto an expose-as-port input is configuration: it reaches
+  // the node (and the runtime handlers, which read `node.parameters`) exactly
+  // like a value filled in the editor.
+  const effective = withWiredMastraConfiguration(
+    nodeClass,
+    node,
+    options.document,
+    asMastraInputRecord(args.inputData)
+  );
+  const instance = nodeClass.instantiate(graphNodeConfig(effective));
+  const request = mastraNodeExecutionRequest(
+    effective,
+    options,
+    services,
+    args
+  );
   const result = await instance.execute(
     request as GraphNodeExecutionRequest,
     undefined as never

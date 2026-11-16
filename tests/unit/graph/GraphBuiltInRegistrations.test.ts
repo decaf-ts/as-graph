@@ -1,7 +1,7 @@
 /**
  * @module as-graph/tests/unit/graph/GraphBuiltInRegistrations.test
  * @summary Unit tests for the built-in graph node registrations.
- * @description Validates the 127 built-in kinds as manifest+executor pairs,
+ * @description Validates the 128 built-in kinds as manifest+executor pairs,
  * the built-in catalogue registration with and without an engine, the built-in
  * visual-family conformance proofs against the DECAF-32 §21 visual contract /
  * §22.2 node-kind taxonomy (categories, colors, icons and the §21.8.2
@@ -115,7 +115,7 @@ describe("GraphBuiltInRegistrations", () => {
   it("resolves each built-in kind's manifest+executor conformance pair", async () => {
     const catalogue = await buildBuiltInCatalogue();
     expect(Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND).length).toBe(89);
-    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND).length).toBe(38);
+    expect(Object.keys(MASTRA_NODE_MANIFESTS_BY_KIND).length).toBe(39);
     for (const manifest of ALL_BUILT_IN_MANIFESTS) {
       expect(await catalogue.has(manifest.kind)).toBe(true);
       expect(await catalogue.getManifest(manifest.kind)).toStrictEqual(manifest);
@@ -124,14 +124,14 @@ describe("GraphBuiltInRegistrations", () => {
         Function
       );
     }
-    expect(catalogue.size).toBe(127);
+    expect(catalogue.size).toBe(128);
   });
 
   it("registers every built-in kind through registerBuiltInGraphNodes and re-registers them through registerEngineBoundGraphNodes with replace:true", async () => {
     const catalogue = freshCatalogue();
     // registerBuiltInGraphNodes registers the 89 engine-neutral built-ins with
     // no engine argument: each executor derives from the node class's static
-    // execute. The 38 Mastra-owned kinds register separately from the backend's
+    // execute. The 39 Mastra-owned kinds register separately from the backend's
     // node registrations.
     await registerBuiltInGraphNodes(catalogue);
     expect(catalogue.size).toBe(89);
@@ -164,7 +164,7 @@ describe("GraphBuiltInRegistrations", () => {
     for (const registration of new MastraGraphExecutionBackend().nodeRegistrations()) {
       await catalogue.register(registration);
     }
-    expect(catalogue.size).toBe(127);
+    expect(catalogue.size).toBe(128);
   });
 
   it("drives a built-in node through its registered executor and the node class's instance execute", async () => {
@@ -302,9 +302,10 @@ describe("GraphBuiltInRegistrations", () => {
     for (const kind of Object.keys(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND)) {
       expect(GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND[kind].kind).toBe(kind);
     }
-    // The 38 Mastra-owned kinds are a separate ownership surface.
+    // The 39 Mastra-owned kinds are a separate ownership surface.
     expect(MASTRA_NODE_MANIFESTS.map((manifest) => manifest.kind)).toEqual([
       "core.agent",
+      "core.agent.subAgent",
       "core.agent.tool",
       "core.agent.toolSelector",
       "core.agent.hook",
@@ -573,7 +574,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
     const registrations = builtInGraphNodeRegistrations();
     const mastraRegistrations = new MastraGraphExecutionBackend().nodeRegistrations();
     expect(registrations.length).toBe(89);
-    expect(mastraRegistrations.length).toBe(38);
+    expect(mastraRegistrations.length).toBe(39);
     const catalogue = await buildBuiltInCatalogue();
     const all = [...registrations, ...mastraRegistrations];
     expect(() => catalogue.register(all[0] as never)).toThrow(
@@ -845,7 +846,7 @@ describe("Global built-in exhaustive kind catalogue and visual conformance", () 
         expect(manifest.display.icon?.name).toMatch(/^ti-[a-z0-9-]+$/);
       }
     }
-    // the 127 built-ins present exactly these eleven families
+    // the 128 built-ins present exactly these eleven families
     expect([...families].sort()).toEqual([
       "Agent",
       "Boundary",

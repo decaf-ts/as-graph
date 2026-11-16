@@ -38,6 +38,7 @@ describe("AgentNode", () => {
       expect(manifest.outputs.map((port) => port.id)).toEqual([
         "response",
         "actions",
+        "object",
       ]);
     });
 
@@ -46,7 +47,7 @@ describe("AgentNode", () => {
       expect(connections.map((port) => port.id)).toEqual([
         "memory",
         "scorers",
-        "embedding",
+        "subagents",
         "hooks",
         "sandbox",
         "tools",
@@ -59,7 +60,7 @@ describe("AgentNode", () => {
       expect(connections.map((port) => port.category)).toEqual([
         "memory",
         "scorers",
-        "embedding",
+        "subagents",
         "hooks",
         "sandbox",
         "tools",
@@ -78,7 +79,7 @@ describe("AgentNode", () => {
       expect(zones).toEqual({
         memory: { side: "bottom", align: "start", order: 0 },
         scorers: { side: "top", align: "end", order: 0 },
-        embedding: { side: "bottom", align: "end", order: 0 },
+        subagents: { side: "top", align: "start", order: 0 },
         hooks: { side: "top", align: "center", order: 0 },
         sandbox: { side: "top", align: "center", order: 1 },
         tools: { side: "bottom", align: "center", order: 0 },

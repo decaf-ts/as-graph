@@ -17,7 +17,7 @@
  * falls back to `hash`; the service is booted per execution and shut down in a
  * `finally` block.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -311,6 +311,7 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   }
 
   /** Crypto operation to perform (defaults to `hash`). */
+  @option(["hash", "hmac", "encrypt", "decrypt", "sign", "verify", "generate"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.crypto.fields.operation.label",
     type: "select",
@@ -319,6 +320,7 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   operation: CryptoOperation = "hash";
 
   /** Hash/signature algorithm (default `SHA256`). */
+  @option(["MD5", "SHA1", "SHA256", "SHA384", "SHA512", "SHA3-256", "SHA3-384", "SHA3-512"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.crypto.fields.algorithm.label",
     type: "select",
@@ -327,6 +329,7 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   algorithm: CryptoAlgorithm = "SHA256";
 
   /** Digest/signature encoding (default `hex`). */
+  @option(["hex", "base64"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.crypto.fields.encoding.label",
     type: "select",
@@ -379,6 +382,7 @@ export class CryptoNode extends GraphNode<CryptoNodeInput, CryptoNodeOutput> {
   signature?: string;
 
   /** Key type for `generate` (default `rsa`). */
+  @option(["rsa", "ec", "ed25519"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.crypto.fields.keyType.label",
     type: "select",

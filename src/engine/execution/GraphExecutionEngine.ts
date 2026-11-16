@@ -78,6 +78,11 @@ import {
   type GraphDataTableRepository,
 } from "../store/GraphDataTableRepository";
 import type { CodeSandboxEvaluator } from "./CodeSandboxEvaluator";
+import { graphNestLoopBodies } from "../../shared/graph/document/GraphLoopBodyLayout";
+import {
+  InMemoryGraphBinaryStore,
+  type GraphBinaryStore,
+} from "../binary/GraphBinaryStore";
 import {
   GraphEngineEventSink,
   resolveGraphBackendCapabilities,
@@ -229,6 +234,14 @@ export interface GraphExecutionEngineConfig {
    */
   codeSandboxEvaluator?: CodeSandboxEvaluator;
   /**
+   * Storage for the bytes of binary workflow values. Node outputs carrying a
+   * binary payload are written here and replaced by a reference at every
+   * serialization boundary (events, run results, persisted runs, pins).
+   * Defaults to a bounded in-memory store; pass `false` to keep binaries
+   * inline (base64) end to end.
+   */
+  binaryStore?: GraphBinaryStore | false;
+  /**
    * Optional callback invoked at the end of engine construction with the
    * fully-initialised engine instance. Use this to register executors that
    * need a back-reference to the engine (e.g. loop executors that execute
@@ -345,6 +358,8 @@ export class GraphExecutionEngine
         "GRAPH_DEPLOYMENT_PROJECTION_REQUIRES_REMOTE_BACKEND"
       );
     }
+    this.binaryStoreConfig = config.binaryStore;
+    this.resolvedBinaryStore = undefined;
     const client: GraphExecutionEngineClient = {
       registry: config.registry,
       catalogue,
@@ -381,6 +396,10 @@ export class GraphExecutionEngine
     // engine facade never imports the Mastra node surface itself.
     for (const registration of backend.nodeRegistrations?.() ?? []) {
       catalogue.register(registration, { replace: true });
+    }
+    // Kinds the backend cannot run are not part of its catalogue at all.
+    for (const kind of backend.unsupportedNodeKinds?.() ?? []) {
+      if (catalogue.has(kind)) catalogue.unregister(kind);
     }
 
     this._config = config;
@@ -435,6 +454,11 @@ export class GraphExecutionEngine
       await seed.call(backend, config.seedWorkflows, ...args.slice(1));
     }
     await config.onEngineCreated?.(this);
+    // A host hook may (re-)register built-in kinds; the backend's blacklist is
+    // applied last so it always holds.
+    for (const kind of backend.unsupportedNodeKinds?.() ?? []) {
+      if (catalogue.has(kind)) catalogue.unregister(kind);
+    }
     return { config, client };
   }
 
@@ -452,6 +476,46 @@ export class GraphExecutionEngine
    */
   get nodeCredentials(): GraphNodeCredentialResolver | undefined {
     return this.client.nodeCredentials;
+  }
+
+  /** The configured `binaryStore` option, captured at initialization. */
+  private binaryStoreConfig?: GraphBinaryStore | false;
+  /** Store backing {@linkcode GraphExecutionEngine.binaryStore}; `null` once resolved to "inline". */
+  private resolvedBinaryStore?: GraphBinaryStore | null;
+
+  /**
+   * The store holding the bytes of binary workflow values, or `undefined`
+   * when the engine was configured with `binaryStore: false` (inline mode).
+   * Resolve a `GraphBinaryReference` found in a run result with
+   * `engine.binaryStore?.read(reference.id)`.
+   *
+   * @returns The engine's binary store, when binaries are externalised.
+   */
+  get binaryStore(): GraphBinaryStore | undefined {
+    if (this.resolvedBinaryStore === undefined) {
+      const configured = this.binaryStoreConfig;
+      this.resolvedBinaryStore =
+        configured === false
+          ? null
+          : (configured ?? new InMemoryGraphBinaryStore());
+    }
+    return this.resolvedBinaryStore ?? undefined;
+  }
+
+  /** Nested run id → the top-level run that owns its binaries. */
+  private readonly binaryRunIds = new Map<string, string>();
+
+  /**
+   * The run that owns a run's binaries: the top-level run for a nested
+   * execution (a loop iteration, a sub-workflow), the run itself otherwise.
+   * Binaries are recorded under that run, so the run binary endpoint serves a
+   * nested pane's files and pruning the top-level run releases them.
+   *
+   * @param runId - Any run id of an execution in progress.
+   * @returns The id of the run holding its binaries.
+   */
+  binaryRunIdOf(runId: string): string {
+    return this.binaryRunIds.get(runId) ?? runId;
   }
 
   /** Lazily-bound data-table repository backing {@linkcode GraphExecutionEngine.dataTableStore}. */
@@ -589,11 +653,15 @@ export class GraphExecutionEngine
    *   nine-stage validation gate (carries every structured issue).
    */
   async execute(
-    document: GraphWorkflowDocument,
+    submitted: GraphWorkflowDocument,
     inputs: GraphExecutionValues = {},
     options: GraphExecutionOptions = {},
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphExecutionResult> {
+    // A document may arrive with loop bodies drawn on the canvas (chained
+    // from the loop's body-entry port back into its `loop` port). The engine
+    // runs the canonical form, where each body is a nested document.
+    const document = graphNestLoopBodies(submitted).document;
     const { log, ctx } = (await this.logCtx(args, "execute", true)).for(this.execute);
     log.debug(`Executing workflow '${document.id || document.name}'`);
     const opts = this.mergeOptions(options);
@@ -628,6 +696,9 @@ export class GraphExecutionEngine
     }
 
     this.enterExecutionBudget(runId, opts);
+    if (opts.parentRunId) {
+      this.binaryRunIds.set(runId, this.binaryRunIdOf(opts.parentRunId));
+    }
     try {
     const eventFactory = new GraphExecutionEventFactory();
     const valueStore = createGraphValueRepository(this.valueAdapter);
@@ -729,6 +800,7 @@ export class GraphExecutionEngine
     );
     } finally {
       this.releaseExecutionBudget(runId);
+      this.binaryRunIds.delete(runId);
     }
   }
 
@@ -962,6 +1034,16 @@ export class GraphExecutionEngine
   }
 
   /**
+   * Removes every expired pinned value and releases the files it held.
+   *
+   * @param now - The reference time (default: now).
+   * @returns The number of expired pins removed.
+   */
+  async sweepExpiredPins(now: Date = new Date()): Promise<number> {
+    return this.createPinningService().sweepExpired(now);
+  }
+
+  /**
    * Unpins a node by its fingerprint.
    */
   async unpinNode(options: GraphUnpinNodeOptions): Promise<void> {
@@ -979,7 +1061,8 @@ export class GraphExecutionEngine
     return new GraphPinningService(
       store,
       new GraphPinningPolicy(),
-      new GraphPinningDependencyResolver()
+      new GraphPinningDependencyResolver(),
+      this.binaryStore
     );
   }
 

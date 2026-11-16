@@ -20,6 +20,7 @@ export * from "./GraphWorkflowModel";
 export * from "./GraphNodeModel";
 export * from "./GraphNodeConverters";
 export * from "./GraphResolution";
+export * from "./GraphConditionValidation";
 export * from "./GraphExecutionStateMapper";
 export * from "./category-styles";
 export * from "./overrides";

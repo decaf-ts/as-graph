@@ -13,7 +13,7 @@
  * `sendWebhook`. A throwaway `TeamsService` is initialized per execution and
  * shut down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -74,6 +74,12 @@ const OPERATIONS: TeamsOperation[] = [
 })
 @model()
 export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the message text when `text` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Teams operation.
    *
@@ -173,6 +179,7 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
   }
 
   /** Teams operation to perform (default `sendWebhook`). */
+  @option(["listChannels", "sendWebhook", "sendChannelMessage", "listTeams"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.teams.fields.operation.label",
     type: "select",
@@ -229,6 +236,7 @@ export class TeamsNode extends GraphNode<TeamsNodeInput, TeamsNodeOutput> {
   content?: string;
 
   /** Channel message body format (default `text`). */
+  @option(["text", "html"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.teams.fields.contentType.label",
     type: "select",

@@ -13,7 +13,7 @@
  * `GithubService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -81,6 +81,12 @@ const OPERATIONS: GithubOperation[] = [
 })
 @model()
 export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the issue or comment body when `body` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured GitHub operation.
    *
@@ -199,6 +205,7 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
   }
 
   /** GitHub operation to perform (default `getRepo`). */
+  @option(["getRepo", "listIssues", "createIssue", "commentIssue", "listPullRequests"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.github.fields.operation.label",
     type: "select",
@@ -263,6 +270,7 @@ export class GithubNode extends GraphNode<GithubNodeInput, GithubNodeOutput> {
   assignees?: string[];
 
   /** Issue/pull-request state filter for list operations. */
+  @option(["all", "open", "closed"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.common.fields.state.label",
     type: "select",

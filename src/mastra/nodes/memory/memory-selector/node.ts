@@ -56,7 +56,7 @@ export class AgentMemorySelectorNode extends GraphNode<
   override execute(
     request: GraphNodeExecutionRequest<AgentMemorySelectorInput>
   ): GraphExecutionValues {
-    const decision = request.inputs["decision"] ?? request.inputs["value"];
+    const decision = request.inputs["decision"];
     const available = this.memories ?? [];
     const selected =
       typeof decision === "string"

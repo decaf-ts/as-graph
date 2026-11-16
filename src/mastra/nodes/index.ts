@@ -15,6 +15,7 @@ export * from "./MastraNodeRegistry";
 export * from "./zones";
 
 export * from "./agent/node";
+export * from "./agent/sub-agent/node";
 export * from "./hitl/node";
 export * from "./hooks/hook/node";
 export * from "./hooks/tool-deny/node";

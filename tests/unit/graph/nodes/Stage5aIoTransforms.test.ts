@@ -62,11 +62,11 @@ describe("core.io.convertToFile", () => {
       { value: [{ name: 'a"b', note: "x;y" }] }
     );
     const payload = result.result as BinaryPayload;
-    expect(result.content).toBe('name;note\n"a""b";"x;y"');
+    expect(decode(result.result as BinaryPayload)).toBe('name;note\n"a""b";"x;y"');
     expect(payload.fileName).toBe("people.csv");
     expect(payload.mimeType).toBe("text/csv");
-    expect(payload.byteLength).toBe(Buffer.byteLength(result.content as string));
-    expect(decode(payload)).toBe(result.content);
+    expect(payload.byteLength).toBe(Buffer.byteLength(decode(result.result as BinaryPayload)));
+    expect(result).not.toHaveProperty("content");
   });
 
   it("omits the CSV header row when headerRow is false", async () => {
@@ -76,7 +76,7 @@ describe("core.io.convertToFile", () => {
       { operation: "csv", headerRow: false },
       { value: [{ a: 1 }, { a: 2 }] }
     );
-    expect(result.content).toBe("1\n2");
+    expect(decode(result.result as BinaryPayload)).toBe("1\n2");
   });
 
   it("renders an HTML table document with an optional caption and capitalized headers", async () => {
@@ -86,7 +86,7 @@ describe("core.io.convertToFile", () => {
       { operation: "html", caption: "People", capitalize: true },
       { value: [{ full_name: "Ada" }] }
     );
-    const content = result.content as string;
+    const content = decode(result.result as BinaryPayload);
     expect(content).toContain("<!DOCTYPE html>");
     expect(content).toContain("<caption>People</caption>");
     expect(content).toContain("<th>Full Name</th>");
@@ -101,9 +101,9 @@ describe("core.io.convertToFile", () => {
       { operation: "toJson", format: true, fileName: "rows.json" },
       { value: [{ n: 1 }, { n: 2 }] }
     );
-    expect(JSON.parse(once.content as string)).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(JSON.parse(decode(once.result as BinaryPayload))).toEqual([{ n: 1 }, { n: 2 }]);
     expect((once.result as BinaryPayload).fileName).toBe("rows.json");
-    expect(decode(once.result as BinaryPayload)).toBe(once.content);
+    expect(once).not.toHaveProperty("content");
 
     const each = await run(
       ConvertToFileNode,
@@ -144,16 +144,87 @@ describe("core.io.convertToFile", () => {
     expect(Buffer.from(binaryPayload.data, "base64").toString("utf8")).toBe("hi");
   });
 
-  it.each(["xlsx", "ods", "xls", "rtf", "iCal"])(
-    "rejects the unsupported %s operation",
-    async (operation) => {
-      await expect(
-        run(ConvertToFileNode, kind, { operation }, { value: [{ a: 1 }] })
-      ).rejects.toMatchObject({
-        graphCode: "GRAPH_CONVERT_TO_FILE_UNSUPPORTED_OPERATION",
-      });
-    }
-  );
+  it("writes an iCalendar file with one event per record", async () => {
+    const result = await run(
+      ConvertToFileNode,
+      kind,
+      { operation: "iCal" },
+      {
+        value: [
+          {
+            summary: "Review; Q4",
+            start: "2026-01-05T10:00:00Z",
+            end: "2026-01-05T11:00:00Z",
+            location: "Room 1",
+          },
+        ],
+      }
+    );
+    const payload = result.result as BinaryPayload;
+    expect(payload.mimeType).toBe("text/calendar");
+    expect(payload.fileName).toBe("events.ics");
+    const lines = decode(result.result as BinaryPayload).split("\r\n");
+    expect(lines[0]).toBe("BEGIN:VCALENDAR");
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        "BEGIN:VEVENT",
+        "DTSTART:20260105T100000Z",
+        "DTEND:20260105T110000Z",
+        "SUMMARY:Review\\; Q4",
+        "LOCATION:Room 1",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ])
+    );
+  });
+
+  it("rejects an iCal event without a start date", async () => {
+    await expect(
+      run(ConvertToFileNode, kind, { operation: "iCal" }, { value: [{ summary: "x" }] })
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_CONVERT_TO_FILE_SOURCE_REQUIRED",
+    });
+  });
+
+  it("writes an RTF file with escaped text", async () => {
+    const result = await run(
+      ConvertToFileNode,
+      kind,
+      { operation: "rtf" },
+      { value: [{ name: "Ada {L}", note: "é" }] }
+    );
+    expect((result.result as BinaryPayload).mimeType).toBe("application/rtf");
+    expect(decode(result.result as BinaryPayload)).toBe(
+      "{\\rtf1\\ansi\\deff0 {\\b name:} Ada \\{L\\}\\line {\\b note:} \\u233?}"
+    );
+  });
+
+  it.each([
+    ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", [0x50, 0x4b]],
+    ["ods", "application/vnd.oasis.opendocument.spreadsheet", [0x50, 0x4b]],
+    ["xls", "application/vnd.ms-excel", [0xd0, 0xcf]],
+  ] as const)("writes a %s workbook", async (operation, mimeType, magic) => {
+    const result = await run(
+      ConvertToFileNode,
+      kind,
+      { operation, sheetName: "Stock" },
+      { value: [{ sku: "bolt", qty: 4 }] }
+    );
+    const payload = result.result as BinaryPayload;
+    expect(payload.mimeType).toBe(mimeType);
+    expect(payload.fileName).toBe(`file.${operation}`);
+    const bytes = Buffer.from(payload.data, "base64");
+    expect([bytes[0], bytes[1]]).toEqual([...magic]);
+    expect(result.bytes).toBe(bytes.length);
+  });
+
+  it("rejects an operation it does not implement", async () => {
+    await expect(
+      run(ConvertToFileNode, kind, { operation: "pdf" }, { value: [{ a: 1 }] })
+    ).rejects.toMatchObject({
+      graphCode: "GRAPH_CONVERT_TO_FILE_UNSUPPORTED_OPERATION",
+    });
+  });
 });
 
 describe("core.io.html", () => {

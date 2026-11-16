@@ -91,3 +91,8 @@ export * from "./services/GraphNodeModelService";
 
 // Snapshots (TASK-219)
 export * from "./snapshots/GraphExecutionSnapshotMapper";
+export * from "./binary/GraphBinaryStore";
+export * from "./binary/BlobGraphBinaryStore";
+export * from "./binary/graphBinaryStoreFromEnvironment";
+export * from "./binary/GraphBinaryAccess";
+export * from "./binary/GraphBinaryModels";

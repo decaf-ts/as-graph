@@ -9,7 +9,7 @@
  * override. Connects only to the agent `outputProcessors` zone, where
  * guardrail kinds compose alongside it.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -72,6 +72,7 @@ export class AgentOutputProcessorNode extends GraphNode<
 
   /** The mastra-native output-processor type this node resolves to. */
   @required()
+  @option(["regexFilter", "tokenLimiter", "toolCallFilter", "responseCache", "batchParts", "providerHistoryCompat", "cyberRefusalHandler", "prefillErrorHandler", "streamErrorRetry", "unsupportedFileHandler"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.output_processor.fields.processorType.label",
     type: "select",

@@ -8,9 +8,15 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
-import type { GraphExecutionValues } from "../../../engine/types";
+import type {
+  GraphExecutionValues,
+  GraphNodeExecutionRequest,
+} from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
+  graphFilePathOfInput,
+  openGraphFileStream,
   readGraphFilePayload,
   type BinaryFilePayload,
 } from "../file-support";
@@ -40,6 +46,7 @@ export interface ReadBinaryFileNodeOutput {
 @node("core.io.readBinaryFile", {
   kind: "core.io.readBinaryFile",
   category: "IO",
+  capabilities: ["binaryStream"],
   color: "#0ea5e9",
   icon: "ti-file-download",
   width: 96,
@@ -63,20 +70,38 @@ export class ReadBinaryFileNode extends GraphNode<
    * @throws {GraphExecutionError} `GRAPH_READ_BINARY_FILE_PATH_REQUIRED` when no
    *   path is configured (and `GRAPH_FILE_*` codes from path resolution/read).
    */
-  override async execute(): Promise<GraphExecutionValues> {
-    const configured = this.filePath || this.path;
+  override async execute(
+    request: GraphNodeExecutionRequest<ReadBinaryFileNodeInput>,
+    context?: GraphExecutionContext
+  ): Promise<GraphExecutionValues> {
+    // A configured path wins; otherwise the default input designates the
+    // file (a path string, or the descriptor a file writer emits).
+    const configured =
+      this.filePath ||
+      this.path ||
+      graphFilePathOfInput(request?.inputs?.["value"]);
     if (!configured) {
       throw new GraphExecutionError(
         "Read Binary File node requires a file path",
         "GRAPH_READ_BINARY_FILE_PATH_REQUIRED"
       );
     }
-    const { payload, bytes } = await readGraphFilePayload(configured);
+    if (!context?.binaries) {
+      const { payload, bytes } = await readGraphFilePayload(configured);
+      return { result: payload, fileName: payload.fileName, mimeType: payload.mimeType, bytes };
+    }
+    // Streamed from disk straight into the binary store.
+    const file = await openGraphFileStream(configured);
+    const result = await context.binaries.write(file.stream, {
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      path: configured,
+    });
     return {
-      result: payload,
-      fileName: payload.fileName,
-      mimeType: payload.mimeType,
-      bytes,
+      result,
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      bytes: result.byteLength,
     };
   }
 

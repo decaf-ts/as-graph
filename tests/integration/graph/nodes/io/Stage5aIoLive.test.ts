@@ -36,18 +36,19 @@ describe("core.io.convertToFile — live node", () => {
       { operation: "csv", fileName: "people.csv" },
       { value: [{ name: "Ada", score: 7 }] }
     );
-    expect(result.content).toBe("name,score\nAda,7");
-    expect((result.result as BinaryPayload).mimeType).toBe("text/csv");
-    expect((result.result as BinaryPayload).byteLength).toBe(
-      Buffer.byteLength(result.content as string)
-    );
+    const payload = result.result as BinaryPayload;
+    const text = Buffer.from(payload.data, "base64").toString("utf8");
+    expect(text).toBe("name,score\nAda,7");
+    expect(payload.mimeType).toBe("text/csv");
+    expect(payload.byteLength).toBe(Buffer.byteLength(text));
+    expect(result).not.toHaveProperty("content");
   });
 
-  it("fails on an unsupported spreadsheet operation", async () => {
+  it("fails on an operation it does not implement", async () => {
     const error = await runNode(
       ConvertToFileNode,
       "core.io.convertToFile",
-      { operation: "xlsx" },
+      { operation: "pdf" },
       { value: [{ name: "Ada" }] }
     ).catch((caught: unknown) => caught);
     expect(errorCodeOf(error)).toBe("GRAPH_CONVERT_TO_FILE_UNSUPPORTED_OPERATION");

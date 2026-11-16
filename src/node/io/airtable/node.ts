@@ -12,10 +12,11 @@
  * silently falls back to `list`. A throwaway `AirtableService` is initialized
  * per execution and shut down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -84,6 +85,12 @@ export class AirtableNode extends GraphNode<
   AirtableNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the record fields when `recordFields` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Airtable operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `airtable` credential supplies the token and default `baseId`.
@@ -95,6 +102,11 @@ export class AirtableNode extends GraphNode<
     request: GraphNodeExecutionRequest<AirtableNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.recordFields) && routed !== undefined) {
+      this.recordFields = routed as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Airtable node requires an operation",
@@ -226,6 +238,7 @@ export class AirtableNode extends GraphNode<
   }
 
   /** Airtable operation to perform (default `list`). */
+  @option(["list", "get", "delete", "create", "update"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.airtable.fields.operation.label",
     type: "select",
@@ -306,6 +319,7 @@ export class AirtableNode extends GraphNode<
   sortField?: string;
 
   /** Sort direction for `sortField`. */
+  @option(["asc", "desc"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.airtable.fields.sortDirection.label",
     type: "select",

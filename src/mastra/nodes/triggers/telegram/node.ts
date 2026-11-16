@@ -45,6 +45,7 @@ export interface TelegramChannelTriggerOutput {
 @node("core.agent.trigger.telegram", {
   kind: "core.agent.trigger.telegram",
   category: "Agent",
+  capabilities: ["trigger"],
   icon: "ti-brand-telegram",
   width: 96,
   height: 96,

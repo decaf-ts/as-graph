@@ -12,7 +12,7 @@
  * model-provider node kind). Connects only to the agent `outputProcessors`
  * zone.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -76,6 +76,7 @@ export class AgentGuardrailNode extends GraphNode<
 
   /** The mastra-native guardrail type this node resolves to. */
   @required()
+  @option(["moderation", "piiDetector", "promptInjectionDetector", "regexFilter"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.guardrail.fields.guardrailType.label",
     type: "select",
@@ -88,6 +89,7 @@ export class AgentGuardrailNode extends GraphNode<
    * via the tripwire; `warn`/`filter`/`redact`/`rewrite` annotate, drop, or
    * rewrite the flagged traffic instead.
    */
+  @option(["block", "warn", "filter", "redact", "rewrite"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.guardrail.fields.strategy.label",
     type: "select",

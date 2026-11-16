@@ -33,6 +33,8 @@ import {
 } from "../../../unit/graph/nodes/node-test-utils";
 import { errorCodeOf, runNode } from "./real-service-support";
 
+import { runFixtureDocument } from "../../../fixtures/workflow-engine";
+
 const LIVE_BACKING = "in-process real node (general engine; no external service)";
 
 function incrementEngine(): ReturnType<typeof loopEngine> {
@@ -142,9 +144,50 @@ describe(`core.flow.errorBoundary / log — live nodes (${LIVE_BACKING})`, () =>
 });
 
 describe(`core.utility.map — live node (${LIVE_BACKING})`, () => {
-  it("maps the routed value into a result object", async () => {
-    const result = await runNode(MapNode, "core.utility.map", {}, { value: { a: 1 } });
-    expect(result.result).toEqual({ mapped: { a: 1 } });
+  it("maps every routed item through the expression in the real sandbox", async () => {
+    const result = await runFixtureDocument(
+      {
+        id: "wf-map-live",
+        name: "wf-map-live",
+        inputs: [{ id: "rows" }],
+        outputs: [{ id: "mapped" }, { id: "count" }],
+        nodes: [
+          {
+            id: "map",
+            kind: "core.utility.map",
+            parameters: { expression: "({ a: $item.a + 1, at: $index })" },
+          },
+        ],
+        edges: [
+          {
+            id: "e1",
+            type: "data",
+            source: { scope: "workflow", port: "rows" },
+            target: { scope: "node", nodeId: "map", port: "value" },
+          },
+          {
+            id: "e2",
+            type: "data",
+            source: { scope: "node", nodeId: "map", port: "result" },
+            target: { scope: "workflow", port: "mapped" },
+          },
+          {
+            id: "e3",
+            type: "data",
+            source: { scope: "node", nodeId: "map", port: "count" },
+            target: { scope: "workflow", port: "count" },
+          },
+        ],
+      },
+      { rows: [{ a: 1 }, { a: 5 }] }
+    );
+    expect(result.status).toBe("succeeded");
+    expect(result.outputs.mapped).toEqual([
+      { a: 2, at: 0 },
+      { a: 6, at: 1 },
+    ]);
+    expect(result.outputs.count).toBe(2);
+    expect(MapNode.name).toBe("MapNode");
   });
 });
 

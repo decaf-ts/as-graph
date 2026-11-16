@@ -58,8 +58,9 @@ export const MASTRA_FEATURE_CAPABILITIES: readonly MastraFeatureCapability[] = [
   },
   {
     feature: "codeModeConditions",
-    verdict: "EXTENSION-POINT",
-    detail: "reuse the facade CodeSandboxEvaluator; currently fails closed",
+    verdict: "SUPPORTED",
+    detail:
+      "code conditions, code/map nodes, value templates and expression bindings are evaluated host-side in the facade CodeSandboxEvaluator",
   },
   { feature: "whileUntil", verdict: "SUPPORTED" },
   { feature: "foreach", verdict: "SUPPORTED" },
@@ -363,15 +364,15 @@ export function mastraCapabilityStatusOf(
 }
 
 /**
- * Engine-agnostic capability projection of the Mastra backend: no in-process
- * code execution, workflow list/lookup supported over the compiled-workflow cache,
+ * Engine-agnostic capability projection of the Mastra backend: host-side
+ * code execution in the facade sandbox, workflow list/lookup supported over the compiled-workflow cache,
  * and the SAA-346 workflow-management statuses resolved from the exported table.
  *
  * @returns The {@link MastraBackendCapabilities} served by the Mastra backend.
  */
 export function resolveMastraCapabilities(): MastraBackendCapabilities {
   return {
-    codeMode: "unsupported",
+    codeMode: "hostSide",
     workflows: {
       list: "supported",
       get: "supported",

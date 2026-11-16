@@ -8,7 +8,7 @@
  * with the dedicated Aggregate, Remove Duplicates, and Summarize nodes through
  * `transform-utils`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -220,6 +220,7 @@ export class ItemListsNode extends GraphNode<
   value!: unknown;
 
   /** Operation to perform (default `concatenateItems`). */
+  @option(["concatenateItems", "limit", "removeDuplicates", "sort", "splitOutItems", "summarize"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.operation.label",
     type: "select",
@@ -228,6 +229,7 @@ export class ItemListsNode extends GraphNode<
   operation: ItemListsOperation = "concatenateItems";
 
   /** Concatenation strategy used by `concatenateItems` (default `aggregateIndividualFields`). */
+  @option(["aggregateIndividualFields", "aggregateAllItemData"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.aggregate.label",
     type: "select",
@@ -253,6 +255,7 @@ export class ItemListsNode extends GraphNode<
   destinationFieldName: string = "data";
 
   /** Field projection when concatenating all item data (default `allFields`). */
+  @option(["allFields", "specifiedFields", "allFieldsExcept"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.include.label",
     type: "select",
@@ -303,6 +306,7 @@ export class ItemListsNode extends GraphNode<
   maxItems: number = 1;
 
   /** Which end `limit` keeps (default `firstItems`). */
+  @option(["firstItems", "lastItems"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.keep.label",
     type: "select",
@@ -311,6 +315,7 @@ export class ItemListsNode extends GraphNode<
   keep: "firstItems" | "lastItems" = "firstItems";
 
   /** Field selection used by `removeDuplicates` (default `allFields`). */
+  @option(["allFields", "allFieldsExcept", "selectedFields"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.compareMode.label",
     type: "select",
@@ -345,6 +350,7 @@ export class ItemListsNode extends GraphNode<
   sortFields?: SortSpec[] = [];
 
   /** Value coercion used when comparing sort keys (default `auto`). */
+  @option(["string", "number", "auto", "date"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.sortValueType.label",
     type: "select",
@@ -362,6 +368,7 @@ export class ItemListsNode extends GraphNode<
   field: string = "";
 
   /** Whether `splitOutItems` keeps the other item fields (default `noOtherFields`). */
+  @option(["noOtherFields", "allOtherFields"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.splitOutInclude.label",
     type: "select",
@@ -398,6 +405,7 @@ export class ItemListsNode extends GraphNode<
   fieldsToSplitBy?: string | string[];
 
   /** Whether `summarize` returns one item per group or a single nested record (default `separateItems`). */
+  @option(["separateItems", "singleItem"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.item_lists.fields.outputFormat.label",
     type: "select",

@@ -17,6 +17,9 @@ import { errorBoundaryFixture } from "./error-boundary.workflow";
 import { loopsWhileUntilFixture } from "./loops-while-until.workflow";
 import { valueTemplatesFixture } from "./value-templates.workflow";
 import { boundaryValueFixture } from "./boundary-value.workflow";
+import { orderAnalyticsFixture } from "./order-analytics.workflow";
+import { spreadsheetFilesFixture } from "./spreadsheet-files.workflow";
+import { httpFileDownloadFixture } from "./http-file-download.workflow";
 import {
   ALL_CONFIG_COMBOS,
   buildFixtureMatrix,
@@ -36,6 +39,9 @@ export * from "./error-boundary.workflow";
 export * from "./loops-while-until.workflow";
 export * from "./value-templates.workflow";
 export * from "./boundary-value.workflow";
+export * from "./order-analytics.workflow";
+export * from "./spreadsheet-files.workflow";
+export * from "./http-file-download.workflow";
 
 /** Every engine-neutral built-in node kind the basic fixture registry covers. */
 export const ALL_BASIC_NODE_KINDS = [
@@ -79,6 +85,9 @@ export const basicWorkflowFixtures: GraphWorkflowFixture[] = [
   loopsWhileUntilFixture,
   valueTemplatesFixture,
   boundaryValueFixture,
+  orderAnalyticsFixture,
+  spreadsheetFilesFixture,
+  httpFileDownloadFixture,
 ].map((fixture) => normalizeFixture(fixture, "basic", "local"));
 
 /** The basic fixtures keyed by id. */

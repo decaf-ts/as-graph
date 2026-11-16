@@ -13,7 +13,7 @@
  * `age`/`graph` (custom `MastraVector` stores over a host driver), so the
  * remainder of mastra's supported stores uses the same config pattern.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { assertNoMastraPlainConnectionCredentials } from "../../../MastraEnvironment";
 import { input, node, output } from "../../../../shared/graph";
@@ -95,6 +95,7 @@ export class AgentVectorStoreNode extends GraphNode<
 
   /** The selected vector-store provider. */
   @required()
+  @option(["graph", "memory", "libsql", "mongodb", "upstash", "redis", "pgvector", "age", "qdrant", "pinecone", "supabase", "chroma"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.vector_store.fields.provider.label",
     type: "select",
@@ -139,6 +140,7 @@ export class AgentVectorStoreNode extends GraphNode<
   dimension?: number;
 
   /** The similarity metric the index is created with. */
+  @option(["cosine", "euclidean", "dotproduct"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.vector_store.fields.metric.label",
     type: "select",
@@ -184,6 +186,38 @@ export class AgentVectorStoreNode extends GraphNode<
   })
   @input({ handle: "credentialRef", userControlled: true, type: "object" })
   credentialRef?: Record<string, unknown>;
+
+  /**
+   * Documents to embed and upsert: a list of strings or of records carrying a
+   * `text` member (the output of a chunking node). Supplying documents makes
+   * the node insert; supplying a query makes it search.
+   */
+  @input({ handle: "documents" })
+  documents?: unknown;
+
+  /** Ids for the upserted documents, in order. Generated when absent. */
+  @input({ handle: "ids" })
+  ids?: unknown;
+
+  /** Query text to embed and search the index with. */
+  @input({ handle: "query" })
+  query?: unknown;
+
+  /** A ready query vector, used instead of embedding `query`. */
+  @input({ handle: "queryVector" })
+  queryVector?: unknown;
+
+  /** Metadata filter applied to a search. */
+  @input({ handle: "filter" })
+  filter?: unknown;
+
+  /** How many matches a search returns. */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.agent.vector_store.fields.topK.label",
+    type: "number",
+  })
+  @input({ handle: "topK", userControlled: true, type: "number" })
+  topK?: number;
 
   /** Output carrying the resolved mastra vector-store resource (R9). */
   @required()

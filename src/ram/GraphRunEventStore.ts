@@ -7,6 +7,8 @@
  * reads come from the adapter. Retention uses {@link GraphRunLimits}.
  */
 import {
+  Condition,
+  OrderDirection,
   Repository,
   repository,
   type Adapter,
@@ -27,6 +29,11 @@ import {
   GraphRunEventModel,
   modelToEnvelope,
 } from "./GraphRunEventModel";
+
+/** Rows deleted per batch. */
+const DELETE_BATCH = 500;
+/** Rows read per page (the Postgres adapter caps unbounded selects at 250). */
+const PAGE = 1000;
 
 /** Repository for {@link GraphRunEventModel} rows. */
 @repository(GraphRunEventModel, DefaultFlavour)
@@ -64,15 +71,21 @@ export class RamGraphRunEventStore implements GraphRunEventStore {
   }
 
   /**
-   * Appends an event envelope, enforces the run retention limit, and
-   * notifies in-process subscribers (subscriber errors are swallowed).
+   * Appends an event envelope and notifies in-process subscribers. The
+   * per-run cap is enforced only once the gapless sequence crosses it, with
+   * one indexed delete (never a scan of other runs' events).
    *
    * @param {GraphRunEventEnvelope} event - Envelope to persist and broadcast.
-   * @return {Promise<void>} Resolves once the row is persisted and retention applied.
+   * @return {Promise<void>} Resolves once the row is persisted and the cap applied.
    */
   async append(event: GraphRunEventEnvelope): Promise<void> {
     await this.repo.create(envelopeToModel(event));
-    await this.enforceRetention(event.runId);
+    if (event.sequence > this.limits.maxEventsPerRun) {
+      await this.evictBefore(
+        event.runId,
+        event.sequence - this.limits.maxEventsPerRun
+      );
+    }
     for (const listener of this.listeners.get(event.runId) ?? []) {
       try {
         listener(event);
@@ -84,7 +97,7 @@ export class RamGraphRunEventStore implements GraphRunEventStore {
 
   /**
    * Replays a run's events with a sequence strictly greater than the given
-   * one, in ascending sequence order.
+   * one, in ascending order — one indexed query on `(runId, sequence)`.
    *
    * @param {string} runId - Run whose events to list.
    * @param {number} sequence - Sequence number to list events after.
@@ -96,13 +109,46 @@ export class RamGraphRunEventStore implements GraphRunEventStore {
     sequence: number,
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRunEventEnvelope[]> {
-    const models = (await this.repo.select().execute(
-      ...args
-    )) as GraphRunEventModel[];
-    return models
-      .filter((model) => model.runId === runId && model.sequence > sequence)
-      .sort((a, b) => a.sequence - b.sequence)
-      .map((model) => modelToEnvelope(model));
+    // Keyset pages on the gapless sequence (the adapter caps unbounded
+    // selects).
+    const envelopes: GraphRunEventEnvelope[] = [];
+    let after = sequence;
+    for (;;) {
+      const models = (await this.repo
+        .select()
+        .where(
+          Condition.attr<GraphRunEventModel>("runId")
+            .eq(runId)
+            .and(Condition.attr<GraphRunEventModel>("sequence").gt(after))
+        )
+        .orderBy("sequence", OrderDirection.ASC)
+        .limit(PAGE)
+        .execute(...args)) as GraphRunEventModel[];
+      envelopes.push(...models.map((model) => modelToEnvelope(model)));
+      if (models.length < PAGE) return envelopes;
+      after = models[models.length - 1].sequence;
+    }
+  }
+
+  /**
+   * The highest stored sequence of a run, or `0` when it has none. Lets a
+   * process that did not run the workflow (recovery, another worker) continue
+   * its gapless sequence.
+   *
+   * @param {string} runId - The run.
+   * @return {Promise<number>} The last sequence.
+   */
+  async lastSequence(
+    runId: string,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<number> {
+    const models = (await this.repo
+      .select()
+      .where(Condition.attr<GraphRunEventModel>("runId").eq(runId))
+      .orderBy("sequence", OrderDirection.DSC)
+      .limit(1)
+      .execute(...args)) as GraphRunEventModel[];
+    return models[0]?.sequence ?? 0;
   }
 
   /**
@@ -129,8 +175,8 @@ export class RamGraphRunEventStore implements GraphRunEventStore {
   }
 
   /**
-   * Drops the run's live listeners and deletes all of its persisted event
-   * rows.
+   * Drops the run's live listeners and deletes its event rows (one indexed
+   * query, batched deletes).
    *
    * @param {string} runId - Run whose listeners and event rows to release.
    * @param args - Optional decaf `Context` arguments forwarded to the repository.
@@ -141,32 +187,56 @@ export class RamGraphRunEventStore implements GraphRunEventStore {
     ...args: MaybeContextualArg<Context>
   ): Promise<void> {
     this.listeners.delete(runId);
-    const models = (await this.repo.select().execute(
-      ...args
-    )) as GraphRunEventModel[];
-    for (const model of models) {
-      if (model.runId === runId) {
-        await this.repo.delete(model.id, ...args);
-      }
+    for (let round = 0; round < 10_000; round++) {
+      const models = (await this.repo
+        .select(["id"] as never)
+        .where(Condition.attr<GraphRunEventModel>("runId").eq(runId))
+        .limit(PAGE)
+        .execute(...args)) as GraphRunEventModel[];
+      await this.deleteIds(models.map((model) => model.id), ...args);
+      if (models.length < PAGE) return;
     }
   }
 
-  private async enforceRetention(runId: string): Promise<void> {
-    const max = this.limits.maxEventsPerRun;
-    const models = (await this.repo.select().execute()) as GraphRunEventModel[];
-    const runModels = models
-      .filter((model) => model.runId === runId)
-      .sort((a, b) => a.sequence - b.sequence);
-    while (runModels.length > max) {
-      const evictIndex = runModels.findIndex(
-        (model) =>
-          !isGraphRunTerminalEventType(
-            model.type as GraphExecutionEventType
-          )
-      );
-      if (evictIndex === -1) break;
-      const [evicted] = runModels.splice(evictIndex, 1);
-      await this.repo.delete(evicted.id);
+  /** Deletes a run's non-terminal events with a sequence at or below `cutoff`. */
+  private async evictBefore(runId: string, cutoff: number): Promise<void> {
+    const models = (await this.repo
+      .select()
+      .where(
+        Condition.attr<GraphRunEventModel>("runId")
+          .eq(runId)
+          .and(Condition.attr<GraphRunEventModel>("sequence").lte(cutoff))
+      )
+      .limit(PAGE * 20)
+      .execute()) as GraphRunEventModel[];
+    await this.deleteIds(
+      models
+        .filter(
+          (model) =>
+            !isGraphRunTerminalEventType(model.type as GraphExecutionEventType)
+        )
+        .map((model) => model.id)
+    );
+  }
+
+  /** Deletes rows by id in batches; rows already gone are not an error. */
+  private async deleteIds(
+    ids: string[],
+    ...args: MaybeContextualArg<Context>
+  ): Promise<void> {
+    for (let index = 0; index < ids.length; index += DELETE_BATCH) {
+      const batch = ids.slice(index, index + DELETE_BATCH);
+      try {
+        await this.repo.deleteAll(batch, ...args);
+      } catch {
+        for (const id of batch) {
+          try {
+            await this.repo.delete(id, ...args);
+          } catch {
+            // a row a concurrent release already deleted is not an error
+          }
+        }
+      }
     }
   }
 }

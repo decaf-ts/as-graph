@@ -41,6 +41,15 @@
  * (default `/run/secrets/postgres_app_password`, the `mastra_app` runtime
  * role). The `asgraph` schema is owned by the stack's bootstrap migrations.
  *
+ * Workflow files (C9) live in an integrations blob store: `GRAPH_BINARY_STORE`
+ * selects the provider (`s3` by default; `minio`, `r2`, `azure-blob`, `gcs`,
+ * `local`, `memory`) and its `BLOBS__<PROVIDER>__*` environment configures it
+ * — for S3 at least `BLOBS__S3__BUCKET` — so the boot fails closed when no
+ * store is configured. Finished runs are pruned with their events and files
+ * (`GRAPH_RUN_RETENTION`, `GRAPH_RUN_MAX_AGE_HOURS` default 336,
+ * `GRAPH_RUN_MAX_COUNT` default 10000, `GRAPH_RUN_PRUNE_INTERVAL_MINUTES`
+ * default 60).
+ *
  * Usage: `GRAPH_BACKEND_ENGINE=mastra node lib/cjs/nest/graph/main.cjs [port]`
  */
 import * as fs from "node:fs";
@@ -50,10 +59,14 @@ import {
   createGraphBackendHost,
   graphDemoSeedEnabledFromEnv,
   graphEngineVariantFromEnv,
+  graphRunRetentionFromEnv,
   loadGraphDemoWorkflows,
 } from "./GraphBackendHost";
+import { createGraphBinaryStore } from "../../engine/binary/graphBinaryStoreFromEnvironment";
+import { startGraphTelemetry } from "../../engine/telemetry/GraphTelemetry";
+import { graphRunInfrastructureFromEnv } from "./GraphRunInfrastructure";
+import { observeGraphQueueDepth } from "../../engine/telemetry/GraphTelemetry";
 import { DagsterGraphQLClient } from "../../dagster/DagsterGraphQLClient";
-import { createMastraDefaultStepHandlers } from "../../mastra/MastraDefaultStepHandlers";
 import type { MastraBackendConfig } from "../../mastra/types";
 import type { DagsterClient } from "../../dagster/DagsterTypes";
 import type { Adapter } from "@decaf-ts/core";
@@ -124,6 +137,11 @@ async function buildGraphDbAdapter(): Promise<Adapter<any, any, any, any> | unde
   const { createTypeormGraphAdapter } = await import("../../typeorm/TypeormGraphAdapter");
   return createTypeormGraphAdapter({
     dataSource: dataSourceOptions,
+    // The TaskEngine queue keeps its tasks in this database unless it is
+    // pointed at Dragonfly/Redis.
+    includeTaskModels:
+      process.env["GRAPH_RUN_QUEUE"]?.trim() === "task-engine" &&
+      !process.env["GRAPH_TASK_ENGINE_REDIS_URL"]?.trim(),
   });
 }
 
@@ -138,7 +156,16 @@ async function buildMastraConfig(): Promise<MastraBackendConfig> {
   ) => unknown)({
     storage: new (InMemoryStore as unknown as new () => unknown)(),
   });
-  return { mastra: runtime, stepHandlers: createMastraDefaultStepHandlers() };
+  // Engine-neutral kinds are adapted by the backend itself (each runs its own
+  // node class), so no host step handlers are needed here. The built-in agent
+  // factory builds a real mastra `Agent` from each agent node (its model
+  // adapter, instructions, wired skills and memory), so `core.agent` runs out
+  // of the box once a provider credential is configured; hosts that register
+  // tools pass their own factory options.
+  const { createMastraGraphAgentFactory } = await import(
+    "../../mastra/MastraAgentZones"
+  );
+  return { mastra: runtime, createAgent: createMastraGraphAgentFactory() };
 }
 
 /** Builds the read-only Dagster client from `DAGSTER_GRAPHQL_URL`, when set. */
@@ -159,6 +186,18 @@ async function bootstrap(): Promise<void> {
   // development RAM adapter when the durable lane is selected; otherwise the
   // standalone dev posture (`initAdapter: true`) is unchanged.
   const durableAdapter = await buildGraphDbAdapter();
+  // Workflow files live in an integrations blob store (GRAPH_BINARY_STORE,
+  // S3 by default, configured through BLOBS__<PROVIDER>__*), so they survive
+  // restarts next to the durable run rows and are shared by every process.
+  const telemetry = await startGraphTelemetry();
+  const binaryStore = await createGraphBinaryStore(
+    durableAdapter ? { adapter: durableAdapter } : {}
+  );
+  const retention = graphRunRetentionFromEnv();
+  // Queue, bus and role (single process by default; api/worker split with a
+  // shared queue and the Dragonfly bus).
+  const infrastructure = await graphRunInfrastructureFromEnv(durableAdapter);
+  if (infrastructure.queue) observeGraphQueueDepth(() => infrastructure.queue!.depth());
 
   // Seed the boot variant's demo workflow registry: the local/general engine
   // loads `workflows/basic`, Mastra loads `workflows/mastra`, and Dagster gets
@@ -186,7 +225,14 @@ async function bootstrap(): Promise<void> {
       ...(durableAdapter
         ? { valueAdapter: durableAdapter }
         : { initAdapter: true }),
-      runs: { auth: "optional", allowAnonymousAccess: true },
+      binaryStore,
+      telemetry,
+      runs: {
+        auth: "optional",
+        allowAnonymousAccess: true,
+        ...(retention ? { retention } : {}),
+        ...infrastructure,
+      },
       workflows: { auth: "optional", allowAnonymousAccess: true },
       catalogue: { auth: "optional" },
       engines: { auth: "optional" },
@@ -196,6 +242,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(
     GraphExecutionModule.forRoot(host.moduleOptions)
   );
+  app.enableShutdownHooks();
   app.enableCors({
     origin: [/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
     credentials: true,
@@ -218,6 +265,17 @@ async function bootstrap(): Promise<void> {
   console.log(`[graph-backend]   POST   /graph/runs`);
   console.log(`[graph-backend]   GET    /graph/runs/:runId`);
   console.log(`[graph-backend]   GET    /graph/runs/:runId/events (SSE)`);
+  console.log(`[graph-backend]   GET    /graph/runs/:runId/binary/:binaryId`);
+  console.log(
+    `[graph-backend] role: ${infrastructure.role}; queue: ${infrastructure.queue?.kind}; bus: ${infrastructure.bus?.kind}; metrics: ${telemetry.prometheus ? "GET /graph/metrics" : "off/otlp"}`
+  );
+  console.log(
+    `[graph-backend] binary store: ${binaryStore.service.provider}; run retention: ${
+      retention
+        ? `max age ${retention.maxAgeMs !== undefined ? `${retention.maxAgeMs / 3_600_000}h` : "none"}, max count ${retention.maxCount ?? "none"}`
+        : "off"
+    }`
+  );
 
   console.log(`[graph-backend]   GET    /graph/engines`);
   console.log(`[graph-backend]   GET    /graph/engines/:engineId`);

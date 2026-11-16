@@ -84,7 +84,16 @@ describe("core.io.readWriteFile + core.io.extractFromFile — live filesystem", 
       { operation: "read", path },
       {}
     );
-    expect(read.result).toBe(content);
+    // Like n8n's Read Files from Disk, a read yields a file, not its text.
+    expect(read.result).toMatchObject({
+      fileName: "payload.json",
+      mimeType: "application/json",
+      byteLength: content.length,
+      path,
+    });
+    expect(
+      Buffer.from((read.result as { data: string }).data, "base64").toString("utf8")
+    ).toBe(content);
 
     const parsed = await runNode(
       ExtractFromFileNode,
@@ -121,7 +130,10 @@ describe("core.io.readWriteFile + core.io.extractFromFile — live filesystem", 
       { operation: "read", path },
       {}
     );
-    expect(read.result).toBe("name,note\nJane,ok\nAda,hi\n");
+    expect(read.result).toMatchObject({ fileName: "rows.csv", mimeType: "text/csv" });
+    expect(
+      Buffer.from((read.result as { data: string }).data, "base64").toString("utf8")
+    ).toBe("name,note\nJane,ok\nAda,hi\n");
 
     const parsed = await runNode(
       ExtractFromFileNode,

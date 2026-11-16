@@ -31,6 +31,7 @@ import type {
 import type { GraphAuthData } from "../auth";
 import { graphAuthDataFromRecord, graphAuthDataOf } from "../auth";
 import type { GraphExecutionEngine } from "./GraphExecutionEngine";
+import { GraphBinaryAccess } from "../binary/GraphBinaryAccess";
 
 function stringArrayOf(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -125,6 +126,22 @@ export class GraphExecutionContext extends Context {
    * `user`) and is forwarded onto the existing graph execution Observable as
    * a `GRAPH_RUN_LOG` event (streamed over the `graph.run.log` SSE channel).
    */
+  /**
+   * Streaming file access for this node: open/read files it received as
+   * references, store files it produces (held by the top-level run).
+   */
+  get binaries(): GraphBinaryAccess {
+    const engine = this.engine as
+      | (GraphExecutionEngine & { binaryRunIdOf?: (runId: string) => string })
+      | undefined;
+    return new GraphBinaryAccess(
+      engine?.binaryStore,
+      typeof engine?.binaryRunIdOf === "function"
+        ? engine.binaryRunIdOf(this.runId)
+        : this.runId
+    );
+  }
+
   override get logger(): Logger {
     return this.runLogger!;
   }

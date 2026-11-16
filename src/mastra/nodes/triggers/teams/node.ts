@@ -45,6 +45,7 @@ export interface TeamsChannelTriggerOutput {
 @node("core.agent.trigger.teams", {
   kind: "core.agent.trigger.teams",
   category: "Agent",
+  capabilities: ["trigger"],
   icon: "ti-brand-teams",
   width: 96,
   height: 96,

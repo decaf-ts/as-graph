@@ -60,8 +60,8 @@ describe(`core.agent.delegationHook — live node (${LIVE_BACKING})`, () => {
     const result = await runNode(
       AgentDelegationHookNode,
       "core.agent.delegationHook",
-      { phase: "start", subAgentId: "agent-b" },
-      { fromAgentId: "agent-a", input: { question: "hi" } }
+      { phase: "start" },
+      { fromAgentId: "agent-a", toAgentId: "agent-b", input: { question: "hi" } }
     );
     expect(result).toMatchObject({
       fromAgentId: "agent-a",

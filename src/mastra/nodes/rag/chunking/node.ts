@@ -6,7 +6,7 @@
  * deterministic (no model call), so it is exercised directly in the RAG driver
  * tests. The chunking strategy, size, and overlap are node configuration.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -201,7 +201,19 @@ export class AgentChunkingNode extends GraphNode<
     return { chunks, count: chunks.length };
   }
 
+  /** A single text to split into chunks. */
+  @input({ handle: "text" })
+  text?: unknown;
+
+  /**
+   * Documents to split: a list of strings or of records carrying a `text`
+   * member. May be combined with `text`.
+   */
+  @input({ handle: "documents" })
+  documents?: unknown;
+
   /** The chunking strategy. */
+  @option(["markdown", "recursive", "character", "token"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.chunking.fields.strategy.label",
     type: "select",

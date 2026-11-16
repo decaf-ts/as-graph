@@ -61,22 +61,33 @@ describe("Mastra security invariants", () => {
     expect(/\bimport\s*\(/.test(typeOnly)).toBe(false);
   });
 
-  it("C3: the backend never sets or wraps codeSandboxEvaluator", () => {
-    const offenders = files.filter((file) =>
+  it("C3: user code is only ever evaluated through the facade's sandbox", () => {
+    // Code mode is host-side: the backend may read the facade's
+    // `codeSandboxEvaluator` (the isolate the general engine uses), but it
+    // must never construct an evaluator of its own or run code itself.
+    const reads = files.filter((file) =>
       readFileSync(file, "utf8").includes("codeSandboxEvaluator")
     );
-    expect(offenders).toEqual([]);
+    expect(reads.map((file) => file.split("/src/mastra/")[1]).sort()).toEqual([
+      "MastraEngineNeutralStepHandlers.ts",
+    ]);
+    const constructs = files.filter((file) =>
+      /new\s+\w*CodeSandboxEvaluator|isolated-vm|node:vm|new Function\(|\beval\(/.test(
+        readFileSync(file, "utf8")
+      )
+    );
+    expect(constructs).toEqual([]);
   });
 
-  it("C3: the backend declares codeMode unsupported and exposes no evaluator", async () => {
+  it("C3: the backend declares host-side code mode and holds no evaluator", async () => {
     const backend = new MastraGraphExecutionBackend();
     await backend.initialize({
       codeSandboxEvaluator: { evaluate: () => true },
     } as never);
 
-    expect(backend.codeMode).toBe("unsupported");
+    expect(backend.codeMode).toBe("hostSide");
     expect(backend.local).toBe(false);
-    expect(backend.capabilities.codeMode).toBe("unsupported");
+    expect(backend.capabilities.codeMode).toBe("hostSide");
     expect("codeSandboxEvaluator" in backend).toBe(false);
   });
 

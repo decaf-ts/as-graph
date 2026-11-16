@@ -85,7 +85,7 @@ export class AgentScorerNode extends GraphNode<
   /** The mastra scorer type shortcut (e.g. `agent`, `traces`, `response`). */
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.scorer.fields.scorerType.label",
-    type: "select",
+    type: "text",
   })
   @input({ handle: "scorerType", userControlled: true })
   scorerType?: string;

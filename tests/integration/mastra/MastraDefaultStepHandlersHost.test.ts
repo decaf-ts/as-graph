@@ -138,17 +138,42 @@ describe("Mastra default step handlers — host wiring (SAA-820)", () => {
     expect(nodeFailed?.error?.code).toBe(GRAPH_MASTRA_AGENT_UNAVAILABLE);
   });
 
-  it("still fails closed with GRAPH_MASTRA_UNSUPPORTED_KIND when no stepHandlers are wired", async () => {
+  it("runs engine-neutral kinds through their own node class when no host stepHandlers are wired", async () => {
+    // The backend adapts every engine-neutral kind itself, so a host needs no
+    // step handlers for them and they are never an unsupported kind.
     const host = await bootHost({ mastra: {} });
     const backend = host.backend!;
     const fixture = basicWorkflowFixturesById["fixture-manual-log"];
     const harness = frameSinkHarness("saa-820-unhandled");
 
+    const result = await backend.execute({
+      document: fixture.document,
+      plan: undefined as never,
+      inputs: fixture.inputs ?? {},
+      options: {} as never,
+      events: harness.sink,
+    });
+
+    expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
+  });
+
+  it("still fails closed with GRAPH_MASTRA_UNSUPPORTED_KIND for a kind no handler covers", async () => {
+    const host = await bootHost({ mastra: {} });
+    const backend = host.backend!;
+    const harness = frameSinkHarness("saa-820-unknown-kind");
+
     const code = await rejectionGraphCodeOf(() =>
       backend.execute({
-        document: fixture.document,
+        document: {
+          id: "saa-820-unknown-kind",
+          name: "saa-820-unknown-kind",
+          inputs: [],
+          outputs: [],
+          nodes: [{ id: "x", kind: "test.not-registered", parameters: {} }],
+          edges: [],
+        },
         plan: undefined as never,
-        inputs: fixture.inputs ?? {},
+        inputs: {},
         options: {} as never,
         events: harness.sink,
       })

@@ -9,6 +9,7 @@
 import type { GraphNodeManifest } from "../../shared/graph";
 import { compile, compileWithIcon } from "../../node/manifest-compile";
 import { AgentNode } from "./agent/node";
+import { SubAgentNode } from "./agent/sub-agent/node";
 import { AgentToolNode } from "./tools/tool/node";
 import { AgentToolSelectorNode } from "./tools/tool-selector/node";
 import { AgentHookNode } from "./hooks/hook/node";
@@ -50,6 +51,7 @@ import { AgentVoiceNode } from "./voice/node";
 /** All Mastra node manifests, in catalogue display order. */
 export const MASTRA_NODE_MANIFESTS: GraphNodeManifest[] = [
   compile(AgentNode),
+  compile(SubAgentNode),
   compile(AgentToolNode),
   compile(AgentToolSelectorNode),
   compile(AgentHookNode),

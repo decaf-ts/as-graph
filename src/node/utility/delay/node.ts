@@ -8,7 +8,10 @@
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
-import { GraphNode } from "../../base";
+import { GraphNode, graphDefaultInput } from "../../base";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
+import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import { GRAPH_DELAY_MAX_MS } from "../../../engine/constants";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -20,6 +23,59 @@ export type DelayFlowInput = Record<string, unknown>;
 /** Outputs produced by the delay node. */
 export interface DelayFlowOutput {
   value: unknown;
+}
+
+/**
+ * Clamps a requested delay to the engine ceiling.
+ *
+ * @param requested - The configured `timeoutMs` value.
+ * @param maxDelayMs - The ceiling. Defaults to {@link GRAPH_DELAY_MAX_MS}.
+ * @returns The delay to wait, `0` when the request is not a positive number.
+ */
+export function clampGraphDelayMs(
+  requested: unknown,
+  maxDelayMs: number = GRAPH_DELAY_MAX_MS
+): number {
+  const value = typeof requested === "string" ? Number(requested) : requested;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(Math.floor(value), maxDelayMs);
+}
+
+/**
+ * Waits `delayMs`, rejecting as soon as the run is aborted.
+ *
+ * @param delayMs - The time to wait, in milliseconds.
+ * @param signal - The run's abort signal, when it has one.
+ * @returns A promise settled when the delay elapsed.
+ * @throws {GraphExecutionError} `GRAPH_DELAY_ABORTED` when `signal` aborts first.
+ */
+export function waitForGraphDelay(
+  delayMs: number,
+  signal?: AbortSignal
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const aborted = (): GraphExecutionError =>
+      new GraphExecutionError(
+        "Delay node was aborted before its wait elapsed",
+        "GRAPH_DELAY_ABORTED",
+        { delayMs }
+      );
+    if (signal?.aborted) {
+      reject(aborted());
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(aborted());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
@@ -42,17 +98,27 @@ export interface DelayFlowOutput {
 @model()
 export class DelayFlowNode extends GraphNode<DelayFlowInput, DelayFlowOutput> {
   /**
-   * Passthrough implementation: the actual wait is enforced by the execution
-   * engine/frame using the configured `timeoutMs`; this method simply
-   * forwards its input unchanged.
+   * Waits for the configured duration, then forwards the input unchanged.
+   *
+   * The wait is clamped to {@link GRAPH_DELAY_MAX_MS} and follows the run's
+   * abort signal: a cancelled run stops waiting immediately and fails with
+   * `GRAPH_DELAY_ABORTED` instead of holding its worker until the timer
+   * fires. A missing, non-numeric, or non-positive `timeoutMs` does not wait.
    *
    * @param {GraphNodeExecutionRequest<DelayFlowInput>} request - Execution request carrying the `value` input.
-   * @return {GraphExecutionValues} The unchanged input value under `value`.
+   * @param {GraphExecutionContext} context - Run-scoped context supplying the abort signal.
+   * @return {Promise<GraphExecutionValues>} The unchanged input value under `value`.
+   * @throws {GraphExecutionError} `GRAPH_DELAY_ABORTED` when the run is cancelled during the wait.
    */
-  override execute(
-    request: GraphNodeExecutionRequest<DelayFlowInput>
-  ): GraphExecutionValues {
-    return { value: request.inputs["value"] ?? request.inputs };
+  override async execute(
+    request: GraphNodeExecutionRequest<DelayFlowInput>,
+    context: GraphExecutionContext
+  ): Promise<GraphExecutionValues> {
+    const delayMs = clampGraphDelayMs(this.timeoutMs);
+    if (delayMs > 0) {
+      await waitForGraphDelay(delayMs, context?.abortSignal);
+    }
+    return { value: graphDefaultInput(request.inputs) };
   }
 
   /** Input value forwarded unchanged after the delay. */
@@ -65,7 +131,7 @@ export class DelayFlowNode extends GraphNode<DelayFlowInput, DelayFlowOutput> {
     label: "graph.node.utility.delay.fields.timeoutMs.label",
     type: "number",
   })
-  @input({ handle: "timeoutMs" })
+  @input({ handle: "timeoutMs", userControlled: true, type: "number" })
   timeoutMs?: number;
 
   /** Output carrying the unchanged input value. */

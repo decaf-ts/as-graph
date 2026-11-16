@@ -10,6 +10,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { assertTriggerPayload, triggerRunPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -53,12 +54,19 @@ export class FormTriggerNode extends GraphNode<
    * Returns the submitted form payload supplied by the run caller.
    *
    * @param {GraphNodeExecutionRequest<FormTriggerInput>} request - Execution request carrying the submitted form payload.
-   * @return {GraphExecutionValues} The `payload` output value (null when absent).
+   * @return {GraphExecutionValues} The `payload` output value (the whole run input when no `payload` field is sent, `null` when the run carries no input).
    */
   override execute(
     request: GraphNodeExecutionRequest<FormTriggerInput>
   ): GraphExecutionValues {
-    return { payload: request.inputs["payload"] ?? null };
+    // The declared schema is enforced on what was delivered.
+    return {
+      payload: assertTriggerPayload(
+        "Form",
+        triggerRunPayload(request.inputs, ["schema"]),
+        this.schema ?? request.inputs["schema"]
+      ),
+    };
   }
 
   /** Field definitions for the generated form, authored via the model-builder UI. */

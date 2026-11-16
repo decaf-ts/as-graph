@@ -50,6 +50,9 @@ export const manualLogFixture: GraphWorkflowFixture = {
     "defaults",
   ],
   executable: true,
-  inputs: {},
-  expectedOutputs: { logged: null, audited: null },
+  inputs: { payload: { greeting: "hello" } },
+  expectedOutputs: {
+    logged: { greeting: "hello" },
+    audited: { greeting: "hello" },
+  },
 };

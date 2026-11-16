@@ -54,6 +54,31 @@ export function graphNodeConfig(
 }
 
 /**
+ * Reads a node's default data input without confusing "no value" with "no
+ * port".
+ *
+ * A node whose default input port was routed receives the routed value even
+ * when it is `null`; only when the port key is absent altogether does the node
+ * fall back to the whole input record (several values routed onto distinct
+ * ports, or a trigger payload). Using `inputs[port] ?? inputs` instead turns a
+ * legitimate `null` payload into `{ value: null }`.
+ *
+ * @param inputs - The node's resolved inputs.
+ * @param port - The default data input port id. Defaults to `"value"`.
+ * @returns The routed default input, or the whole input record when the port
+ * was not routed.
+ */
+export function graphDefaultInput(
+  inputs: Record<string, unknown> | undefined,
+  port = "value"
+): unknown {
+  const record = inputs ?? {};
+  return Object.prototype.hasOwnProperty.call(record, port)
+    ? record[port]
+    : record;
+}
+
+/**
  * Constructor shape of a built-in backend node class.
  *
  * Nodes are instantiated by the built-in registration before execution so their

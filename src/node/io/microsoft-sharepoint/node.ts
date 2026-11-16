@@ -12,10 +12,11 @@
  * to `listSites`. A throwaway `MicrosoftSharePointService` is initialized per
  * execution and shut down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -115,6 +116,12 @@ export class MicrosoftSharePointNode extends GraphNode<
   SharePointNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the list item fields when `fields` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Microsoft SharePoint operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `microsoft-sharepoint` Graph access token is resolved via `resolveNodeCredential`.
@@ -126,6 +133,11 @@ export class MicrosoftSharePointNode extends GraphNode<
     request: GraphNodeExecutionRequest<SharePointNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.fields) && routed !== undefined) {
+      this.fields = routed as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Microsoft SharePoint node requires an operation",
@@ -238,6 +250,7 @@ export class MicrosoftSharePointNode extends GraphNode<
   }
 
   /** SharePoint operation to perform (default `listSites`). */
+  @option(["listSites", "getSite", "listLists", "listItems", "createListItem", "listDriveItems"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.microsoft_sharepoint.fields.operation.label",
     type: "select",

@@ -16,6 +16,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { defaultInputText } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -100,6 +101,12 @@ export class ExecuteCommandNode extends GraphNode<
   ExecuteCommandNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Piped to the command's standard input (text as-is, structured data as JSON).
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured shell command.
    *
    * @param request - Execution request (unused directly; credentials are not consumed).
@@ -128,8 +135,9 @@ export class ExecuteCommandNode extends GraphNode<
         )
       )
     );
+    const stdin = defaultInputText(request.inputs?.["value"]);
     const result = await new Promise<CommandResult>((resolve) => {
-      exec(
+      const child = exec(
         command,
         {
           timeout,
@@ -152,6 +160,10 @@ export class ExecuteCommandNode extends GraphNode<
           });
         }
       );
+      // The default input is the command's standard input; the stream is
+      // always closed so a command reading stdin never hangs.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(stdin ?? "");
     });
     if (result.error && this.failOnError) {
       throw new GraphExecutionError(

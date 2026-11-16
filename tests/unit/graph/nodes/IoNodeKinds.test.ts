@@ -49,6 +49,10 @@ function asEngine(value: unknown): GraphExecutionEngine {
   return value as GraphExecutionEngine;
 }
 
+/** Bytes that are not valid UTF-8, so a text decode would corrupt them. */
+const PDF_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0xff, 0xfe, 0x00, 0x80]);
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xc3]);
+
 describe("core.io.httpRequest", () => {
   const kind = "core.io.httpRequest";
   let server: Server;
@@ -79,6 +83,33 @@ describe("core.io.httpRequest", () => {
         request.on("end", () => {
           response.writeHead(201, { "content-type": "application/json" });
           response.end(JSON.stringify({ received: body }));
+        });
+        return;
+      }
+      if (url.pathname === "/report.pdf") {
+        response.writeHead(200, {
+          "content-type": "application/pdf",
+          "content-disposition": 'attachment; filename="q4 report.pdf"',
+        });
+        response.end(PDF_BYTES);
+        return;
+      }
+      if (url.pathname === "/images/logo.png") {
+        response.writeHead(200, { "content-type": "image/png; charset=binary" });
+        response.end(PNG_BYTES);
+        return;
+      }
+      if (url.pathname === "/upload") {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              contentType: request.headers["content-type"],
+              base64: Buffer.concat(chunks).toString("base64"),
+            })
+          );
         });
         return;
       }
@@ -156,6 +187,66 @@ describe("core.io.httpRequest", () => {
       {}
     );
     expect(text.result).toBe("plain body");
+  });
+
+  it("emits a binary file for the file response format", async () => {
+    const named = await run(
+      HttpRequestNode,
+      kind,
+      { url: `${baseUrl}/report.pdf`, responseFormat: "file" },
+      {}
+    );
+    expect(named.result).toEqual({
+      fileName: "q4 report.pdf",
+      mimeType: "application/pdf",
+      byteLength: PDF_BYTES.byteLength,
+      data: PDF_BYTES.toString("base64"),
+    });
+
+    // No Content-Disposition: the URL's last segment names the file and the
+    // media type drops its parameters.
+    const fromUrl = await run(
+      HttpRequestNode,
+      kind,
+      { url: `${baseUrl}/images/logo.png`, responseFormat: "file" },
+      {}
+    );
+    expect(fromUrl.result).toMatchObject({
+      fileName: "logo.png",
+      mimeType: "image/png",
+      data: PNG_BYTES.toString("base64"),
+    });
+
+    const configured = await run(
+      HttpRequestNode,
+      kind,
+      { url: `${baseUrl}/`, responseFormat: "file", fileName: "index.bin" },
+      {}
+    );
+    expect(configured.result).toMatchObject({
+      fileName: "index.bin",
+      byteLength: 0,
+    });
+  });
+
+  it("sends a routed file payload as the raw request body", async () => {
+    const sent = await run(
+      HttpRequestNode,
+      kind,
+      { url: `${baseUrl}/upload`, method: "POST" },
+      {
+        value: {
+          fileName: "logo.png",
+          mimeType: "image/png",
+          byteLength: PNG_BYTES.byteLength,
+          data: PNG_BYTES.toString("base64"),
+        },
+      }
+    );
+    expect(sent.result).toEqual({
+      contentType: "image/png",
+      base64: PNG_BYTES.toString("base64"),
+    });
   });
 
   it("returns non-2xx responses unless failOnError is set", async () => {
@@ -498,9 +589,19 @@ describe("core.io.readWriteFile", () => {
     expect(written.result).toEqual({ path, bytes: 5 });
     expect(written.bytes).toBe(5);
 
+    // A read yields a file (n8n's Read Files from Disk), never the text.
     expect(
       await run(ReadWriteFileNode, kind, { operation: "read", path }, {})
-    ).toEqual({ result: "hello", bytes: 5 });
+    ).toEqual({
+      result: {
+        fileName: "plain.txt",
+        path,
+        mimeType: "text/plain",
+        byteLength: 5,
+        data: Buffer.from("hello").toString("base64"),
+      },
+      bytes: 5,
+    });
 
     await run(
       ReadWriteFileNode,
@@ -509,6 +610,25 @@ describe("core.io.readWriteFile", () => {
       {}
     );
     expect(await readFile(join(directory, path), "utf8")).toBe("hello world");
+  });
+
+  it("writes the bytes of a routed file payload", async () => {
+    const path = "copy.png";
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    await run(
+      ReadWriteFileNode,
+      kind,
+      { operation: "write", path },
+      {
+        value: {
+          fileName: "logo.png",
+          mimeType: "image/png",
+          byteLength: bytes.byteLength,
+          data: bytes.toString("base64"),
+        },
+      }
+    );
+    expect(await readFile(join(directory, path))).toEqual(bytes);
   });
 
   it("creates missing directories and supports base64 encoding", async () => {
@@ -530,10 +650,14 @@ describe("core.io.readWriteFile", () => {
     const read = await run(
       ReadWriteFileNode,
       kind,
-      { operation: "read", path, encoding: "base64" },
+      { operation: "read", path },
       {}
     );
-    expect(read.result).toBe(Buffer.from("binary").toString("base64"));
+    expect(read.result).toMatchObject({
+      fileName: "data.bin",
+      mimeType: "application/octet-stream",
+      data: Buffer.from("binary").toString("base64"),
+    });
   });
 
   it("falls back to the routed value when content is not configured", async () => {

@@ -453,8 +453,28 @@ describe("core.io.* vendor contract (loopback stub; NOT a live-matrix claim)", (
       },
       {}
     );
-    expect(written.content).toContain("name,role");
-    expect(written.content).toContain("linus,kernel");
+    const file = written.result as {
+      fileName: string;
+      mimeType: string;
+      byteLength: number;
+      data: string;
+    };
+    expect(file).toMatchObject({ fileName: "spreadsheet.csv", mimeType: "text/csv" });
+    expect(written.bytes).toBe(file.byteLength);
+    expect(written).not.toHaveProperty("content");
+    const text = Buffer.from(file.data, "base64").toString("utf8");
+    expect(text).toContain("name,role");
+    expect(text).toContain("linus,kernel");
+
+    // The written file parses straight back; its media type picks the format.
+    const reread = await runNode(
+      SpreadsheetFileNode,
+      "core.io.spreadsheetFile",
+      { operation: "parse", hasHeader: true },
+      { value: file }
+    );
+    expect(reread.header).toEqual(["name", "role"]);
+    expect(reread.rows).toEqual([["linus", "kernel"]]);
 
     const json = await runNode(
       SpreadsheetFileNode,
@@ -471,6 +491,49 @@ describe("core.io.* vendor contract (loopback stub; NOT a live-matrix claim)", (
     );
     expect(json.rows).toEqual([["ada", "engineer"]]);
     expect(json.header).toEqual(["name", "role"]);
+  });
+
+  it("Spreadsheet File writes records to XLSX/ODS files and reads them back", async () => {
+    for (const format of ["xlsx", "ods"] as const) {
+      const written = await runNode(
+        SpreadsheetFileNode,
+        "core.io.spreadsheetFile",
+        { operation: "write", format, fileName: `team.${format}`, sheetName: "Team" },
+        { value: [{ name: "ada", age: 36 }, { name: "grace", age: 85 }] }
+      );
+      const file = written.result as { fileName: string; mimeType: string };
+      expect(file.fileName).toBe(`team.${format}`);
+      expect(file.mimeType).toMatch(/spreadsheet/);
+
+      const parsed = await runNode(
+        SpreadsheetFileNode,
+        "core.io.spreadsheetFile",
+        { operation: "parse", hasHeader: true },
+        { value: file }
+      );
+      expect(parsed.header).toEqual(["name", "age"]);
+      expect(parsed.rows).toEqual([
+        ["ada", 36],
+        ["grace", 85],
+      ]);
+      expect((parsed.result as { sheetName: string }).sheetName).toBe("Team");
+    }
+
+    const xls = await runNode(
+      SpreadsheetFileNode,
+      "core.io.spreadsheetFile",
+      { operation: "write", format: "xls" },
+      { value: [["a", 1]] }
+    );
+    expect((xls.result as { fileName: string }).fileName).toBe("spreadsheet.xls");
+    await expect(
+      runNode(
+        SpreadsheetFileNode,
+        "core.io.spreadsheetFile",
+        { operation: "parse" },
+        { value: xls.result }
+      )
+    ).rejects.toMatchObject({ graphCode: "GRAPH_SPREADSHEET_UNSUPPORTED_FORMAT" });
   });
 
   it("contract: never echoes an IO vendor secret into a node result", async () => {

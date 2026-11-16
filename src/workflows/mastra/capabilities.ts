@@ -49,14 +49,13 @@ export const MASTRA_CONFORMANCE_SCENARIOS: readonly MastraConformanceScenario[] 
         "The builder surface is authoring-time API, not a node behaviour; every fixture is its concrete output.",
     },
     {
-      id: "scenario-code-mode-fail-closed",
+      id: "scenario-code-mode-host-side",
       capabilities: ["codeModeConditions"],
       kind: "deterministic-scenario",
       expectedBehavior:
-        "A code-mode condition fails closed instead of running unsandboxed code.",
-      expectedGraphCode: "GRAPH_CODE_MODE_UNSUPPORTED_BACKEND",
+        "A code-mode surface (code/map node, code condition, value template, expression binding) is evaluated host-side in the facade CodeSandboxEvaluator, and fails closed with GRAPH_CODE_SANDBOX_NOT_CONFIGURED when the host configures none.",
       reason:
-        "The Mastra backend declares codeMode unsupported; reuse of the local sandbox is an explicit host extension point.",
+        "Code is never evaluated inside the Mastra runtime; the backend delegates to the engine's isolate.",
     },
     {
       id: "scenario-edge-state-events",

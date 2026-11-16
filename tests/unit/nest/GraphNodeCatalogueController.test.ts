@@ -77,6 +77,7 @@ const SORTED_CATALOGUE_KINDS = [
   "core.agent.skill",
   "core.agent.skillSelector",
   "core.agent.structuredOutputParser",
+  "core.agent.subAgent",
   "core.agent.tool",
   "core.agent.toolDeny",
   "core.agent.toolSelector",

@@ -58,6 +58,7 @@ import {
   GRAPH_MASTRA_MEMORY_UNAVAILABLE,
   GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED,
   GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED,
+  GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID,
 } from "./types";
 import {
   assertNoMastraPlainConnectionCredentials,
@@ -712,6 +713,76 @@ export interface MastraAgentMemoryWiring {
   node: GraphNodeInstance;
   /** The node's validated memory config. */
   config: MastraMemoryConfig;
+  /**
+   * The embedding model wired onto the memory's `embedding` zone, used by
+   * semantic recall in place of the host's `memoryEmbedder`.
+   */
+  embedding?: MastraMemoryEmbeddingWiring;
+}
+
+/** An embedding node wired onto a memory node's `embedding` zone. */
+export interface MastraMemoryEmbeddingWiring {
+  /** The embedding node. */
+  node: GraphNodeInstance;
+  provider: string;
+  modelId: string;
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+/**
+ * Reads the embedding node wired onto a memory node's `embedding` zone.
+ *
+ * @param document - The document being executed.
+ * @param memoryNode - The memory node.
+ * @param config - The memory's validated config.
+ * @returns The wired embedding model, or `undefined` when none is wired.
+ * @throws {GraphExecutionError} {@link GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID}
+ *   when the embedding node names no model or the memory does not enable
+ *   semantic recall.
+ */
+export function connectedMastraMemoryEmbeddingOf(
+  document: GraphWorkflowDocument,
+  memoryNode: GraphNodeInstance,
+  config: MastraMemoryConfig
+): MastraMemoryEmbeddingWiring | undefined {
+  const byId = new Map((document.nodes ?? []).map((node) => [node.id, node]));
+  const edge = (document.edges ?? []).find(
+    (candidate) =>
+      candidate.type === "connection" &&
+      candidate.target.scope === "node" &&
+      candidate.target.nodeId === memoryNode.id &&
+      candidate.target.port === MASTRA_AGENT_ZONE.embedding &&
+      candidate.source.scope === "node"
+  );
+  if (!edge || edge.source.scope !== "node") return undefined;
+  const node = byId.get(edge.source.nodeId);
+  if (!node) return undefined;
+  const parameters = (node.parameters ?? {}) as Record<string, unknown>;
+  const adapter = (
+    parameters["modelAdapter"] && typeof parameters["modelAdapter"] === "object"
+      ? parameters["modelAdapter"]
+      : parameters
+  ) as Record<string, unknown>;
+  const provider = nonEmptyText(adapter["provider"]);
+  const modelId = nonEmptyText(adapter["modelId"]);
+  if (!provider || !modelId) {
+    throw new GraphExecutionError(
+      `Embedding node '${node.id}' wired to memory '${memoryNode.id}' declares no provider/modelId`,
+      GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID,
+      { nodeId: node.id, memoryNodeId: memoryNode.id }
+    );
+  }
+  if (mastraMemoryOptionsOf(config)?.["semanticRecall"] !== true) {
+    throw new GraphExecutionError(
+      `Embedding node '${node.id}' is wired to memory '${memoryNode.id}', which does not enable semantic recall; enable semanticRecall or remove the embedding`,
+      GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID,
+      { nodeId: node.id, memoryNodeId: memoryNode.id }
+    );
+  }
+  return { node, provider, modelId };
 }
 
 /**
@@ -755,7 +826,12 @@ export function connectedMastraMemoryWiringOf(
         { nodeId: sourceNode.id, provider: String(sourceNode.parameters?.["provider"]) }
       );
     }
-    wiring.push({ node: sourceNode, config });
+    const embedding = connectedMastraMemoryEmbeddingOf(
+      document,
+      sourceNode,
+      config
+    );
+    wiring.push({ node: sourceNode, config, ...(embedding ? { embedding } : {}) });
   }
   return wiring;
 }

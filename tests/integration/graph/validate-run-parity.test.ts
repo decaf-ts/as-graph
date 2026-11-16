@@ -126,13 +126,13 @@ describe("validate/run parity (SAA-1357 D2)", () => {
     ).toMatchObject(INVALID_LITERAL_ISSUE);
   });
 
-  it("passes all 11 basic fixture documents through the nine-stage validator", async () => {
+  it("passes all 14 basic fixture documents through the nine-stage validator", async () => {
     const catalogue = freshCatalogue();
     await registerBuiltInGraphNodes(catalogue);
     // The basic set is engine-neutral: it holds no Mastra-owned kind, so the
     // built-in catalogue alone is the complete validator catalogue.
     const validator = new GraphWorkflowDocumentValidator({ catalogue });
-    expect(basicWorkflowFixtures).toHaveLength(11);
+    expect(basicWorkflowFixtures).toHaveLength(14);
 
     for (const registered of basicWorkflowFixtures) {
       const result = await validator.validate(

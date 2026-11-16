@@ -28,6 +28,11 @@ export interface TypeormGraphAdapterOptions {
    * secrets — never hard-coded here.
    */
   dataSource: DataSourceOptions;
+  /**
+   * Also map the Decaf core TaskEngine models (`tasks`, `task_event`) — for
+   * `GRAPH_RUN_QUEUE=task-engine` on this database.
+   */
+  includeTaskModels?: boolean;
 }
 
 /**
@@ -47,7 +52,9 @@ export interface TypeormGraphAdapterOptions {
  * under the `type-orm` flavour or flips the current decaf adapter; both would
  * break development RAM boots that share this process.
  */
-async function flavourAsGraphModelsForTypeorm(): Promise<void> {
+async function flavourAsGraphModelsForTypeorm(
+  includeTaskModels: boolean
+): Promise<void> {
   const [
     { GraphWorkflowModel },
     { GraphRunModel },
@@ -61,6 +68,9 @@ async function flavourAsGraphModelsForTypeorm(): Promise<void> {
     { MastraRunMetricModel },
     { MastraScoreMetricModel },
     { MastraTraceMetricModel },
+    { GraphDataTableModel },
+    { GraphBinaryModel, GraphBinaryHolderModel },
+    { GraphTenantQuotaModel },
   ] = await Promise.all([
     import("../shared/graph/GraphWorkflowModel"),
     import("../shared/graph/GraphRunModel"),
@@ -74,6 +84,9 @@ async function flavourAsGraphModelsForTypeorm(): Promise<void> {
     import("../mastra/MastraMetricsModels"),
     import("../mastra/MastraMetricsModels"),
     import("../mastra/MastraMetricsModels"),
+    import("../engine/store/GraphDataTableModel"),
+    import("../engine/binary/GraphBinaryModels"),
+    import("../engine/runs/GraphRunQuotas"),
   ]);
   const models: (new (...args: never[]) => unknown)[] = [
     GraphWorkflowModel,
@@ -88,7 +101,20 @@ async function flavourAsGraphModelsForTypeorm(): Promise<void> {
     MastraRunMetricModel,
     MastraScoreMetricModel,
     MastraTraceMetricModel,
+    GraphDataTableModel,
+    GraphBinaryModel,
+    GraphBinaryHolderModel,
+    GraphTenantQuotaModel,
   ];
+  if (includeTaskModels) {
+    // Only when the run queue is the core TaskEngine on this database: the
+    // flavour is process-wide, so a TaskEngine on another adapter (Redis)
+    // must not see these models re-flavoured. `@decaf-ts/core` defines them
+    // on import, so `uses(TypeORMFlavour)` re-applies the TypeORM overrides
+    // to them here.
+    const { TaskModel, TaskEventModel } = await import("@decaf-ts/core/tasks");
+    models.push(TaskModel, TaskEventModel);
+  }
   for (const model of models) {
     uses(TypeORMFlavour)(model as never);
   }
@@ -120,13 +146,32 @@ const NATIVE_COLUMN_TYPES: unknown[] = [
  */
 function alignColumnTypesWithBootstrapDdl(): void {
   const { tables, columns } = getMetadataArgsStorage();
-  const targets = new Set<unknown>(
+  const tableOf = new Map<unknown, string>(
     tables
       .filter((t) => AS_GRAPH_TABLE_NAMES.has(t.name as string))
-      .map((t) => t.target)
+      .map((t) => [t.target, t.name as string])
   );
+  const targets = new Set<unknown>(tableOf.keys());
   for (const args of columns) {
     if (!targets.has(args.target)) continue;
+    // Byte counts exceed a 32-bit integer.
+    if (
+      BIGINT_COLUMNS.has(
+        `${tableOf.get(args.target)}.${(args as { propertyName: string }).propertyName}`
+      )
+    ) {
+      const options = (args as unknown as {
+        options: { type?: unknown; transformer?: unknown };
+      }).options;
+      options.type = "bigint";
+      // node-postgres returns bigint as a string; the models expect numbers.
+      options.transformer = {
+        to: (value: unknown) => value,
+        from: (value: unknown) =>
+          value === null || value === undefined ? value : Number(value),
+      };
+      continue;
+    }
     const column = args as unknown as {
       target: { prototype: object };
       propertyName: string;
@@ -154,6 +199,13 @@ function alignColumnTypesWithBootstrapDdl(): void {
   }
 }
 
+/** Columns holding byte counts (`bigint`; read back as numbers). */
+const BIGINT_COLUMNS = new Set<string>([
+  "graph_run.storedBytes",
+  "graph_binary.byteLength",
+  "graph_tenant_quota.maxStoredBytes",
+]);
+
 /** Bootstrap-owned as-graph table names (decaf-managed). */
 const AS_GRAPH_TABLE_NAMES = new Set<string>([
   "graph_workflow",
@@ -168,6 +220,12 @@ const AS_GRAPH_TABLE_NAMES = new Set<string>([
   "mastra_run_metric",
   "mastra_score_metric",
   "mastra_trace_metric",
+  "graph_data_table",
+  "graph_binary",
+  "graph_binary_holder",
+  "graph_tenant_quota",
+  "tasks",
+  "task_event",
 ]);
 
 /**
@@ -265,6 +323,25 @@ Object.defineProperty(GraphTypeormAdapter.prototype, "getRepository", {
  *   `Adapter.models(this.alias)`, and decaf registers models per flavour, so a
  *   custom alias would yield an empty entity list and "No metadata" failures.
  */
+/**
+ * The connection's user name when the options give only a `url`.
+ *
+ * @remarks The TypeORM adapter's default operation user (what its
+ * `@createdBy`/`@updatedBy` overrides write, e.g. on the core TaskEngine
+ * models) is `config.username`. A `url`-only config leaves it undefined, so
+ * rows are created with a null `createdBy` and every later update fails
+ * validation ("createdBy - This field is required").
+ */
+function usernameOf(dataSource: Record<string, unknown>): { username?: string } {
+  if (dataSource["username"] || typeof dataSource["url"] !== "string") return {};
+  try {
+    const username = decodeURIComponent(new URL(dataSource["url"]).username);
+    return username ? { username } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function createTypeormGraphAdapter(
   options: TypeormGraphAdapterOptions
 ): Promise<TypeORMAdapter> {
@@ -281,13 +358,16 @@ export async function createTypeormGraphAdapter(
       "createTypeormGraphAdapter requires `synchronize: false` — the asgraph schema is owned by the bootstrap migrations, and the least-privilege runtime role must not mutate it"
     );
   }
+  // The TypeORM flavour must be current before the models are re-flavoured,
+  // so flavour-specific decorators (e.g. the generated primary key of the
+  // core TaskEngine models) resolve their handler arguments for it.
+  Adapter.setCurrent(TypeORMFlavour);
   TypeORMAdapter.decoration();
-  await flavourAsGraphModelsForTypeorm();
+  await flavourAsGraphModelsForTypeorm(options.includeTaskModels === true);
   alignColumnTypesWithBootstrapDdl();
   const adapter = new GraphTypeormAdapter(
-    Object.assign({}, dataSource, { synchronize: false })
+    Object.assign({}, dataSource, { synchronize: false }, usernameOf(dataSource))
   );
-  Adapter.setCurrent(TypeORMFlavour);
   await adapter.initialize();
   return adapter;
 }

@@ -7,6 +7,7 @@
  * manifests so listing, read and filtering work out of the box for every engine
  * driver, mirroring the {@link GraphRunModelService} persistence pattern.
  */
+import { ConflictError } from "@decaf-ts/db-decorators";
 import { NotFoundError } from "@decaf-ts/db-decorators";
 import {
   ModelService,
@@ -55,15 +56,23 @@ export class GraphNodeModelService extends ModelService<GraphNodeModel> {
     } catch {
       existing = undefined;
     }
-    if (existing) {
-      existing.name = model.name;
-      existing.category = model.category;
-      existing.group = model.group;
-      existing.description = model.description;
-      existing.manifest = model.manifest;
-      return (await this.update(existing, ...ctxArgs)) as GraphNodeModel;
+    const refresh = async (row: GraphNodeModel) => {
+      row.name = model.name;
+      row.category = model.category;
+      row.group = model.group;
+      row.description = model.description;
+      row.manifest = model.manifest;
+      return (await this.update(row, ...ctxArgs)) as GraphNodeModel;
+    };
+    if (existing) return refresh(existing);
+    try {
+      return (await this.create(model, ...ctxArgs)) as GraphNodeModel;
+    } catch (error) {
+      // Another backend process booting at the same time created the row
+      // first: converge on an update instead of failing the boot.
+      if (!(error instanceof ConflictError)) throw error;
+      return refresh((await this.read(model.kind, ...ctxArgs)) as GraphNodeModel);
     }
-    return (await this.create(model, ...ctxArgs)) as GraphNodeModel;
   }
 
   /**

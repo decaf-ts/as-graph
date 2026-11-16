@@ -173,6 +173,28 @@ export class GraphEdgeInstanceValidator {
         this.pushPortIssue(edge, "target", target, targetNode, issues, path);
         valid = false;
       }
+      // Value-type compatibility: an output whose declared type can never be
+      // read as the wired configuration port's type is rejected up front.
+      if (valid && sourceNode && targetNode) {
+        const from = sourceNode.manifest.outputs.find(
+          (candidate) => candidate.id === source.port
+        );
+        const to = targetNode.manifest.inputs.find(
+          (candidate) => candidate.id === target.port
+        );
+        const reason = graphPortTypeMismatchOf(from, to);
+        if (reason) {
+          issues.push({
+            code: "edge.value-type-mismatch",
+            path,
+            message: `Edge '${edge.id}' routes ${reason.from} output '${source.nodeId}.${source.port}' onto ${reason.to} port '${target.nodeId}.${target.port}'`,
+            edgeId: edge.id,
+            nodeId: target.nodeId,
+            details: { sourceType: reason.from, targetType: reason.to },
+          });
+          valid = false;
+        }
+      }
     } else {
       // Structural (connection) edges: both endpoints must be connection
       // ports on real nodes — the workflow boundary never carries
@@ -239,4 +261,42 @@ export class GraphEdgeInstanceValidator {
       details: { port: endpoint.port, expected },
     });
   }
+}
+
+const GRAPH_SCALAR_PORT_TYPES = new Set(["string", "number", "boolean"]);
+
+/**
+ * Detects a data edge whose source can never satisfy its target port.
+ *
+ * Only definite mismatches are reported, and only onto an expose-as-port
+ * configuration field (whose type is real — it comes from the field's own
+ * declaration): a list routed onto a scalar field, a scalar routed onto a list
+ * field, and a number/boolean cross-wire. A string source is never rejected
+ * statically, because the engine coerces numeric and boolean text when it
+ * hydrates a wired configuration port. Untyped (`any`/`object`) ports are
+ * compatible with everything.
+ *
+ * @param from - The source output port manifest.
+ * @param to - The target input port manifest.
+ * @returns The two type names when they are incompatible, else `undefined`.
+ */
+export function graphPortTypeMismatchOf(
+  from: { schema?: { type?: string } } | undefined,
+  to: { schema?: { type?: string }; configurable?: boolean } | undefined
+): { from: string; to: string } | undefined {
+  if (!from || !to || to.configurable !== true) return undefined;
+  const source = from.schema?.type;
+  const target = to.schema?.type === "enum" ? "string" : to.schema?.type;
+  if (!source || !target || source === target) return undefined;
+  const sourceScalar = GRAPH_SCALAR_PORT_TYPES.has(source);
+  const targetScalar = GRAPH_SCALAR_PORT_TYPES.has(target);
+  if (source === "array" && targetScalar) return { from: source, to: target };
+  if (sourceScalar && target === "array") return { from: source, to: target };
+  if (
+    (source === "number" && target === "boolean") ||
+    (source === "boolean" && target === "number")
+  ) {
+    return { from: source, to: target };
+  }
+  return undefined;
 }

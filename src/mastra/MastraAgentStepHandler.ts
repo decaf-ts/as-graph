@@ -47,8 +47,15 @@ import {
   type MastraAgentMemoryWiring,
   type MastraMemoryConfig,
   type MastraMemoryEmbedder,
+  type MastraMemoryEmbeddingWiring,
   type MastraMemoryStorageBindings,
 } from "./MastraMemory";
+import {
+  connectedMastraZoneWiringOf,
+  isMastraAgentZoneWiringEmpty,
+  type MastraAgentZoneWiring,
+  type MastraSubAgentWiring,
+} from "./MastraAgentZones";
 import {
   resolveAgentWiredProcessors,
   type MastraAgentWiredProcessors,
@@ -92,7 +99,8 @@ export interface MastraAgentRuntime {
     signal?: AbortSignal,
     processors?: MastraAgentWiredProcessors,
     memories?: readonly MastraAgentMemoryWiring[],
-    structuredOutput?: MastraResolvedStructuredOutput
+    structuredOutput?: MastraResolvedStructuredOutput,
+    zones?: MastraAgentZoneWiring
   ): Promise<Record<string, unknown>>;
 }
 
@@ -144,7 +152,8 @@ export interface MastraAgentFactoryOptions {
   createAgent?: (
     adapter: MastraModelAdapterConfig | undefined,
     node: GraphNodeInstance,
-    memories?: readonly unknown[]
+    memories?: readonly unknown[],
+    zones?: MastraAgentZoneWiring
   ) => unknown | Promise<unknown>;
   /**
    * Optional named memory map (SAA-836 M2), keyed by the wiring memory node's
@@ -175,6 +184,14 @@ export interface MastraAgentFactoryOptions {
   memoryVectorStore?: MastraVector;
   /** Host-supplied embedding model used by semantic recall, when needed. */
   memoryEmbedder?: MastraMemoryEmbedder;
+  /**
+   * Builds the embedding model for an embedding node wired onto a memory's
+   * `embedding` zone. Defaults to mastra's model router id
+   * `<provider>/<modelId>`.
+   */
+  resolveMemoryEmbedder?: (
+    embedding: MastraMemoryEmbeddingWiring
+  ) => MastraMemoryEmbedder | Promise<MastraMemoryEmbedder>;
 }
 
 /**
@@ -197,6 +214,13 @@ function promptOf(
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string") return candidate;
+  }
+  // Structured data routed onto the prompt (a record or a list from a data
+  // node) is sent as JSON instead of being dropped for an empty prompt.
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null) continue;
+    if (typeof candidate === "object") return JSON.stringify(candidate);
+    return String(candidate);
   }
   return "";
 }
@@ -222,6 +246,10 @@ function agentOutputOf(result: unknown): Record<string, unknown> {
   return {
     response: typeof text === "string" ? text : "",
     actions: Array.isArray(actions) ? actions : [],
+    // The parsed structured output, when the node declares one.
+    ...(record["object"] !== undefined && record["object"] !== null
+      ? { object: record["object"] }
+      : {}),
   };
 }
 
@@ -265,9 +293,16 @@ async function resolveWiredMemories(
           ...(options.memoryVectorStore
             ? { vector: options.memoryVectorStore }
             : {}),
-          ...(options.memoryEmbedder !== undefined
-            ? { embedder: options.memoryEmbedder }
-            : {}),
+          // The memory's own `embedding` zone wins over the host embedder.
+          ...(entry.embedding
+            ? {
+                embedder: (options.resolveMemoryEmbedder
+                  ? await options.resolveMemoryEmbedder(entry.embedding)
+                  : `${entry.embedding.provider}/${entry.embedding.modelId}`) as MastraMemoryEmbedder,
+              }
+            : options.memoryEmbedder !== undefined
+              ? { embedder: options.memoryEmbedder }
+              : {}),
         })
       ).memory;
     }
@@ -312,6 +347,58 @@ function memoryGenerateOptionOf(
 }
 
 /**
+ * Copies a zone wiring with the live memories of every (nested) sub-agent
+ * resolved, the same way the supervisor's own memories are. The cached
+ * wiring is left untouched — live memories belong to one run.
+ *
+ * @param options - The factory options.
+ * @param zones - The supervisor's zone wiring.
+ * @returns The wiring with `memories` set on each sub-agent.
+ */
+async function withSubAgentMemories(
+  options: MastraAgentFactoryOptions,
+  zones: MastraAgentZoneWiring
+): Promise<MastraAgentZoneWiring> {
+  if (zones.subAgents.length === 0) return zones;
+  const subAgents: MastraSubAgentWiring[] = [];
+  for (const entry of zones.subAgents) {
+    subAgents.push({
+      ...entry,
+      wiring: await withSubAgentMemories(options, entry.wiring),
+      ...(entry.memoryWiring.length
+        ? { memories: await resolveWiredMemories(options, entry.memoryWiring) }
+        : {}),
+    });
+  }
+  return { ...zones, subAgents };
+}
+
+/**
+ * Resolves the processors wired onto every (nested) sub-agent's processor
+ * zones; a sub-agent applies them from construction.
+ *
+ * @param document - The document being executed.
+ * @param zones - The supervisor's zone wiring (updated in place, cached).
+ * @param resolveProcessorModel - Host classifier-model resolver.
+ */
+async function resolveSubAgentProcessors(
+  document: GraphWorkflowDocument,
+  zones: MastraAgentZoneWiring,
+  resolveProcessorModel: MastraProcessorModelResolver | undefined
+): Promise<void> {
+  for (const entry of zones.subAgents) {
+    if (!entry.processors) {
+      entry.processors = await resolveAgentWiredProcessors(
+        document,
+        entry.nodeId,
+        resolveProcessorModel
+      );
+    }
+    await resolveSubAgentProcessors(document, entry.wiring, resolveProcessorModel);
+  }
+}
+
+/**
  * Resolves the live agent for a node from the factory options.
  *
  * @param options - The factory options.
@@ -325,7 +412,8 @@ async function resolveAgent(
   options: MastraAgentFactoryOptions,
   adapter: MastraModelAdapterConfig | undefined,
   node: GraphNodeInstance,
-  memories?: readonly unknown[]
+  memories?: readonly unknown[],
+  zones?: MastraAgentZoneWiring
 ): Promise<unknown> {
   const agents = options.agents;
   if (agents) {
@@ -340,7 +428,7 @@ async function resolveAgent(
     }
   }
   if (options.createAgent) {
-    return options.createAgent(adapter, node, memories);
+    return options.createAgent(adapter, node, memories, zones);
   }
   return undefined;
 }
@@ -362,7 +450,15 @@ export function createMastraAgentRuntimeFromConfig(
   options: MastraAgentFactoryOptions = {}
 ): MastraAgentRuntime {
   return {
-    async execute(node, inputData, signal, processors, memories, structuredOutput) {
+    async execute(
+      node,
+      inputData,
+      signal,
+      processors,
+      memories,
+      structuredOutput,
+      zones
+    ) {
       const adapter = graphModelAdapterOf(node);
       // SAA-836 M2: resolve the memories wired onto the agent's `memory` zone
       // before the agent itself, so a factory can attach them at construction.
@@ -370,7 +466,13 @@ export function createMastraAgentRuntimeFromConfig(
         memories && memories.length
           ? await resolveWiredMemories(options, memories)
           : undefined;
-      const agent = await resolveAgent(options, adapter, node, wiredMemories);
+      const agent = await resolveAgent(
+        options,
+        adapter,
+        node,
+        wiredMemories,
+        zones ? await withSubAgentMemories(options, zones) : zones
+      );
       if (agent === undefined || agent === null) {
         throw new GraphExecutionError(
           `No mastra agent is available for node '${node.id}' (kind '${node.kind}')`,
@@ -473,6 +575,7 @@ export function createMastraAgentNodeRuntime(
         memories?: readonly MastraAgentMemoryWiring[];
         structuredOutput?: MastraResolvedStructuredOutput;
         structuredOutputResolved: boolean;
+        zones?: MastraAgentZoneWiring;
       }
     >
   >();
@@ -493,6 +596,7 @@ export function createMastraAgentNodeRuntime(
             memories?: readonly MastraAgentMemoryWiring[];
             structuredOutput?: MastraResolvedStructuredOutput;
             structuredOutputResolved: boolean;
+            zones?: MastraAgentZoneWiring;
           }
         | undefined;
       if (document) {
@@ -541,13 +645,25 @@ export function createMastraAgentNodeRuntime(
       } else {
         structuredOutput = mastraStructuredOutputOf(node, options.resolveModel);
       }
+      // Tools, skills, hooks, scorers, sandbox and sub-agents connected to the
+      // agent's zones: the factory building the agent receives them.
+      let zones: MastraAgentZoneWiring | undefined;
+      if (document) {
+        const wiring = state?.zones ?? connectedMastraZoneWiringOf(document, node);
+        if (!state?.zones) {
+          await resolveSubAgentProcessors(document, wiring, options.resolveProcessorModel);
+        }
+        if (state) state.zones = wiring;
+        if (!isMastraAgentZoneWiringEmpty(wiring)) zones = wiring;
+      }
       return (await runtime.execute(
         node,
         inputData,
         signal,
         processors,
         memories,
-        structuredOutput
+        structuredOutput,
+        zones
       )) as Record<string, unknown>;
     },
   };

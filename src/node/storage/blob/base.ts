@@ -14,7 +14,7 @@
  * the run, and every failure is surfaced as a
  * `GraphExecutionError` carrying the operation and error code.
  */
-import { required } from "@decaf-ts/decorator-validation";
+import { required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import type { BlobStoreService } from "@decaf-ts/integrations/blob";
 import { collectToBuffer } from "@decaf-ts/integrations/blob";
@@ -270,6 +270,7 @@ export abstract class BlobNode extends GraphNode<
   }
 
   /** Operation to run (defaults to `get`). */
+  @option(["list", "get", "delete", "put", "stat", "has", "url", "copy"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.storage.common.fields.operation.label",
     type: "select",
@@ -310,6 +311,7 @@ export abstract class BlobNode extends GraphNode<
   contentType?: string;
 
   /** How string payloads are decoded on write and object contents are emitted on read (defaults to `utf8`). */
+  @option(["base64", "utf8"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.storage.common.fields.encoding.label",
     type: "select",
@@ -350,6 +352,7 @@ export abstract class BlobNode extends GraphNode<
   limit?: number;
 
   /** Signed-URL operation for the `url` operation (defaults to `get`). */
+  @option(["get", "put"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.storage.common.fields.urlOperation.label",
     type: "select",

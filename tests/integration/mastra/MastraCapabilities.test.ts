@@ -42,12 +42,12 @@ describe("Mastra capabilities (SAA-307 item 4)", () => {
       persist: "not_supported",
       version: "extension_point",
     });
-    expect(backend.codeMode).toBe("unsupported");
+    expect(backend.codeMode).toBe("hostSide");
     expect(backend.local).toBe(false);
     // The engine-agnostic projection keeps only the two-valued list/get fields;
     // the management statuses are a Mastra-specific extension.
     expect(resolveGraphBackendCapabilities(backend)).toEqual({
-      codeMode: "unsupported",
+      codeMode: "hostSide",
       workflows: { list: "supported", get: "supported" },
     });
   });
@@ -95,7 +95,7 @@ describe("Mastra capabilities (SAA-307 item 4)", () => {
 
   it("resolves the SAA-346 management statuses in the projection", () => {
     expect(resolveMastraCapabilities()).toEqual({
-      codeMode: "unsupported",
+      codeMode: "hostSide",
       workflows: {
         list: "supported",
         get: "supported",
@@ -132,12 +132,12 @@ describe("Mastra capabilities (SAA-307 item 4)", () => {
     // fields survive. The Mastra-specific management statuses live on the
     // backend's declared capabilities.
     expect(engine.backendCapabilities).toEqual({
-      codeMode: "unsupported",
+      codeMode: "hostSide",
       workflows: { list: "supported", get: "supported" },
     });
     expect(engine.backendCapabilities.workflows.list).toBe("supported");
     expect(engine.backendCapabilities.workflows.get).toBe("supported");
-    expect(engine.backendCapabilities.codeMode).toBe("unsupported");
+    expect(engine.backendCapabilities.codeMode).toBe("hostSide");
     expect(backend.capabilities).toEqual(resolveMastraCapabilities());
     expect(backend.capabilities.workflows.create).toBe("supported");
     expect(backend.capabilities.workflows.persist).toBe("not_supported");

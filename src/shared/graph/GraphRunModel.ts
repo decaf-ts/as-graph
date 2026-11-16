@@ -11,7 +11,7 @@
  */
 import { date, model, required, type } from "@decaf-ts/decorator-validation";
 import { description, prop } from "@decaf-ts/decoration";
-import { BaseModel, column, index, pk, table } from "@decaf-ts/core";
+import { BaseModel, column, index, OrderDirection, pk, table } from "@decaf-ts/core";
 import { uielement, uilistmodel, uilistprop, uimodel } from "@decaf-ts/ui-decorators";
 
 /**
@@ -44,6 +44,7 @@ export class GraphRunModel extends BaseModel {
   @uielement("ngx-decaf-crud-field", {
     label: "graph.run.workflowId.label",
   })
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["createdAt"])
   workflowId!: string;
 
   /** Owning user; absent for anonymous callers. */
@@ -65,6 +66,7 @@ export class GraphRunModel extends BaseModel {
     label: "graph.run.status.label",
     readonly: true,
   })
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["finishedAt"])
   status!: string;
 
   /** Fingerprint of the executed document (stable SHA-256). */
@@ -75,6 +77,53 @@ export class GraphRunModel extends BaseModel {
     readonly: true,
   })
   documentFingerprint?: string;
+
+  /** Worker process executing the run (`hostname:pid:uuid`). */
+  @column()
+  @description("Worker process executing the run")
+  workerId?: string;
+
+  /** Last liveness beat of the worker executing the run. */
+  @date()
+  @column()
+  @index()
+  @description("Last liveness beat of the worker executing the run")
+  heartbeatAt?: Date;
+
+  /** Set while the run waits for external (human-in-the-loop) input. */
+  @date()
+  @column()
+  @description("Set while the run waits for external input")
+  suspendedAt?: Date;
+
+  /** Execution attempts so far. */
+  @column()
+  @description("Execution attempts so far")
+  attempt?: number;
+
+  /** Concurrency/quota bucket of the caller (owner, or a per-IP key). */
+  @column()
+  @index()
+  @description("Concurrency and quota bucket of the caller")
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["status"])
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["createdAt"])
+  callerKey?: string;
+
+  /** Caller-scoped idempotency key of the create request. */
+  @column()
+  @index()
+  @description("Caller-scoped idempotency key of the create request")
+  idempotencyKey?: string;
+
+  /** SHA-256 of the create request, to detect an idempotency-key reuse. */
+  @column()
+  @description("SHA-256 of the create request")
+  requestHash?: string;
+
+  /** Bytes the run's files and run data occupy (for storage quotas). */
+  @column()
+  @description("Bytes the run's files and run data occupy")
+  storedBytes?: number;
 
   /** Workflow input values keyed by input port id. */
   @column()

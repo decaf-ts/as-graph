@@ -12,7 +12,7 @@
  * `GitlabService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -80,6 +80,12 @@ const OPERATIONS: GitlabOperation[] = [
 })
 @model()
 export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the issue or note body when `body` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured GitLab operation.
    *
@@ -190,6 +196,7 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
   }
 
   /** GitLab operation to perform (default `getProject`). */
+  @option(["listIssues", "createIssue", "commentIssue", "getProject", "listMergeRequests"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.gitlab.fields.operation.label",
     type: "select",
@@ -246,6 +253,7 @@ export class GitlabNode extends GraphNode<GitlabNodeInput, GitlabNodeOutput> {
   assigneeIds?: number[];
 
   /** Issue/merge-request state filter for list operations. */
+  @option(["all", "closed", "opened"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.common.fields.state.label",
     type: "select",

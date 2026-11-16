@@ -11,7 +11,7 @@
  * payload. `verify` and `decode` require a token from `token` config or the
  * `value` input. An unknown `operation` silently falls back to `decode`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -178,6 +178,7 @@ export class JwtNode extends GraphNode<JwtNodeInput, JwtNodeOutput> {
   }
 
   /** JWT operation to perform (defaults to `decode`). */
+  @option(["sign", "verify", "decode"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.jwt.fields.operation.label",
     type: "select",

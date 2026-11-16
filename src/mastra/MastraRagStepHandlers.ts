@@ -938,9 +938,14 @@ export function createMastraRagNodeRuntime(
     const results = await store.query({
       indexName,
       queryVector: vector,
-      topK: positiveInteger(parameters["topK"]) ?? DEFAULT_TOP_K,
-      ...(isRecord(parameters["filter"])
-        ? { filter: parameters["filter"] as VectorFilter }
+      topK:
+        positiveInteger(inputData["topK"] ?? parameters["topK"]) ??
+        DEFAULT_TOP_K,
+      ...(isRecord(inputData["filter"] ?? parameters["filter"])
+        ? {
+            filter: (inputData["filter"] ??
+              parameters["filter"]) as VectorFilter,
+          }
         : {}),
     });
     const documents = results.map((result) => ({

@@ -115,6 +115,63 @@ describe("mastra voice step (SAA-836 M6)", () => {
     ]);
   });
 
+  it("speaks routed text into a binary audio payload", async () => {
+    const spoken: unknown[] = [];
+    const step = compileVoiceStep({ speaker: "alloy" }, () => ({
+      speak: async (text: string, options?: unknown) => {
+        spoken.push([text, options]);
+        return (async function* () {
+          yield Buffer.from("AUD");
+          yield Buffer.from("IO");
+        })();
+      },
+    }));
+
+    const output = (await step.execute({
+      inputData: { text: "hello there" },
+    })) as Record<string, unknown>;
+
+    expect(spoken).toEqual([["hello there", { speaker: "alloy" }]]);
+    expect(output["audio"]).toEqual({
+      fileName: "speech.mp3",
+      mimeType: "audio/mpeg",
+      byteLength: 5,
+      data: Buffer.from("AUDIO").toString("base64"),
+    });
+    expect(output["transcript"]).toBeUndefined();
+  });
+
+  it("transcribes a routed audio payload", async () => {
+    const heard: string[] = [];
+    const step = compileVoiceStep({}, () => ({
+      listen: async (audio: AsyncIterable<Buffer>) => {
+        for await (const chunk of audio) heard.push(chunk.toString("utf8"));
+        return "what was said";
+      },
+    }));
+
+    const output = (await step.execute({
+      inputData: {
+        audio: {
+          fileName: "clip.wav",
+          mimeType: "audio/wav",
+          byteLength: 4,
+          data: Buffer.from("WAVE").toString("base64"),
+        },
+      },
+    })) as Record<string, unknown>;
+
+    expect(heard).toEqual(["WAVE"]);
+    expect(output["transcript"]).toBe("what was said");
+  });
+
+  it("fails closed when the voice surface cannot do what was asked", async () => {
+    const step = compileVoiceStep({}, () => ({}));
+    await expect(
+      step.execute({ inputData: { text: "hello" } })
+    ).rejects.toMatchObject({ graphCode: GRAPH_MASTRA_VOICE_UNAVAILABLE });
+  });
+
   it("compiles the voice kind by its dedicated handler", () => {
     expect(GRAPH_MASTRA_VOICE_KIND).toBe("core.agent.voice");
     expect(createMastraVoiceStepHandler().kind).toBe("core.agent.voice");

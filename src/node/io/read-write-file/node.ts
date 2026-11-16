@@ -4,17 +4,22 @@
  * family).
  * @description Read/Write Files from Disk — read or write a file at the
  * configured `path`. The path is required and must not contain a NUL byte.
- * `read` returns the file's content (`base64` or `utf8` per `encoding`) with
- * its byte length. `write` resolves the content from the configured `content`
- * field or the `value` input (strings are encoded per `encoding`, binaries
- * pass through, anything else is stringified), optionally creates the parent
+ * `read` returns the file as a binary file payload (n8n's Read Files from
+ * Disk): the engine moves its bytes to the binary store, so the file shows on
+ * the binary tab and only a reference travels to the next node — use Extract
+ * from File to turn it into data. `write` resolves the content from the
+ * configured `content` field or the `value` input (a binary file payload
+ * writes its bytes, strings are encoded per `encoding`, raw binaries pass
+ * through, anything else is stringified), optionally creates the parent
  * directories (`createDirectories`), and either appends to or overwrites the
  * file per `append`. The write path and byte length are reported on both
  * `result` and `bytes`.
  */
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import { realpathSync } from "node:fs";
+import { createReadStream, createWriteStream, realpathSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   appendFile,
   mkdir,
@@ -22,7 +27,7 @@ import {
   realpath,
   writeFile,
 } from "node:fs/promises";
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -31,6 +36,14 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import {
+  binaryBufferOf,
+  binaryPayloadOf,
+  graphInputStreamOf,
+  isBinaryFilePayload,
+  mimeTypeFor,
+} from "../file-support";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 
 /** Environment variable selecting the directory file operations are rooted at. */
 const FILE_IO_BASE_ENV = "GRAPH_FILE_IO_BASE";
@@ -173,7 +186,7 @@ async function realPathOfNearestExisting(
 /** What the node does at the configured path. */
 export type ReadWriteFileOperation = "read" | "write";
 
-/** Encoding applied to string content. */
+/** Encoding applied to string content written by `write`. */
 export type ReadWriteFileEncoding = "utf8" | "base64";
 
 /** Inputs accepted by the Read/Write Files from Disk node. */
@@ -192,6 +205,7 @@ export interface ReadWriteFileNodeOutput {
 @node("core.io.readWriteFile", {
   kind: "core.io.readWriteFile",
   category: "IO",
+  capabilities: ["binaryStream"],
   color: "#0ea5e9",
   icon: "ti-device-floppy",
   width: 96,
@@ -212,15 +226,16 @@ export class ReadWriteFileNode extends GraphNode<
    *
    * @param request - The execution request carrying the optional `value`
    *   content fallback.
-   * @returns The file content (read) or the written path and byte count
-   *   (write).
+   * @returns The file as a binary payload with its byte count (read), or the
+   *   written path and byte count (write).
    * @throws {GraphExecutionError} with code `GRAPH_READ_WRITE_FILE_PATH_REQUIRED`
    *   when no `path` is configured, `GRAPH_READ_WRITE_FILE_INVALID_PATH` when
    *   the path contains a NUL byte, and `GRAPH_READ_WRITE_FILE_CONTENT_REQUIRED`
    *   when writing without any content.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<ReadWriteFileNodeInput>
+    request: GraphNodeExecutionRequest<ReadWriteFileNodeInput>,
+    context?: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     if (!this.path) {
       throw new GraphExecutionError(
@@ -250,12 +265,23 @@ export class ReadWriteFileNode extends GraphNode<
         );
       }
       assertContainedPath(base, existing, this.path);
+      if (context?.binaries) {
+        // Streamed from disk straight into the binary store.
+        const stored = await context.binaries.write(createReadStream(existing), {
+          fileName: basename(candidate),
+          mimeType: mimeTypeFor(candidate),
+          path: this.path,
+        });
+        return { result: stored, bytes: stored.byteLength };
+      }
       const content = await readFile(existing);
       return {
-        result:
-          this.encoding === "base64"
-            ? content.toString("base64")
-            : content.toString("utf8"),
+        result: binaryPayloadOf(
+          content,
+          basename(candidate),
+          this.path,
+          mimeTypeFor(candidate)
+        ),
         bytes: content.byteLength,
       };
     }
@@ -267,8 +293,12 @@ export class ReadWriteFileNode extends GraphNode<
         "GRAPH_READ_WRITE_FILE_CONTENT_REQUIRED"
       );
     }
-    const data =
-      typeof content === "string"
+    const stream = await graphInputStreamOf(content, context);
+    const data = stream
+      ? undefined
+      : isBinaryFilePayload(content)
+      ? binaryBufferOf(content, "base64")
+      : typeof content === "string"
         ? this.encoding === "base64"
           ? Buffer.from(content, "base64")
           : Buffer.from(content, "utf8")
@@ -288,21 +318,38 @@ export class ReadWriteFileNode extends GraphNode<
     const targetRealPath = await realPathOfNearestExisting(candidate);
     if (targetRealPath) assertContainedPath(base, targetRealPath, this.path);
 
-    if (this.append) {
-      await appendFile(candidate, data);
+    let bytes: number;
+    if (stream) {
+      // A file streams to disk without being loaded.
+      bytes = 0;
+      const counted = (async function* () {
+        for await (const chunk of stream) {
+          bytes += chunk.byteLength;
+          yield chunk;
+        }
+      })();
+      await pipeline(
+        Readable.from(counted),
+        createWriteStream(candidate, { flags: this.append ? "a" : "w" })
+      );
+    } else if (this.append) {
+      await appendFile(candidate, data as Buffer);
+      bytes = (data as Buffer).byteLength;
     } else {
-      await writeFile(candidate, data);
+      await writeFile(candidate, data as Buffer);
+      bytes = (data as Buffer).byteLength;
     }
 
     return {
-      result: { path: this.path, bytes: data.byteLength },
-      bytes: data.byteLength,
+      result: { path: this.path, bytes },
+      bytes,
     };
   }
 
   @input({ handle: "value" })
   value?: unknown;
 
+  @option(["read", "write"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.read_write_file.fields.operation.label",
     type: "select",
@@ -319,6 +366,7 @@ export class ReadWriteFileNode extends GraphNode<
   @input({ handle: "path", userControlled: true })
   path: string = "";
 
+  @option(["base64", "utf8"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.read_write_file.fields.encoding.label",
     type: "select",
@@ -347,6 +395,7 @@ export class ReadWriteFileNode extends GraphNode<
   @input({ handle: "createDirectories", userControlled: true })
   createDirectories?: boolean = false;
 
+  /** The read file (a binary payload) or the write descriptor `{ path, bytes }`. */
   @required()
   @output({ handle: "result" })
   result!: unknown;

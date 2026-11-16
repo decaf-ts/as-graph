@@ -10,7 +10,7 @@
  * never mutated — and with no valid sort fields configured the copy is
  * returned unchanged. The output is always an array — array-in, array-out.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -112,6 +112,7 @@ export class SortNode extends GraphNode<SortNodeInput, SortNodeOutput> {
   @input({ handle: "sortFields", userControlled: true, type: "array" })
   sortFields?: SortField[] = [];
 
+  @option(["string", "number", "auto", "date"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.sort.fields.valueType.label",
     type: "select",

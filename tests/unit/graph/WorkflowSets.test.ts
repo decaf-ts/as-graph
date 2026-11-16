@@ -136,7 +136,17 @@ describe("workflow sets — Mastra registry (SAA-1545 §7)", () => {
       expect(outputIds).toEqual(
         manifest.outputs.map((port) => `out-${port.id}`).sort()
       );
-      expect(Object.keys(fixture.inputs ?? {}).sort()).toEqual(inputIds);
+      // Every data port is fed; a configuration port is fed only with a real
+      // value (a wired configuration value is honoured, so no placeholders).
+      const fed = Object.keys(fixture.inputs ?? {}).sort();
+      expect(inputIds).toEqual(expect.arrayContaining(fed));
+      expect(fed).toEqual(
+        expect.arrayContaining(
+          manifest.inputs
+            .filter((port) => port.configurable !== true)
+            .map((port) => `in-${port.id}`)
+        )
+      );
     }
     expect(mastraKindFixtures).toHaveLength(
       Object.keys(MASTRA_NODE_CLASSES_BY_KIND).length

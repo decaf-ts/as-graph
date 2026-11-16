@@ -8,7 +8,7 @@
  * optional list merging, and missing-value handling; the shared aggregation
  * helpers live in `transform-utils`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -130,6 +130,7 @@ export class AggregateNode extends GraphNode<
   value!: unknown;
 
   /** Aggregation strategy (default `aggregateIndividualFields`). */
+  @option(["aggregateIndividualFields", "aggregateAllItemData"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.aggregate.fields.aggregate.label",
     type: "select",
@@ -155,6 +156,7 @@ export class AggregateNode extends GraphNode<
   destinationFieldName: string = "data";
 
   /** Field projection used by `aggregateAllItemData` (default `allFields`). */
+  @option(["allFields", "specifiedFields", "allFieldsExcept"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.aggregate.fields.include.label",
     type: "select",

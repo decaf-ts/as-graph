@@ -14,6 +14,8 @@
  * unrepresentable topology and on unsupported kinds.
  */
 import { z } from "zod";
+import { isCodeCondition } from "../engine/loops/ConditionEvaluator";
+import type { CodeCondition } from "../shared/graph";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkflowDocument";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
@@ -125,7 +127,20 @@ export interface MastraWorkflowCompilerOptions {
   stepHandlers?: MastraNodeStepHandler[];
   /** Optional backend configuration (reserved for handler plumbing). */
   config?: MastraBackendConfig;
+  /**
+   * Evaluates a code-mode loop condition host-side, in the engine's code
+   * sandbox. Without it a while/until loop carrying a code condition fails
+   * closed at translation time.
+   */
+  evaluateCodeCondition?: MastraCodeConditionEvaluator;
 }
+
+/** Host-side evaluator for a code-mode condition (the engine's sandbox). */
+export type MastraCodeConditionEvaluator = (
+  condition: CodeCondition,
+  input: Record<string, unknown>,
+  nodeId: string
+) => Promise<boolean>;
 
 /**
  * Options supplied per compilation.
@@ -266,7 +281,10 @@ export class MastraWorkflowCompiler {
     for (const handler of options.stepHandlers ?? []) {
       this.handlers.set(handler.kind, handler);
     }
+    this.evaluateCodeCondition = options.evaluateCodeCondition;
   }
+
+  private readonly evaluateCodeCondition?: MastraCodeConditionEvaluator;
 
   /**
    * Clears the compiled-workflow cache.
@@ -491,7 +509,16 @@ export class MastraWorkflowCompiler {
     degradedSchemas: string[]
   ): unknown {
     let step: unknown;
-    if (node.kind === GRAPH_MASTRA_IF_KIND) {
+    if (
+      (node.kind === GRAPH_MASTRA_IF_KIND ||
+        node.kind === GRAPH_MASTRA_SWITCH_KIND) &&
+      this.handlers.has(node.kind)
+    ) {
+      // The branching node's own class runs (one implementation per kind);
+      // the built-in translation below only serves a compiler built without
+      // the engine-neutral handlers.
+      step = this.buildLeafStep(node, degradedSchemas, document);
+    } else if (node.kind === GRAPH_MASTRA_IF_KIND) {
       step = this.buildIfStep(node);
     } else if (node.kind === GRAPH_MASTRA_SWITCH_KIND) {
       step = this.buildSwitchStep(node);
@@ -853,6 +880,9 @@ export class MastraWorkflowCompiler {
     const parameters = node.parameters ?? {};
     const body = new MastraWorkflowCompiler({
       stepHandlers: [...this.handlers.values()],
+      ...(this.evaluateCodeCondition
+        ? { evaluateCodeCondition: this.evaluateCodeCondition }
+        : {}),
     }).compile(node.loop.body);
 
     if (node.kind === GRAPH_MASTRA_FOREACH_KIND) {
@@ -911,12 +941,27 @@ export class MastraWorkflowCompiler {
     const condition = (parameters["condition"] ?? node.metadata?.["condition"]) as
       | Condition
       | undefined;
-    assertMastraConditionSupported(condition, node.id);
-    const predicate = mastraConditionPredicate(condition!, "loop");
-    const asyncPredicate = async (args: {
+    const codeEvaluator = this.evaluateCodeCondition;
+    let asyncPredicate: (args: {
       inputData?: unknown;
       state?: unknown;
-    }): Promise<boolean> => predicate(args);
+    }) => Promise<boolean>;
+    if (condition && isCodeCondition(condition) && codeEvaluator) {
+      // A code condition runs host-side in the engine's sandbox, with the
+      // loop state as `$input`.
+      asyncPredicate = async (args) => {
+        const state = args?.inputData ?? args?.state;
+        return codeEvaluator(
+          condition,
+          isRecord(state) ? { ...state, state } : { state },
+          node.id
+        );
+      };
+    } else {
+      assertMastraConditionSupported(condition, node.id);
+      const predicate = mastraConditionPredicate(condition!, "loop");
+      asyncPredicate = async (args) => predicate(args);
+    }
     const bodyInput = this.buildLoopBodyInput(
       node.id,
       body.workflow,

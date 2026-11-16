@@ -56,10 +56,14 @@ describe("demo workflow fixtures — engine execution (SAA-2052)", () => {
       (candidate) => candidate.id === "fixture-manual-log"
     )!;
     const result = await runFixtureDocument(fixture.document, fixture.inputs ?? {});
-    expect(result.nodeResults.trigger.outputs).toEqual({ payload: null });
-    expect(result.nodeResults.logger.inputs).toEqual({ value: null });
-    expect(result.nodeResults.logger.outputs).toEqual({ value: null });
-    expect(result.nodeResults.audit.inputs).toEqual({ value: null });
+    // The trigger is the workflow entry: it receives the run payload and
+    // forwards it, so every downstream node sees real data.
+    const payload = { greeting: "hello" };
+    expect(result.nodeResults.trigger.inputs).toEqual({ payload });
+    expect(result.nodeResults.trigger.outputs).toEqual({ payload });
+    expect(result.nodeResults.logger.inputs).toEqual({ value: payload });
+    expect(result.nodeResults.logger.outputs).toEqual({ value: payload });
+    expect(result.nodeResults.audit.inputs).toEqual({ value: payload });
   });
 
   it("records per-node intermediate inputs/outputs for the if→switch workflow", async () => {

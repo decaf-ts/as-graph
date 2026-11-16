@@ -12,10 +12,11 @@
  * `GoogleSheetsService` is initialized per execution and shut down in a
  * `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -84,6 +85,12 @@ export class GoogleSheetsNode extends GraphNode<
   GoogleSheetsNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the rows to write when `values` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Google Sheets operation.
    *
    * @param request - Execution request carrying the credential secrets; the `google-sheets` credential supplies `token`/`apiKey`.
@@ -95,6 +102,11 @@ export class GoogleSheetsNode extends GraphNode<
     request: GraphNodeExecutionRequest<GoogleSheetsNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.values) && routed !== undefined) {
+      this.values = routed as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Google Sheets node requires an operation",
@@ -242,6 +254,7 @@ export class GoogleSheetsNode extends GraphNode<
   }
 
   /** Operation to run (default `get`). */
+  @option(["get", "clear", "append", "create", "update"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.google_sheets.fields.operation.label",
     type: "select",
@@ -274,6 +287,7 @@ export class GoogleSheetsNode extends GraphNode<
   values?: unknown[][];
 
   /** Value interpretation for `update`/`append` (default `USER_ENTERED`). */
+  @option(["RAW", "USER_ENTERED"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.google_sheets.fields.valueInputOption.label",
     type: "select",

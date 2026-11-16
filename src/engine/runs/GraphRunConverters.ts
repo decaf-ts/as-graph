@@ -27,6 +27,14 @@ export function runToModel(run: GraphRun): GraphRunModel {
     createdAt: new Date(run.createdAt),
     ...(run.startedAt ? { startedAt: new Date(run.startedAt) } : {}),
     ...(run.finishedAt ? { finishedAt: new Date(run.finishedAt) } : {}),
+    ...(run.workerId ? { workerId: run.workerId } : {}),
+    ...(run.heartbeatAt ? { heartbeatAt: new Date(run.heartbeatAt) } : {}),
+    ...(run.suspendedAt ? { suspendedAt: new Date(run.suspendedAt) } : {}),
+    ...(run.attempt !== undefined ? { attempt: run.attempt } : {}),
+    ...(run.callerKey ? { callerKey: run.callerKey } : {}),
+    ...(run.idempotencyKey ? { idempotencyKey: run.idempotencyKey } : {}),
+    ...(run.requestHash ? { requestHash: run.requestHash } : {}),
+    ...(run.storedBytes !== undefined ? { storedBytes: run.storedBytes } : {}),
   });
 }
 
@@ -46,10 +54,50 @@ export function modelToRun(model: GraphRunModel): GraphRun {
     ...(model.documentFingerprint
       ? { documentFingerprint: model.documentFingerprint }
       : {}),
+    ...(model.workerId ? { workerId: model.workerId } : {}),
+    ...(model.heartbeatAt ? { heartbeatAt: new Date(model.heartbeatAt).toISOString() } : {}),
+    ...(model.suspendedAt ? { suspendedAt: new Date(model.suspendedAt).toISOString() } : {}),
+    ...(model.attempt !== undefined && model.attempt !== null ? { attempt: Number(model.attempt) } : {}),
+    ...(model.callerKey ? { callerKey: model.callerKey } : {}),
+    ...(model.idempotencyKey ? { idempotencyKey: model.idempotencyKey } : {}),
+    ...(model.requestHash ? { requestHash: model.requestHash } : {}),
+    ...(model.storedBytes !== undefined && model.storedBytes !== null
+      ? { storedBytes: Number(model.storedBytes) }
+      : {}),
   };
 }
 
 function toJsonSafe(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) return undefined;
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+/**
+ * Milliseconds of a run timestamp as stores return it: a `Date`, an ISO
+ * string, or the Decaf formatted date (`dd-MM-yyyy HH:mm:ss:SSS`, also with
+ * `/`). `NaN` when unreadable.
+ *
+ * @param value - The timestamp.
+ */
+export function graphRunTimeOf(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return Number.NaN;
+  const decaf = /^(\d{2})[-/](\d{2})[-/](\d{4})[ T](\d{2}):(\d{2}):(\d{2})(?::(\d{1,3}))?$/.exec(
+    value.trim()
+  );
+  if (decaf) {
+    const [, day, month, year, hour, minute, second, ms] = decaf;
+    // Decaf formats with the local-time getters.
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+      Number((ms ?? "0").padEnd(3, "0"))
+    ).getTime();
+  }
+  return Date.parse(value);
 }

@@ -14,7 +14,7 @@
  * operation and its retry/acknowledgement/credential-store options are out of
  * scope. The exchange type defaults to `topic`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connect } from "amqplib";
 import type { ChannelModel, ConfirmChannel } from "amqplib";
@@ -121,11 +121,7 @@ export class RabbitMqNode extends GraphNode<
     );
     const ssl = asBoolean(this.ssl, false);
     const message = encodeMessage(
-      this.value ??
-        request.inputs["value"] ??
-        request.inputs["payload"] ??
-        request.inputs["message"]
-    );
+this.value ?? request.inputs["value"]);
 
     let connection: ChannelModel | undefined;
     let channel: ConfirmChannel | undefined;
@@ -183,6 +179,7 @@ export class RabbitMqNode extends GraphNode<
 
   /** Publish target: a queue (default) or a topic exchange. */
   @input({ handle: "mode", userControlled: true })
+  @option(["queue", "exchange"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.storage.rabbitmq.fields.mode.label",
     type: "select",

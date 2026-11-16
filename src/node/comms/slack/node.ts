@@ -13,7 +13,7 @@
  * `SlackService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -82,6 +82,12 @@ const OPERATIONS: SlackOperation[] = [
 })
 @model()
 export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the message text when `text` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Slack operation.
    *
@@ -184,6 +190,7 @@ export class SlackNode extends GraphNode<SlackNodeInput, SlackNodeOutput> {
   }
 
   /** Slack operation to perform (default `postMessage`). */
+  @option(["postMessage", "listConversations", "getConversation", "getUser"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.slack.fields.operation.label",
     type: "select",

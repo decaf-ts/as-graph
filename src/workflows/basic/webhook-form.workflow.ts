@@ -55,6 +55,13 @@ export const webhookFormFixture: GraphWorkflowFixture = {
   ],
   combos: ["exposed-ports", "straight-value", "defaults"],
   executable: true,
-  inputs: {},
-  expectedOutputs: { delayed: { value: null }, logged: null, chat: null },
+  inputs: {
+    payload: { name: "Ada", email: "ada@example.com" },
+    message: "hello",
+  },
+  expectedOutputs: {
+    delayed: { name: "Ada", email: "ada@example.com" },
+    logged: { name: "Ada", email: "ada@example.com" },
+    chat: "hello",
+  },
 };

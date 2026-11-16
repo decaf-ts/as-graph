@@ -5,7 +5,7 @@
  * each signature is kept; later duplicates are emitted on `discarded`, and
  * `removeOtherFields` can project kept items onto the compared fields only.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -85,6 +85,7 @@ export class RemoveDuplicatesNode extends GraphNode<
   value!: unknown;
 
   /** Field selection used for comparison (default `allFields`). */
+  @option(["allFields", "allFieldsExcept", "selectedFields"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.remove_duplicates.fields.compareMode.label",
     type: "select",

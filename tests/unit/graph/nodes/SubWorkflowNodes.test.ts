@@ -159,16 +159,17 @@ describe("core.flow.executeSubWorkflow", () => {
     });
   });
 
-  it("falls back to the `input` port and reports the child's whole output map", async () => {
+  it("reads only the declared `value` port and reports the child's whole output map", async () => {
     const { engine, executeCalls } = recordingEngine(() => ({ other: true }));
     const context = buildNodeContext(kind, { parameters: { workflow: CHILD }, engine });
     const result = await executeNode(
       ExecuteSubWorkflowNode,
-      nodeExecutionRequest({ input: "legacy" }),
+      nodeExecutionRequest({ value: "routed", input: "undeclared" }),
       context
     );
 
-    expect(executeCalls[0].inputs).toEqual({ value: "legacy" });
+    // `input` is not a port of this kind, so nothing can route onto it.
+    expect(executeCalls[0].inputs).toEqual({ value: "routed" });
     expect(result.result).toEqual({ other: true });
   });
 

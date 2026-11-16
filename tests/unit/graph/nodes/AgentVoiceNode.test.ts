@@ -66,8 +66,14 @@ describe("AgentVoiceNode", () => {
         "speaker",
         "speechModel",
         "listeningModel",
+        "text",
+        "audio",
       ]);
-      expect(manifest.outputs.map((port) => port.id)).toEqual(["resource"]);
+      expect(manifest.outputs.map((port) => port.id)).toEqual([
+        "resource",
+        "audio",
+        "transcript",
+      ]);
     });
   });
 

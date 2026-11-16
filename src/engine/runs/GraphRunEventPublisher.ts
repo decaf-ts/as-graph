@@ -64,6 +64,16 @@ export class GraphRunEventPublisher {
   }
 
   /** Highest sequence number issued for the run (0 when none). */
+  /**
+   * Continues a run's gapless sequence from a stored one (a process that did
+   * not publish the run's earlier events: recovery, another worker).
+   */
+  resumeFrom(runId: string, sequence: number): void {
+    if (sequence > (this.sequences.get(runId) ?? 0)) {
+      this.sequences.set(runId, sequence);
+    }
+  }
+
   lastSequence(runId: string): number {
     return this.sequences.get(runId) ?? 0;
   }

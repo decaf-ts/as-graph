@@ -14,6 +14,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { assertTriggerPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -62,12 +63,22 @@ export class ExecuteWorkflowTriggerNode extends GraphNode<
   override execute(
     request: GraphNodeExecutionRequest<ExecuteWorkflowTriggerInput>
   ): GraphExecutionValues {
-    const payload = request.inputs["payload"];
+    // The parent run's value arrives as the run payload; the declared schema
+    // is enforced on it.
+    const inputs = request.inputs as Record<string, unknown>;
+    const has = (key: string): boolean =>
+      Object.prototype.hasOwnProperty.call(inputs, key);
+    // An explicit `payload` wins (even a falsy one), then the `value` the
+    // parent's sub-workflow node hands over, then the whole input record.
+    const delivered = has("payload")
+      ? inputs["payload"]
+      : has("value")
+        ? inputs["value"]
+        : Object.fromEntries(
+            Object.entries(inputs).filter(([key]) => key !== "schema")
+          );
     return {
-      result:
-        payload !== undefined
-          ? payload
-          : request.inputs["value"] ?? request.inputs,
+      result: assertTriggerPayload("Execute Workflow", delivered, this.schema),
     };
   }
 

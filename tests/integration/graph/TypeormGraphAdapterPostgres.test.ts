@@ -8,7 +8,7 @@
  * lane and serves `graph/engines`.
  * @description Live lane, opt-in: set `GRAPH_IT_POSTGRES_URL` to a Postgres
  * DSN for a database on which
- * `as-infra/infrastructure/mastra/migrations/0001_asgraph_decaf_tables.sql`
+ * `docker/sql/0001_asgraph_decaf_tables.sql` (as-graph's generated bootstrap DDL)
  * has been applied and `mastra_app` has DML on the `asgraph` schema. Without
  * the variable the suite skips honestly (no fabricated in-memory stand-in).
  */
@@ -75,7 +75,7 @@ live("TypeormGraphAdapter on live Postgres (SAA-926 §6.4)", () => {
       schema: SCHEMA,
       synchronize: false,
     };
-    adapter = await createTypeormGraphAdapter({ dataSource });
+    adapter = await createTypeormGraphAdapter({ dataSource, includeTaskModels: true });
     sql = new DataSource(dataSource);
     await sql.initialize();
   }, 60000);
@@ -374,6 +374,110 @@ live("TypeormGraphAdapter on live Postgres (SAA-926 §6.4)", () => {
     expect(updated.outputs).toEqual({ out: 43 });
   });
 
+  it("the bootstrap schema matches every model (no schema drift)", async () => {
+    // TypeORM diffs its entity metadata — the models the adapter runs on —
+    // against the live bootstrap schema: any missing table, column, type or
+    // index shows up as a pending statement.
+    const dataSource = (adapter as unknown as { getClient(): DataSource }).getClient();
+    if (!dataSource.isInitialized) await dataSource.initialize();
+    const plan = await dataSource.driver.createSchemaBuilder().log();
+    const pending = plan.upQueries
+      .map((query) => query.query.trim())
+      // An index on a primary-key column duplicates the primary key's own
+      // index; the generated DDL omits it on purpose.
+      .filter((sql) => {
+        const match = /^CREATE INDEX "[^"]+" ON "[^"]+"\."([^"]+)"\s+\("([^"]+)"\)\s*$/.exec(sql);
+        if (!match) return true;
+        const entity = dataSource.entityMetadatas.find((meta) => meta.tableName === match[1]);
+        return !entity?.primaryColumns.some((column) => column.databaseName === match[2]);
+      });
+    expect(pending).toEqual([]);
+    const tables = (await sql.query(
+      `select table_name from information_schema.tables where table_schema = $1`,
+      [SCHEMA]
+    )) as Array<{ table_name: string }>;
+    expect(tables.map((row) => row.table_name).sort()).toEqual(
+      [
+        "graph_binary",
+        "graph_binary_holder",
+        "graph_data_table",
+        "graph_node",
+        "graph_run",
+        "graph_run_event",
+        "graph_tenant_quota",
+        "graph_value",
+        "graph_workflow",
+        "mastra_cache_entry",
+        "mastra_eval_experiment",
+        "mastra_eval_result",
+        "mastra_replay_snapshot",
+        "mastra_run_metric",
+        "mastra_score_metric",
+        "mastra_trace_metric",
+        "task_event",
+        "tasks",
+      ].sort()
+    );
+  });
+
+  it("prunes by count on Postgres without touching the newest runs", async () => {
+    const { RamGraphRunStore } = await import("../../../src/ram/GraphRunStore");
+    const store = new RamGraphRunStore(adapter as never);
+    const ids = [0, 1, 2, 3].map((index) => `${PREFIX}-prune-${index}`);
+    for (const [index, id] of ids.entries()) {
+      await store.saveRun({
+        runId: id,
+        workflowId: `${PREFIX}-prune`,
+        ownerUser: null,
+        status: "succeeded",
+        createdAt: new Date(Date.UTC(2020, 0, 1 + index)).toISOString(),
+        finishedAt: new Date(Date.UTC(2020, 0, 1 + index)).toISOString(),
+      });
+    }
+    try {
+      // Keep the newest (2026+) runs of other tests, plus all but the two
+      // oldest of ours: everything newer than 2020-01-03 stays.
+      const total = (await store.listPrunableRuns({ keepNewest: 0, limit: 100_000 })).length;
+      const victims = await store.listPrunableRuns({ keepNewest: total - 2, limit: 100 });
+      expect(victims.map((run) => run.runId)).toEqual(ids.slice(0, 2));
+      const old = await store.listPrunableRuns({
+        before: new Date(Date.UTC(2020, 0, 2, 12)),
+        limit: 100,
+      });
+      expect(old.map((run) => run.runId)).toEqual(ids.slice(0, 2));
+    } finally {
+      for (const id of ids) await store.deleteRun(id);
+    }
+  });
+
+  it("keeps the binary index on Postgres: holders, deferred deletion, sweep", async () => {
+    const { MemoryBlobStoreService } = await import("@decaf-ts/integrations/blob/memory");
+    const { BlobGraphBinaryStore } = await import("../../../src/engine/binary/BlobGraphBinaryStore");
+    const blobs = new MemoryBlobStoreService();
+    await blobs.boot({ provider: "memory", sourceId: `${PREFIX}-blobs` });
+    const store = new BlobGraphBinaryStore(blobs as never, {
+      adapter: adapter as never,
+      deleteGraceMs: 60_000,
+    });
+    const descriptor = { fileName: "p.txt", mimeType: "text/plain", byteLength: 4 };
+    const id = await store.write(`${PREFIX}-r1`, Buffer.from(`${PREFIX}`.slice(0, 4)), descriptor);
+    expect(await store.belongsTo(`${PREFIX}-r1`, id)).toBe(true);
+    expect(await store.describe(id)).toEqual(descriptor);
+
+    // Released: marked, still readable within the grace period.
+    await store.deleteRun(`${PREFIX}-r1`);
+    expect(await store.read(id)).toBeDefined();
+    expect(await store.sweep(new Date(Date.now() + 1_000))).toBe(0);
+    // Held again: the mark is cleared, a later sweep keeps it.
+    await store.retain(`${PREFIX}-r2`, id);
+    expect(await store.sweep(new Date(Date.now() + 120_000))).toBe(0);
+    // Released for good: the sweep past the grace deletes bytes and row.
+    await store.deleteRun(`${PREFIX}-r2`);
+    expect(await store.sweep(new Date(Date.now() + 120_000))).toBe(1);
+    expect(await store.read(id)).toBeUndefined();
+    expect(await store.describe(id)).toBeUndefined();
+  });
+
   it("stores the documented columns as jsonb in the bootstrap schema", async () => {
     const rows = await sql.query<
       Array<{
@@ -451,6 +555,10 @@ live("TypeormGraphAdapter on live Postgres (SAA-926 §6.4)", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          // The standalone host refuses to boot without a binary store (S3 by
+          // default); these boot checks use the in-process provider.
+          GRAPH_BINARY_STORE: "memory",
+          BLOBS__MEMORY__SOURCE_ID: "standalone-boot-test",
           GRAPH_BACKEND_ENGINE: "local",
           GRAPH_BACKEND_PORT: String(port),
           GRAPH_SEED_DEMO: "off",
@@ -472,6 +580,99 @@ live("TypeormGraphAdapter on live Postgres (SAA-926 §6.4)", () => {
       }
     },
     60000
+  );
+
+  bootLane(
+    "keeps a run listable, input-free in its outputs and deletable across a host restart",
+    async () => {
+      const port = 31929;
+      const workflowId = `${PREFIX}-restart`;
+      const env = {
+        ...process.env,
+        GRAPH_BINARY_STORE: "memory",
+        BLOBS__MEMORY__SOURCE_ID: "standalone-restart-test",
+        GRAPH_BACKEND_ENGINE: "local",
+        GRAPH_BACKEND_PORT: String(port),
+        GRAPH_SEED_DEMO: "off",
+        GRAPH_DB_DRIVER: "postgres",
+        GRAPH_DB_URL: POSTGRES_URL as string,
+        GRAPH_DB_SCHEMA: SCHEMA,
+      };
+      const boot = async () => {
+        const child = spawn(process.execPath, [builtHost], {
+          cwd: process.cwd(),
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        await waitForListening(child, []);
+        return child;
+      };
+      const api = `http://127.0.0.1:${port}/graph`;
+      const doc = document({
+        id: workflowId,
+        name: workflowId,
+        inputs: [{ id: "name", label: "name", direction: "input" } as never],
+        outputs: [{ id: "greeting", label: "greeting", direction: "output" } as never],
+        nodes: [
+          node("greet", "core.data.set", {
+            includeOtherFields: false,
+            assignments: [{ name: "hello", type: "string", value: "world" }],
+          }),
+        ],
+        edges: [
+          edge("e1", ["workflow", "name"], ["node", "greet", "value"]),
+          edge("e2", ["node", "greet", "result"], ["workflow", "greeting"]),
+        ],
+      });
+
+      let child = await boot();
+      let runId: string;
+      try {
+        const saved = await fetch(`${api}/workflows/${workflowId}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(doc),
+        });
+        expect(saved.status).toBeLessThan(300);
+        const created = await fetch(`${api}/runs`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workflowId, inputs: { name: { who: "ada" } } }),
+        });
+        runId = ((await created.json()) as { runId: string }).runId;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const run = (await (await fetch(`${api}/runs/${runId}`)).json()) as { status: string };
+          if (run.status === "succeeded" || run.status === "failed") break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      } finally {
+        await stopChild(child);
+      }
+
+      // A real restart: a new process over the same Postgres schema.
+      child = await boot();
+      try {
+        const run = (await (await fetch(`${api}/runs/${runId}`)).json()) as {
+          status: string;
+          result: { outputs: Record<string, unknown> };
+        };
+        expect(run.status).toBe("succeeded");
+        // Outputs are the declared output ports only, never the run inputs.
+        expect(Object.keys(run.result.outputs)).toEqual(["greeting"]);
+        // The durable DDL has no `updatedAt` column; the row is still listed.
+        const rows = (await (await fetch(`${api}/workflows/${workflowId}/runs`)).json()) as Array<{
+          runId: string;
+        }>;
+        expect(rows.map((row) => row.runId)).toContain(runId);
+
+        const deleted = await fetch(`${api}/runs/${runId}?purge=true`, { method: "DELETE" });
+        expect(deleted.status).toBe(200);
+        expect((await fetch(`${api}/runs/${runId}`)).status).toBe(404);
+      } finally {
+        await stopChild(child);
+      }
+    },
+    120000
   );
 });
 

@@ -7,7 +7,13 @@ import type {
   GraphPortDefinition,
   GraphPortZone,
 } from "../constants";
-import { graphDefinitionOf, graphLeafPortsOf, graphNodeMetadataOf, graphPortsOf } from "../reader";
+import {
+  graphDefinitionOf,
+  graphFieldDefinitionsOf,
+  graphLeafPortsOf,
+  graphNodeMetadataOf,
+  graphPortsOf,
+} from "../reader";
 import type { GraphJsonValue } from "../document/GraphJsonValue";
 import { cloneGraphJsonValue, isGraphJsonSafeValue } from "../document/GraphJsonValue";
 import type { GraphIconReference } from "./GraphIconReference";
@@ -34,6 +40,10 @@ import {
   type GraphValidationRecord,
 } from "./GraphValueSchemaDerivation";
 import type { GraphNodeManifest } from "./GraphNodeManifest";
+import {
+  isGraphNodeCapability,
+  type GraphNodeCapability,
+} from "./GraphNodeCapability";
 import { assertGraphNodeManifestSerializable } from "./GraphNodeManifestSerialization";
 
 /**
@@ -453,6 +463,124 @@ function graphPortsPolicyOf(rules: unknown): GraphConnectionPolicy | undefined {
 }
 
 /**
+ * Reads a node class's property-initializer defaults.
+ *
+ * A node's default configuration is expressed as TypeScript property
+ * initializers (§0.2 R8), which exist only on an instance. Constructing one
+ * bare instance lets the manifest publish those defaults, so an editor can
+ * pre-fill a field with the value the node would use anyway. A class that
+ * cannot be constructed without arguments simply publishes no defaults.
+ *
+ * @param constructor - The `@node`-decorated class.
+ * @returns The instance's own property values, or an empty record.
+ */
+function graphNodeInstanceDefaultsOf(
+  constructor: Constructor<Model>
+): Record<string, unknown> {
+  try {
+    const factory = (
+      constructor as unknown as { instantiate?: () => unknown }
+    ).instantiate;
+    const instance =
+      typeof factory === "function"
+        ? factory.call(constructor)
+        : new (constructor as unknown as new () => unknown)();
+    return instance && typeof instance === "object"
+      ? (instance as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Adds the property-initializer default to a parameter that declares none.
+ *
+ * Only top-level node properties are considered (a schema-flattened member
+ * lives on the nested model, not on the node instance), hidden parameters are
+ * left alone, and a default that is not JSON-safe is skipped.
+ *
+ * @param parameter - The compiled parameter definition.
+ * @param port - The port definition the parameter was compiled from.
+ * @param defaults - The node instance's property values.
+ * @returns The parameter, with `defaultValue` set when one was found.
+ */
+function withInstanceDefault(
+  parameter: GraphParameterDefinition,
+  port: GraphPortDefinition,
+  defaults: Record<string, unknown>
+): GraphParameterDefinition {
+  if (parameter.type === "hidden") return parameter;
+  if ((parameter as { defaultValue?: unknown }).defaultValue !== undefined) {
+    return parameter;
+  }
+  const property = String(port.property ?? "");
+  if (!property || String(port.path ?? property) !== property) return parameter;
+  const value = defaults[property];
+  if (value === undefined || value === null || typeof value === "function") {
+    return parameter;
+  }
+  if (!isGraphJsonSafeValue(value)) return parameter;
+  return {
+    ...parameter,
+    defaultValue: JSON.parse(JSON.stringify(value)) as GraphJsonValue,
+  } as GraphParameterDefinition;
+}
+
+/**
+ * Marks the default data port of a direction in its manifest metadata.
+ *
+ * The default input is the first input that is a data port (not an
+ * expose-as-port configuration field); the default output is the first
+ * output. An editor uses the marker to decide where an auto-created edge
+ * lands, instead of guessing from port order or property names.
+ *
+ * @param ports - The candidate ports, in declaration order.
+ * @param key - `defaultInput` or `defaultOutput`.
+ */
+function markDefaultPort(
+  ports: GraphPortManifest[],
+  key: "defaultInput" | "defaultOutput"
+): void {
+  const preferred =
+    ports.find((port) => port.id === (key === "defaultInput" ? "value" : "result")) ??
+    ports.find((port) => port.hidden !== true) ??
+    ports[0];
+  if (!preferred) return;
+  preferred.metadata = { ...(preferred.metadata ?? {}), [key]: true };
+}
+
+/**
+ * Resolves the capabilities a node kind publishes in its manifest.
+ *
+ * Capabilities declared on `@node({ capabilities })` are kept when they are
+ * known capability names; a node in the `Trigger` category is always a
+ * `trigger`, so every trigger kind is recognisable as a workflow entry without
+ * repeating the declaration on each class.
+ *
+ * @param declared - The raw `capabilities` value from the `@node` metadata.
+ * @param category - The node's display category.
+ * @returns The de-duplicated capability list (empty when there is none).
+ */
+function graphNodeCapabilitiesOf(
+  declared: unknown,
+  category: string | undefined
+): GraphNodeCapability[] {
+  const result: GraphNodeCapability[] = [];
+  if (Array.isArray(declared)) {
+    for (const entry of declared) {
+      if (isGraphNodeCapability(entry) && !result.includes(entry)) {
+        result.push(entry);
+      }
+    }
+  }
+  if (category === "Trigger" && !result.includes("trigger")) {
+    result.unshift("trigger");
+  }
+  return result;
+}
+
+/**
  * Compiles a `@node`-decorated class into its serialisable {@link GraphNodeManifest}, throwing when the class is not decorated.
  */
 export function graphNodeManifest(
@@ -477,6 +605,7 @@ export function graphNodeManifest(
   const connections: GraphPortManifest[] = [];
   const parameters: GraphParameterDefinition[] = [];
   const nodePolicy = graphPortsPolicyOf(definition.graph?.["connectionRules"]);
+  const instanceDefaults = graphNodeInstanceDefaultsOf(constructor);
   for (const port of ports) {
     const target = port.direction === "connection"
       ? connections
@@ -485,8 +614,41 @@ export function graphNodeManifest(
         : inputs;
     target.push(graphPortManifestOf(port, nodePolicy));
     if (port.direction === "input") {
-      parameters.push(graphParameterOf(port));
+      parameters.push(
+        withInstanceDefault(graphParameterOf(port), port, instanceDefaults)
+      );
     }
+  }
+  markDefaultPort(
+    inputs.filter((port) => port.configurable !== true),
+    "defaultInput"
+  );
+  markDefaultPort(outputs, "defaultOutput");
+  // User-changeable properties that are not ports (R5 category 2) are
+  // parameters too: a form field with a persisted value and no canvas port.
+  const parameterIds = new Set(parameters.map((parameter) => parameter.id));
+  for (const field of graphFieldDefinitionsOf(constructor)) {
+    const parameter = withInstanceDefault(
+      graphParameterOf(field),
+      field,
+      instanceDefaults
+    );
+    if (parameterIds.has(parameter.id)) continue;
+    parameterIds.add(parameter.id);
+    parameters.push({
+      ...parameter,
+      // The form control travels with the parameter: there is no port
+      // manifest to carry it.
+      ...(portElementOf(field)
+        ? {
+            metadata: {
+              ...((parameter as { metadata?: Record<string, GraphJsonValue> })
+                .metadata ?? {}),
+              element: portElementOf(field) as unknown as GraphJsonValue,
+            },
+          }
+        : {}),
+    } as GraphParameterDefinition);
   }
   const manifest: GraphNodeManifest = {
     kind: options.kind ?? definition.kind ?? definition.name,
@@ -496,6 +658,11 @@ export function graphNodeManifest(
     parameters,
   };
   if (connections.length) manifest.connections = connections;
+  const capabilities = graphNodeCapabilitiesOf(
+    definition.graph?.capabilities,
+    manifest.display.category
+  );
+  if (capabilities.length) manifest.capabilities = capabilities;
   if (definition.namespaces?.length) manifest.namespaces = definition.namespaces.slice();
   assertGraphNodeManifestSerializable(manifest);
   return manifest;

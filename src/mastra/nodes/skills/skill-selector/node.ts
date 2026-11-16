@@ -53,7 +53,7 @@ export class AgentSkillSelectorNode extends GraphNode<
   override execute(
     request: GraphNodeExecutionRequest<AgentSkillSelectorInput>
   ): GraphExecutionValues {
-    const decision = request.inputs["decision"] ?? request.inputs["value"];
+    const decision = request.inputs["decision"];
     const available = this.skills ?? [];
     const selected =
       typeof decision === "string"

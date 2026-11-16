@@ -4,7 +4,7 @@
  * @description The Agent node is the primary AI agent entrypoint. It is a
  * rectangular node with `@connection()` ports for its structural dependencies,
  * laid out as dedicated zones (SAA-836 M1): `memory` bottom-left, `scorers`
- * top-right, `embedding` bottom-right, `hooks`/`sandbox` top-middle, and
+ * top-right, `subagents` top-left, `hooks`/`sandbox` top-middle, and
  * `tools`/`skill` bottom-middle. The `inputProcessors`/`outputProcessors`
  * zones (SAA-836 M5) carry mastra's preprocessor/post-processor pipelines.
  * The `model` and `workspace` connections stay on
@@ -23,7 +23,7 @@
  * `{{ $node["Research"].output.summary }}` that are resolved at execution time
  * by the placeholder compiler.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../../node/base";
@@ -56,7 +56,7 @@ export interface AgentNodeOutput {
  * - `@output` ports on the **right**: `response` (the agent's output), `actions`
  *   (any actions the agent decided to take).
  * - Dedicated `@connection` port zones (SAA-836 M1): `memory` bottom-left,
- *   `scorers` top-right, `embedding` bottom-right, `hooks`/`sandbox` top-middle,
+ *   `scorers` top-right, `subagents` top-left, `hooks`/`sandbox` top-middle,
  *   `tools`/`skill` bottom-middle. Connection ports accept only a matching
  *   family (the connection-category rule).
  * - `model` and `workspace` `@connection` ports on the bottom for explicit
@@ -153,6 +153,7 @@ export class AgentNode extends GraphNode<AgentNodeInput, AgentNodeOutput> {
   instructions?: string;
 
   /** How skills are surfaced to the model (mastra `skillsFormat`). */
+  @option(["markdown", "xml"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.agent.fields.skillsFormat.label",
     type: "select",
@@ -214,6 +215,13 @@ export class AgentNode extends GraphNode<AgentNodeInput, AgentNodeOutput> {
   @output({ handle: "actions" })
   actions!: unknown[];
 
+  /**
+   * The parsed structured output. Emitted only when `structuredOutput` is
+   * configured and the model returned a conforming object.
+   */
+  @output({ handle: "object" })
+  object?: unknown;
+
   // --- Connections (zones) ---
 
   /** Memory zone (bottom-left). */
@@ -232,13 +240,17 @@ export class AgentNode extends GraphNode<AgentNodeInput, AgentNodeOutput> {
   })
   scorers!: unknown;
 
-  /** Embedding zone (bottom-right). */
+  /**
+   * Sub-agent zone (top-left): `core.agent.subAgent` nodes this agent can
+   * delegate to (mastra's supervisor `agents`; the model sees each as an
+   * `agent-<name>` tool).
+   */
   @connection({
-    category: MASTRA_AGENT_ZONE.embedding,
-    handle: "embedding",
-    zone: { side: "bottom", align: "end", order: 0 },
+    category: MASTRA_AGENT_ZONE.subagents,
+    handle: "subagents",
+    zone: { side: "top", align: "start", order: 0 },
   })
-  embedding!: unknown;
+  subagents!: unknown;
 
   /** Hooks zone (top-middle, left of the sandbox zone). */
   @connection({

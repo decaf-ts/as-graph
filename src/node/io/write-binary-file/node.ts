@@ -6,7 +6,7 @@
  * directories are created by default and appending is optional. Path
  * containment is enforced by `file-support`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -15,9 +15,12 @@ import type {
   GraphNodeExecutionRequest,
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
   binaryBufferOf,
+  graphInputStreamOf,
   writeGraphFile,
+  writeGraphFileStream,
   type GraphBinaryEncoding,
 } from "../file-support";
 
@@ -40,6 +43,7 @@ export interface WriteBinaryFileNodeOutput {
 @node("core.io.writeBinaryFile", {
   kind: "core.io.writeBinaryFile",
   category: "IO",
+  capabilities: ["binaryStream"],
   color: "#0ea5e9",
   icon: "ti-file-upload",
   width: 96,
@@ -66,7 +70,8 @@ export class WriteBinaryFileNode extends GraphNode<
    *   decoded.
    */
   override async execute(
-    request: GraphNodeExecutionRequest<WriteBinaryFileNodeInput>
+    request: GraphNodeExecutionRequest<WriteBinaryFileNodeInput>,
+    context?: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
     const configured = this.fileName || this.path;
     if (!configured) {
@@ -82,15 +87,20 @@ export class WriteBinaryFileNode extends GraphNode<
         "GRAPH_WRITE_BINARY_FILE_CONTENT_REQUIRED"
       );
     }
-    const data = binaryBufferOf(
-      value,
-      this.encoding ?? "utf8",
-      this.dataPropertyName || "data"
-    );
-    const written = await writeGraphFile(configured, data, {
+    const options = {
       append: this.append === true,
       createDirectories: this.createDirectories !== false,
-    });
+    };
+    // A file (store reference or payload) streams to disk; anything else is
+    // decoded content.
+    const stream = await graphInputStreamOf(value, context);
+    const written = stream
+      ? await writeGraphFileStream(configured, stream, options)
+      : await writeGraphFile(
+          configured,
+          binaryBufferOf(value, this.encoding ?? "utf8", this.dataPropertyName || "data"),
+          options
+        );
     return {
       result: {
         fileName: configured,
@@ -133,6 +143,7 @@ export class WriteBinaryFileNode extends GraphNode<
   dataPropertyName: string = "data";
 
   /** Input decoding mode (default `auto`). */
+  @option(["auto", "base64", "utf8"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.write_binary_file.fields.encoding.label",
     type: "select",

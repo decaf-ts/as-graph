@@ -18,17 +18,20 @@ import { join } from "node:path";
 
 const PACKAGE_ROOT = join(__dirname, "..", "..", "..");
 
-/** The 11 engine-neutral fixture modules the basic registry re-exports. */
+/** The 14 engine-neutral fixture modules the basic registry re-exports. */
 const BASIC_FIXTURE_MODULES = [
   "boundary-value.workflow",
   "error-boundary.workflow",
   "event-map.workflow",
   "foreach-break.workflow",
+  "http-file-download.workflow",
   "human-approval.workflow",
   "if-switch.workflow",
   "loops-while-until.workflow",
   "manual-log.workflow",
+  "order-analytics.workflow",
   "schedule-code.workflow",
+  "spreadsheet-files.workflow",
   "value-templates.workflow",
   "webhook-form.workflow",
 ] as const;
@@ -43,7 +46,7 @@ const MASTRA_REGISTRY_MODULES = [
 ] as const;
 
 /** Expected shipped fixture counts (SAA-1545 §5). */
-const EXPECTED_FIXTURE_COUNTS = { basic: 11, mastra: 48 } as const;
+const EXPECTED_FIXTURE_COUNTS = { basic: 14, mastra: 49 } as const;
 
 /** Compiled registry entrypoints (one per module format) + fixture modules. */
 const REGISTRY_OUTPUTS: readonly string[] = [
@@ -132,7 +135,7 @@ describe("demo fixture registry packaging (SAA-1358 D4)", () => {
     expect(missing).toEqual([]);
   });
 
-  it("the shipped basic registry exposes exactly the 11 engine-neutral fixtures", () => {
+  it("the shipped basic registry exposes exactly the 14 engine-neutral fixtures", () => {
     const registryPath = join(PACKAGE_ROOT, "lib/cjs/workflows/basic/index.cjs");
     const source = readFileSync(registryPath, "utf8");
     for (const name of BASIC_FIXTURE_MODULES) {
@@ -168,9 +171,9 @@ describe("demo fixture registry packaging (SAA-1358 D4)", () => {
       join(PACKAGE_ROOT, "lib/cjs/workflows/mastra/composites.cjs"),
       "utf8"
     );
-    // One focused per-kind fixture per MASTRA_NODE_CLASSES_BY_KIND entry (38),
-    // the chat demo (1), and the focused composites (9) = 48.
-    expect(countOccurrences(kindFixtures, 'kind: "core.agent')).toBe(38);
+    // One focused per-kind fixture per MASTRA_NODE_CLASSES_BY_KIND entry (39),
+    // the chat demo (1), and the focused composites (9) = 49.
+    expect(countOccurrences(kindFixtures, 'kind: "core.agent')).toBe(39);
     expect(countOccurrences(composites, "composite({")).toBe(9);
     expect(
       countOccurrences(kindFixtures, 'kind: "core.agent') + 1 + 9

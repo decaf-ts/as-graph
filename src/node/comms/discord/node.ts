@@ -18,7 +18,7 @@
  * `core.agent.response.discord`, which receive inbound conversations and post
  * agent replies through host-supplied channel adapters.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -121,6 +121,12 @@ function parseEmbeds(value: unknown): unknown[] | undefined {
 })
 @model()
 export class DiscordNode extends GraphNode<DiscordNodeInput, DiscordNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the message content when `content` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Discord operation.
    *
@@ -303,6 +309,7 @@ export class DiscordNode extends GraphNode<DiscordNodeInput, DiscordNodeOutput> 
   }
 
   /** Discord operation to perform (default `sendMessage`). */
+  @option(["sendMessage", "getMessage", "listMessages", "getChannel", "listChannels", "createChannel", "deleteChannel", "addReaction"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.discord.fields.operation.label",
     type: "select",

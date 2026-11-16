@@ -261,6 +261,14 @@ export interface GraphExecutionBackend<
    */
   nodeRegistrations?(): readonly GraphNodeRegistration[];
   /**
+   * Node kinds this engine cannot run. The facade removes them from the
+   * catalogue it serves for this backend, so they are never offered in a
+   * palette and a document using one fails validation as an unknown kind —
+   * instead of being accepted and failing (or silently misbehaving) at run
+   * time.
+   */
+  unsupportedNodeKinds?(): readonly string[];
+  /**
    * The document validation contract this backend requires. Omitted means
    * `canonical`; a deployment-projection backend declares `deployment`.
    */

@@ -14,7 +14,7 @@
  * `WhatsAppService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -111,6 +111,12 @@ export class WhatsAppNode extends GraphNode<
   WhatsAppNodeInput,
   WhatsAppNodeOutput
 > {
+  /**
+   * Default data input: what the previous node produced. Used as the message text when `text` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured WhatsApp operation.
    *
@@ -249,6 +255,7 @@ export class WhatsAppNode extends GraphNode<
   }
 
   /** WhatsApp operation to perform (default `sendText`). */
+  @option(["sendText", "sendTemplate", "sendMedia", "markAsRead", "getMedia"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.whatsapp.fields.operation.label",
     type: "select",
@@ -313,6 +320,7 @@ export class WhatsAppNode extends GraphNode<
   components?: unknown;
 
   /** Media kind for `sendMedia` (default `image`). */
+  @option(["image", "audio", "video", "document"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.whatsapp.fields.mediaType.label",
     type: "select",

@@ -13,6 +13,7 @@
  * closed with {@link GRAPH_MASTRA_VOICE_UNAVAILABLE} instead of fabricating a
  * voice capability.
  */
+import { Readable } from "node:stream";
 import type { GraphNodeInstance } from "../shared/graph/document/GraphNodeInstance";
 import { GraphExecutionError } from "../engine/errors/GraphExecutionError";
 import {
@@ -90,7 +91,7 @@ export function createMastraVoiceNodeRuntime(
   options: MastraVoiceStepHandlerOptions = {}
 ): MastraVoiceNodeRuntime {
   return {
-    execute: async (node) => {
+    execute: async (node, inputData) => {
       const descriptor = mastraVoiceConfigDescriptorOf(node);
       if (!options.resolveVoice) {
         throw new GraphExecutionError(
@@ -107,7 +108,68 @@ export function createMastraVoiceNodeRuntime(
           { nodeId: node.id, kind: node.kind }
         );
       }
-      return { resource: voice };
+      // The resource output describes the voice surface; the callable
+      // members of a plain surface object are not workflow data.
+      const describable =
+        Object.getPrototypeOf(voice) === Object.prototype
+          ? Object.fromEntries(
+              Object.entries(voice as Record<string, unknown>).filter(
+                ([, member]) => typeof member !== "function"
+              )
+            )
+          : voice;
+      const outputs: Record<string, unknown> = { resource: describable };
+      const surface = voice as {
+        speak?: (text: string, options?: Record<string, unknown>) => unknown;
+        listen?: (audio: unknown, options?: Record<string, unknown>) => unknown;
+      };
+      // Text in → speech out, as a binary audio payload.
+      const text = inputData?.["text"];
+      if (typeof text === "string" && text.trim() !== "") {
+        if (typeof surface.speak !== "function") {
+          throw new GraphExecutionError(
+            `Voice node '${node.id}': the resolved voice surface cannot speak`,
+            GRAPH_MASTRA_VOICE_UNAVAILABLE,
+            { nodeId: node.id, kind: node.kind }
+          );
+        }
+        const bytes = await mastraVoiceBytesOf(
+          await surface.speak(
+            text,
+            descriptor.speaker ? { speaker: descriptor.speaker } : undefined
+          )
+        );
+        outputs["audio"] = {
+          fileName: "speech.mp3",
+          mimeType: "audio/mpeg",
+          byteLength: bytes.byteLength,
+          data: bytes.toString("base64"),
+        };
+      }
+      // Audio in → transcript out.
+      const audio = inputData?.["audio"];
+      if (audio !== undefined && audio !== null) {
+        if (typeof surface.listen !== "function") {
+          throw new GraphExecutionError(
+            `Voice node '${node.id}': the resolved voice surface cannot listen`,
+            GRAPH_MASTRA_VOICE_UNAVAILABLE,
+            { nodeId: node.id, kind: node.kind }
+          );
+        }
+        const record = audio as { data?: unknown };
+        const buffer =
+          typeof record.data === "string"
+            ? Buffer.from(record.data, "base64")
+            : Buffer.isBuffer(audio)
+              ? audio
+              : Buffer.from(String(audio), "base64");
+        const heard = await surface.listen(Readable.from([buffer]));
+        outputs["transcript"] =
+          typeof heard === "string"
+            ? heard
+            : (await mastraVoiceBytesOf(heard)).toString("utf8");
+      }
+      return outputs;
     },
   };
 }
@@ -125,4 +187,29 @@ export function createMastraVoiceStepHandler(
   return createMastraNodeStepHandler(GRAPH_MASTRA_VOICE_KIND, AgentVoiceNode, {
     voice: createMastraVoiceNodeRuntime(options),
   });
+}
+
+/**
+ * Collects whatever a voice surface returned into bytes.
+ *
+ * @param value - A Node stream, an async iterable, a buffer, or a string.
+ * @returns The collected bytes.
+ */
+export async function mastraVoiceBytesOf(value: unknown): Promise<Buffer> {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === "string") return Buffer.from(value, "utf8");
+  const chunks: Buffer[] = [];
+  if (value && typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] === "function") {
+    for await (const chunk of value as AsyncIterable<unknown>) {
+      chunks.push(
+        Buffer.isBuffer(chunk)
+          ? chunk
+          : typeof chunk === "string"
+            ? Buffer.from(chunk, "utf8")
+            : Buffer.from(chunk as Uint8Array)
+      );
+    }
+  }
+  return Buffer.concat(chunks);
 }

@@ -43,6 +43,29 @@ services:
     volumes:
       - as-graph-it-postgres:/var/lib/postgresql/data
 
+  # Postgres for the RLS credential suites (DECAF_PG_URL): a superuser
+  # `decaf` that creates its own NOSUPERUSER roles and policies.
+  decaf-pg:
+    image: postgres:16
+    container_name: as-graph-it-decaf-pg
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: decaf
+      POSTGRES_PASSWORD: decaf-integration
+      POSTGRES_DB: decaf_integration
+      POSTGRES_INITDB_ARGS: --data-checksums
+    ports:
+      - "55436:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U decaf -d decaf_integration"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - as-graph-it-decaf-pg:/var/lib/postgresql/data
+
   pgvector:
     image: pgvector/pgvector:pg17
     container_name: as-graph-it-pgvector
@@ -127,6 +150,25 @@ services:
       - "56379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  dragonfly:
+    # Run queue (BullMQ / TaskEngine) and run bus (pub/sub) for the
+    # multi-process suites. BullMQ on Dragonfly needs emulated cluster mode
+    # with hash-tag locking; the queues use the `{graph}` hash tag.
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.34.2
+    container_name: as-graph-it-dragonfly
+    restart: unless-stopped
+    command: ["--logtostderr", "--cluster_mode=emulated", "--lock_on_hashtags"]
+    ulimits:
+      memlock: -1
+    ports:
+      - "56380:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379'"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -267,6 +309,8 @@ services:
 volumes:
   as-graph-it-postgres:
     name: as-graph-it-postgres
+  as-graph-it-decaf-pg:
+    name: as-graph-it-decaf-pg
   as-graph-it-pgvector:
     name: as-graph-it-pgvector
   as-graph-it-age:

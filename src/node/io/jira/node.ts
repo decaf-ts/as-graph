@@ -14,10 +14,11 @@
  * `JiraService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { defaultInputText, isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -123,6 +124,12 @@ function parseObjectField(
 @model()
 export class JiraNode extends GraphNode<JiraNodeInput, JiraNodeOutput> {
   /**
+   * Default data input: what the previous node produced. Used as the issue description, or the comment, when that field is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Jira operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `jira` credential supplies the token, username, and base URL.
@@ -134,6 +141,14 @@ export class JiraNode extends GraphNode<JiraNodeInput, JiraNodeOutput> {
     request: GraphNodeExecutionRequest<JiraNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.description) && routed !== undefined) {
+      this.description = defaultInputText(routed) as never;
+    }
+    if (isUnsetField(this.comment) && routed !== undefined) {
+      this.comment = defaultInputText(routed) as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Jira node requires an operation",
@@ -306,6 +321,7 @@ export class JiraNode extends GraphNode<JiraNodeInput, JiraNodeOutput> {
   }
 
   /** Jira operation to perform (default `createIssue`). */
+  @option(["createIssue", "search", "getIssue", "updateIssue", "deleteIssue", "addComment", "getTransitions", "transitionIssue"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.jira.fields.operation.label",
     type: "select",

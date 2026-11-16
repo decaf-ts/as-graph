@@ -7,7 +7,8 @@
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
-import { GraphNode } from "../../base";
+import { GraphNode, graphDefaultInput } from "../../base";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -53,10 +54,20 @@ export class HumanApprovalFlowNode extends GraphNode<
    * @param {GraphNodeExecutionRequest<HumanApprovalFlowInput>} request - Execution request carrying the `value` input.
    * @return {GraphExecutionValues} The routed value under `approved` (or `rejected` when explicitly declined).
    */
-  override execute(
-    request: GraphNodeExecutionRequest<HumanApprovalFlowInput>
-  ): GraphExecutionValues {
-    const value = request.inputs["value"] ?? request.inputs;
+  override async execute(
+    request: GraphNodeExecutionRequest<HumanApprovalFlowInput>,
+    context?: GraphExecutionContext
+  ): Promise<GraphExecutionValues> {
+    const value = graphDefaultInput(request.inputs);
+    // The general engine cannot suspend a run, so the decision is the node's
+    // `approved` field (filled or wired). The approval message is recorded on
+    // the run log together with the decision, so the gate is auditable.
+    await context?.log(
+      this.message && this.message.trim() !== ""
+        ? this.message
+        : "Approval gate",
+      { approved: this.approved !== false }
+    );
     return this.approved === false ? { rejected: value } : { approved: value };
   }
 

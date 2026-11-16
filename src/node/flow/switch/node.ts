@@ -23,7 +23,7 @@ import type {
   NodeMetadataChange,
   SwitchNodeMetadata,
 } from "../../../shared/graph";
-import { GraphNode } from "../../base";
+import { GraphNode, graphDefaultInput } from "../../base";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import type {
   GraphExecutionValues,
@@ -95,6 +95,7 @@ function readSwitchMetadata(
 @node("core.flow.switch", {
   kind: "core.flow.switch",
   category: "Flow Control",
+  capabilities: ["branching"],
   color: "#f59e0b",
   icon: "ti-arrows-shuffle",
   width: 120,
@@ -137,7 +138,7 @@ export class SwitchFlowNode extends GraphNode<
     const meta = readSwitchMetadata(context, this);
     const cases = meta.cases;
     const input = request.inputs;
-    const inputValue = input["value"] ?? input;
+    const inputValue = graphDefaultInput(input);
     const conditionState = switchConditionState(input, inputValue);
 
     for (const switchCase of cases) {

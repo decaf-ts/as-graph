@@ -37,7 +37,15 @@ describe("GraphWhileLoopNode", () => {
 
     it("declares the state input and the state output", () => {
       expect(manifest.inputs.map((port) => port.id)).toContain("state");
-      expect(manifest.outputs.map((port) => port.id)).toEqual(["state"]);
+      // `body` is the loop-body entry port; `loop` is the structural exit.
+      expect(manifest.outputs.map((port) => port.id)).toEqual([
+        "state",
+        "iterations",
+        "body",
+      ]);
+      expect((manifest.connections ?? []).map((port) => port.id)).toEqual([
+        "loop",
+      ]);
     });
 
     it("declares the user-controllable condition/maxIterations/statePort parameters", () => {

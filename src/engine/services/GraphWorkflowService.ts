@@ -11,6 +11,7 @@
  * existing-row overwrites are authorized by strict owner equality through
  * {@link assertGraphResourceWriteOwnership} (SAA-105 R3).
  */
+import { ConflictError } from "@decaf-ts/db-decorators";
 import { NotFoundError, ValidationError } from "@decaf-ts/db-decorators";
 import {
   ForbiddenError,
@@ -264,6 +265,16 @@ export class GraphWorkflowService extends ModelService<GraphWorkflowModel> {
           `Skipping boot seed of graph workflow '${workflowId}': an existing row is owned by another user`
         );
         return null;
+      }
+      if (error instanceof ConflictError) {
+        // Another backend process seeded the same row concurrently: saving
+        // again now takes the update path.
+        try {
+          return await this.saveDocument(workflowId, document, ...ctxArgs);
+        } catch (retry) {
+          if (retry instanceof ForbiddenError || retry instanceof ConflictError) return null;
+          throw retry;
+        }
       }
       throw error;
     }

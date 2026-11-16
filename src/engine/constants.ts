@@ -167,3 +167,10 @@ export const GRAPH_LOOP_KIND = {
   WHILE: "core.loop.while",
   UNTIL: "core.loop.until",
 } as const;
+
+/**
+ * Ceiling, in milliseconds, for a single `core.flow.delay` wait. A requested
+ * delay above it is clamped, so a document cannot park a run (and the worker
+ * executing it) for an unbounded time.
+ */
+export const GRAPH_DELAY_MAX_MS = 60_000;

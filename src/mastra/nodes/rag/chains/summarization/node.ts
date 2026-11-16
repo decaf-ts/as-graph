@@ -7,7 +7,7 @@
  * (falling back to a JSON-safe descriptor when no model applies). The Mastra
  * step adapter invokes that `execute()`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../../../shared/graph";
 import { GraphNode } from "../../../../../node/base";
@@ -94,6 +94,7 @@ export class AgentSummarizationChainNode extends GraphNode<
   modelAdapter?: Record<string, unknown>;
 
   /** The summarization strategy (mastra chain type). */
+  @option(["stuff", "map_reduce", "refine"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.chain.summarization.fields.strategy.label",
     type: "select",

@@ -425,7 +425,23 @@ describe("core.data.compareDatasets", () => {
     });
     expect(fuzzy.onlyInA).toHaveLength(0);
     expect(fuzzy.onlyInB).toHaveLength(0);
-    expect(fuzzy.different).toHaveLength(1);
+    // Fuzzy comparison applies field by field (as n8n does): the two rows
+    // differ only by `1` vs `"1"`, so they are the same row, not a difference
+    // with an empty diff.
+    expect(fuzzy.same).toEqual([{ id: 1, name: "x" }]);
+    expect(fuzzy.different).toHaveLength(0);
+
+    const reallyDifferent = await run(
+      CompareDatasetsNode,
+      kind,
+      { ...match, fuzzyCompare: true },
+      {
+        input: [{ id: 1, name: "x" }],
+        input2: [{ id: "1", name: "y" }],
+      }
+    );
+    expect(reallyDifferent.same).toHaveLength(0);
+    expect(reallyDifferent.different).toHaveLength(1);
   });
 
   it("ignores configured skipFields when deciding whether a match is identical", async () => {
@@ -489,6 +505,16 @@ describe("core.data.summarize", () => {
         sum_amount: 35,
       },
     ]);
+  });
+
+  it("summarizes an empty list without reporting missing fields", async () => {
+    const result = await run(
+      SummarizeNode,
+      kind,
+      { fieldsToSummarize: [{ aggregation: "sum", field: "amount" }] },
+      { value: [] }
+    );
+    expect(Array.isArray(result.result)).toBe(true);
   });
 
   it("splits into separate items per split-field combination", async () => {

@@ -9,6 +9,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { triggerRunPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -53,12 +54,12 @@ export class ScheduleTriggerNode extends GraphNode<
    * Returns the scheduled-run payload supplied by the run caller.
    *
    * @param {GraphNodeExecutionRequest<ScheduleTriggerInput>} request - Execution request carrying the scheduled-run payload.
-   * @return {GraphExecutionValues} The `payload` output value (null when absent).
+   * @return {GraphExecutionValues} The `payload` output value (the whole run input when no `payload` field is sent, `null` when the run carries no input).
    */
   override execute(
     request: GraphNodeExecutionRequest<ScheduleTriggerInput>
   ): GraphExecutionValues {
-    return { payload: request.inputs["payload"] ?? null };
+    return { payload: triggerRunPayload(request.inputs, ["cron"]) };
   }
 
   /** Cron expression driving the schedule; rendered with the cron-selector UI. */

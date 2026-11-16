@@ -6,7 +6,7 @@
  * payload. Each document produces one record keyed by the configured
  * extraction keys; see `extractHtmlValues` in `html-support`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -117,6 +117,7 @@ export class HtmlExtractNode extends GraphNode<
   value!: unknown;
 
   /** Input kind (default `json`). */
+  @option(["json", "binary"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.html_extract.fields.sourceData.label",
     type: "select",

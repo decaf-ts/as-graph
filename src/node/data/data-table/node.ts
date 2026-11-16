@@ -15,7 +15,7 @@
  * reports how many were listed.
  */
 import { randomUUID } from "node:crypto";
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -244,6 +244,7 @@ export class DataTableNode extends GraphNode<
   value?: unknown;
 
   @required()
+  @option(["list", "get", "insert", "upsert", "delete", "clear"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.data_table.fields.operation.label",
     type: "select",

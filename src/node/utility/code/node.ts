@@ -174,6 +174,7 @@ export class CodeNode extends GraphNode<CodeNodeInput, CodeNodeOutput> {
       (config?.code as string | undefined) ??
       this.defaultCode;
     const language =
+      (request.parameters?.["language"] as GraphCodeLanguage | undefined) ??
       (config?.language as GraphCodeLanguage | undefined) ??
       GRAPH_CODE_DEFAULT_LANGUAGE;
 

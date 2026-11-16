@@ -11,6 +11,7 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { assertTriggerPayload, triggerRunPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -57,12 +58,19 @@ export class WebhookTriggerNode extends GraphNode<
    * Returns the received HTTP request payload supplied by the run caller.
    *
    * @param {GraphNodeExecutionRequest<WebhookTriggerInput>} request - Execution request carrying the webhook payload.
-   * @return {GraphExecutionValues} The `payload` output value (null when absent).
+   * @return {GraphExecutionValues} The `payload` output value (the whole run input when no `payload` field is sent, `null` when the run carries no input).
    */
   override execute(
     request: GraphNodeExecutionRequest<WebhookTriggerInput>
   ): GraphExecutionValues {
-    return { payload: request.inputs["payload"] ?? null };
+    // The declared schema is enforced on what was delivered.
+    return {
+      payload: assertTriggerPayload(
+        "Webhook",
+        triggerRunPayload(request.inputs, ["schema"]),
+        this.schema ?? request.inputs["schema"]
+      ),
+    };
   }
 
   /** Body shape declaration for the received request, authored via the model-builder UI. */

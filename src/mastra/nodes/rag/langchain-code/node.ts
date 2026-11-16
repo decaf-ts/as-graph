@@ -9,7 +9,7 @@
  * the single implementation, invoked through the Mastra step adapter, so no
  * untrusted code runs on the local path.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -93,6 +93,7 @@ export class AgentLangChainCodeNode extends GraphNode<
   code!: string;
 
   /** The code language. */
+  @option(["javascript", "typescript"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.langchain_code.fields.language.label",
     type: "select",
@@ -101,6 +102,7 @@ export class AgentLangChainCodeNode extends GraphNode<
   language?: "javascript" | "typescript";
 
   /** How the code runs over an input list (`runOnce` per item vs `runAll`). */
+  @option(["runOnce", "runAll"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.langchain_code.fields.mode.label",
     type: "select",

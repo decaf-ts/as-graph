@@ -8,7 +8,7 @@
  * sub-flow may terminate in a tool-deny node whose verdict flows back as the
  * hook result. Connects only to the agent `hooks` zone.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -68,6 +68,7 @@ export class AgentHookNode extends GraphNode<AgentHookInput, AgentHookOutput> {
   }
 
   /** Which mastra hook this node represents. */
+  @option(["before", "after"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.hook.fields.phase.label",
     type: "select",

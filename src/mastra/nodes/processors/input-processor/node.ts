@@ -11,7 +11,7 @@
  * `modelAdapter` (R1 — no model-provider node kind). Connects only to the
  * agent `inputProcessors` zone.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -74,6 +74,7 @@ export class AgentInputProcessorNode extends GraphNode<
 
   /** The mastra-native input-processor type this node resolves to. */
   @required()
+  @option(["piiDetector", "promptInjectionDetector", "unicodeNormalizer", "languageDetector", "systemPromptScrubber", "tokenCostControl", "modelSelection"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.input_processor.fields.processorType.label",
     type: "select",

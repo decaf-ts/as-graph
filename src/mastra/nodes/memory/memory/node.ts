@@ -11,7 +11,7 @@
  * property and a declared input port: a wired value overrides the configured
  * one at execution time.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../../node/base";
@@ -154,6 +154,7 @@ export class AgentMemoryNode extends GraphNode<
 
   /** The selected memory storage provider. */
   @required()
+  @option(["memory", "libsql", "pg", "mongodb", "upstash", "cloud", "d1", "dynamodb", "convex", "astra", "redis"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.memory.fields.provider.label",
     type: "select",
@@ -197,7 +198,7 @@ export class AgentMemoryNode extends GraphNode<
   /** Whether semantic recall is enabled. */
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.memory.fields.semanticRecall.label",
-    type: "select",
+    type: "checkbox",
   })
   @input({ handle: "semanticRecall", userControlled: true })
   semanticRecall?: boolean;
@@ -217,7 +218,7 @@ export class AgentMemoryNode extends GraphNode<
   /** Whether mastra generates thread titles. */
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.memory.fields.generateTitle.label",
-    type: "select",
+    type: "checkbox",
   })
   @input({ handle: "generateTitle", userControlled: true })
   generateTitle?: boolean;
@@ -268,6 +269,18 @@ export class AgentMemoryNode extends GraphNode<
   /** Connection to the agent's `memory` zone. */
   @connection({ category: MASTRA_AGENT_ZONE.memory, handle: "memory" })
   memory!: unknown;
+
+  /**
+   * Embedding zone: the `core.agent.embedding` node whose model semantic
+   * recall embeds messages with. Takes precedence over the host's
+   * `memoryEmbedder`.
+   */
+  @connection({
+    category: MASTRA_AGENT_ZONE.embedding,
+    handle: "embedding",
+    zone: { side: "bottom", align: "center", order: 0 },
+  })
+  embedding!: unknown;
 }
 
 /** All built-in memory node constructors. */

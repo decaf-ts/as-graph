@@ -11,7 +11,7 @@
  * Array input maps item by item, producing parallel arrays for all three
  * outputs — array-in, array-out.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -164,6 +164,7 @@ export class DateTimeNode extends GraphNode<
   @input({ handle: "value" })
   value?: unknown;
 
+  @option(["current", "parse", "format", "add", "subtract"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.date_time.fields.operation.label",
     type: "select",
@@ -186,6 +187,7 @@ export class DateTimeNode extends GraphNode<
   @input({ handle: "amount", userControlled: true })
   amount?: number = 0;
 
+  @option(["seconds", "minutes", "hours", "days", "weeks", "months", "years"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.date_time.fields.unit.label",
     type: "select",

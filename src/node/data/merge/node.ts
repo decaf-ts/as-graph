@@ -11,7 +11,7 @@
  * side's items in position mode, and `outer` keeps both. The output is always
  * an array — array-in, array-out.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -219,6 +219,7 @@ export class MergeNode extends GraphNode<MergeNodeInput, MergeNodeOutput> {
   @input({ handle: "input2" })
   input2?: unknown;
 
+  @option(["append", "combine"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.merge.fields.mode.label",
     type: "select",
@@ -226,6 +227,7 @@ export class MergeNode extends GraphNode<MergeNodeInput, MergeNodeOutput> {
   @input({ handle: "mode", userControlled: true })
   mode: MergeMode = "append";
 
+  @option(["position", "fields"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.merge.fields.combineBy.label",
     type: "select",
@@ -233,6 +235,7 @@ export class MergeNode extends GraphNode<MergeNodeInput, MergeNodeOutput> {
   @input({ handle: "combineBy", userControlled: true })
   combineBy: MergeCombineBy = "position";
 
+  @option(["inner", "left", "right", "outer"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.merge.fields.joinMode.label",
     type: "select",
@@ -248,6 +251,7 @@ export class MergeNode extends GraphNode<MergeNodeInput, MergeNodeOutput> {
   @input({ handle: "joinField", userControlled: true })
   joinField?: string;
 
+  @option(["keepFirst", "keepLast"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.merge.fields.clashHandling.label",
     type: "select",

@@ -45,6 +45,7 @@ export interface SlackChannelTriggerOutput {
 @node("core.agent.trigger.slack", {
   kind: "core.agent.trigger.slack",
   category: "Agent",
+  capabilities: ["trigger"],
   icon: "ti-brand-slack",
   width: 96,
   height: 96,

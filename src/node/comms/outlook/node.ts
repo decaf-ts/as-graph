@@ -13,7 +13,7 @@
  * `MicrosoftOutlookService` is initialized per execution and shut down in a
  * `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -126,6 +126,12 @@ export class MicrosoftOutlookNode extends GraphNode<
   OutlookNodeInput,
   OutlookNodeOutput
 > {
+  /**
+   * Default data input: what the previous node produced. Used as the message body when `body` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Microsoft Outlook operation.
    *
@@ -261,6 +267,7 @@ export class MicrosoftOutlookNode extends GraphNode<
   }
 
   /** Outlook operation to perform (default `sendMail`). */
+  @option(["getMessage", "listMessages", "sendMail", "listEvents", "createEvent", "deleteEvent"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.microsoft_outlook.fields.operation.label",
     type: "select",
@@ -309,6 +316,7 @@ export class MicrosoftOutlookNode extends GraphNode<
   body?: string;
 
   /** Mail body content type (default `Text`). */
+  @option(["Text", "HTML"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.microsoft_outlook.fields.contentType.label",
     type: "select",

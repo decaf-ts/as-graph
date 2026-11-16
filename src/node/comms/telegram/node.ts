@@ -13,7 +13,7 @@
  * `TelegramService` is initialized per execution and shut down in a `finally`
  * block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -82,6 +82,12 @@ export class TelegramNode extends GraphNode<
   TelegramNodeInput,
   TelegramNodeOutput
 > {
+  /**
+   * Default data input: what the previous node produced. Used as the message text when `text` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Telegram operation.
    *
@@ -178,6 +184,7 @@ export class TelegramNode extends GraphNode<
   }
 
   /** Telegram operation to perform (default `sendMessage`). */
+  @option(["sendMessage", "getMe", "getUpdates", "sendChatAction"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.telegram.fields.operation.label",
     type: "select",
@@ -202,6 +209,7 @@ export class TelegramNode extends GraphNode<
   text?: string;
 
   /** Parse mode applied to the message text. */
+  @option(["HTML", "Markdown", "MarkdownV2"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.telegram.fields.parseMode.label",
     type: "select",

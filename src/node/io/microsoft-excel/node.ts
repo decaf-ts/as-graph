@@ -12,10 +12,11 @@
  * silently falls back to `getRange`. A throwaway `MicrosoftExcelService` is
  * initialized per execution and shut down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -128,6 +129,12 @@ export class MicrosoftExcelNode extends GraphNode<
   MicrosoftExcelNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the rows to write when `values` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Microsoft Excel operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `microsoft-excel` Graph access token is resolved via `resolveNodeCredential`.
@@ -139,6 +146,11 @@ export class MicrosoftExcelNode extends GraphNode<
     request: GraphNodeExecutionRequest<MicrosoftExcelNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.values) && routed !== undefined) {
+      this.values = routed as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Microsoft Excel node requires an operation",
@@ -214,6 +226,7 @@ export class MicrosoftExcelNode extends GraphNode<
   }
 
   /** Excel operation to perform (default `getRange`). */
+  @option(["listWorksheets", "getRange", "updateRange", "listTables", "addTableRow"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.microsoft_excel.fields.operation.label",
     type: "select",

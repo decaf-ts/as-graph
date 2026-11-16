@@ -8,6 +8,7 @@
  */
 import type { GraphNodeClass } from "../../node/base";
 import { AgentNode } from "./agent/node";
+import { SubAgentNode } from "./agent/sub-agent/node";
 import { AgentToolNode } from "./tools/tool/node";
 import { AgentToolSelectorNode } from "./tools/tool-selector/node";
 import { AgentHookNode } from "./hooks/hook/node";
@@ -45,6 +46,9 @@ import { DiscordChannelResponseNode } from "./responses/discord/node";
 import { TelegramChannelResponseNode } from "./responses/telegram/node";
 import { TeamsChannelResponseNode } from "./responses/teams/node";
 import { AgentVoiceNode } from "./voice/node";
+
+/** The sub-agent node: an agent a supervisor delegates to. */
+export const MASTRA_SUB_AGENT_NODES = [SubAgentNode] as const;
 
 /** All built-in Mastra tool family node constructors. */
 export const MASTRA_AGENT_FAMILY_NODES = [
@@ -110,6 +114,7 @@ export const MASTRA_AGENT_M6_NODES = [
  */
 export const MASTRA_NODE_CLASSES_BY_KIND: Record<string, GraphNodeClass> = {
   "core.agent": AgentNode,
+  "core.agent.subAgent": SubAgentNode,
   "core.agent.tool": AgentToolNode,
   "core.agent.toolSelector": AgentToolSelectorNode,
   "core.agent.hook": AgentHookNode,

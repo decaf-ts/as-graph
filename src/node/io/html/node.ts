@@ -6,7 +6,7 @@
  * item data into an HTML table. Extraction accepts JSON, text, or base64 binary
  * input and is backed by the helpers in `html-support`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -159,6 +159,7 @@ export class HtmlNode extends GraphNode<HtmlNodeInput, HtmlNodeOutput> {
   value?: unknown;
 
   /** Operation to perform (default `generateHtmlTemplate`). */
+  @option(["generateHtmlTemplate", "extractHtmlContent", "convertToHtmlTable"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.html.fields.operation.label",
     type: "select",
@@ -175,6 +176,7 @@ export class HtmlNode extends GraphNode<HtmlNodeInput, HtmlNodeOutput> {
   html?: string;
 
   /** Extraction input kind (default `json`). */
+  @option(["json", "binary"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.html.fields.sourceData.label",
     type: "select",

@@ -12,7 +12,7 @@
  */
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
-import { input, node, output } from "../../../../shared/graph";
+import { connection, input, node, output } from "../../../../shared/graph";
 import { GraphNode } from "../../../base";
 import type { GraphExecutionContext } from "../../../../engine/execution/GraphExecutionContext";
 import type {
@@ -22,6 +22,7 @@ import type {
 } from "../../../../engine/types";
 import { GraphExecutionEventType } from "../../../../shared/graph";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
+import { assertChildRunSucceeded } from "../../child-run";
 import { GraphInputError } from "../../../../engine/errors/GraphInputError";
 import { GraphLoopLimitError } from "../../../../engine/errors/GraphLoopLimitError";
 import { extractLoopMetadata, resolveLoopMaxIterations } from "../loop-metadata";
@@ -137,15 +138,18 @@ export class GraphWhileLoopNode extends GraphNode<
         iteration,
       });
 
-      const childResult = await engine.execute(
-        bodyWorkflow,
-        { [bodyInputPort]: state, iteration },
-        {
-          parentRunId: context.runId,
-          path: [...context.path, `iteration:${iteration}`],
-          auth: context.auth,
-        },
-        context
+      const childResult = assertChildRunSucceeded(
+        await engine.execute(
+          bodyWorkflow,
+          { [bodyInputPort]: state, iteration },
+          {
+            parentRunId: context.runId,
+            path: [...context.path, `iteration:${iteration}`],
+            auth: context.auth,
+          },
+          context
+        ),
+        `while iteration ${iteration}`
       );
 
       state = childResult.outputs[bodyOutputPort];
@@ -177,6 +181,24 @@ export class GraphWhileLoopNode extends GraphNode<
   @required()
   @output({ handle: "state" })
   stateOut!: unknown;
+
+  /** How many iterations ran. */
+  @output({ handle: "iterations", type: "number" })
+  iterations!: number;
+
+  /**
+   * Body-entry port: the current state, visible to the loop body only. The
+   * node never emits it to downstream nodes.
+   */
+  @output({ handle: "body" })
+  body!: unknown;
+
+  /** Connection the last node of the loop body chains back into. */
+  @connection({
+    handle: "loop",
+    connectionRules: { allowSelf: true, maxConnections: 1 },
+  })
+  loop!: unknown;
 
   /** Upper bound on iterations; falls back to the engine default when unset. */
   @uielement("ngx-decaf-crud-field", {

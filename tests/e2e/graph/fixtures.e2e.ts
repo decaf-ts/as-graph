@@ -339,20 +339,27 @@ describe("run detail serves per-node I/O untruncated (SAA-721)", () => {
     ).nodeResults;
 
     // Exactly the intermediate I/O recorded by execution — no truncation.
-    expect(nodeResults.trigger.outputs).toEqual({ payload: null });
-    expect(nodeResults.logger.inputs).toEqual({ value: null });
-    expect(nodeResults.logger.outputs).toEqual({ value: null });
-    expect(nodeResults.audit.inputs).toEqual({ value: null });
+    // The trigger forwards the run payload it was started with.
+    const payload = { greeting: "hello" };
+    expect(nodeResults.trigger.outputs).toEqual({ payload });
+    expect(nodeResults.logger.inputs).toEqual({ value: payload });
+    expect(nodeResults.logger.outputs).toEqual({ value: payload });
+    expect(nodeResults.audit.inputs).toEqual({ value: payload });
 
-    // The workflow run-history endpoint serves the same untruncated node I/O.
+    // The run-history list serves the run summary (status, timings, outputs,
+    // per-node status) without loading the run data object; the node I/O is
+    // served by the run detail above (§0.7 C21).
     const history = await api().get(`/graph/workflows/${fixture.id}/runs`);
     expect(history.status).toBe(200);
     const row = (history.body as Array<Record<string, unknown>>).find(
       (candidate) => candidate.runId === runId
     );
     expect(row).toBeDefined();
-    expect((row!.result as { nodeResults: unknown }).nodeResults).toEqual(
-      nodeResults
-    );
+    const summary = (row!.result as {
+      nodeResults: Record<string, { status: string; inputs?: unknown }>;
+    }).nodeResults;
+    expect(Object.keys(summary).sort()).toEqual(Object.keys(nodeResults).sort());
+    expect(summary.logger.status).toBe("succeeded");
+    expect(summary.logger).not.toHaveProperty("inputs");
   }, 180000);
 });

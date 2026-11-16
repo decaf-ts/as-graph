@@ -8,7 +8,14 @@
  * authentication enforcement and backend-enforced resource limits via
  * {@link GraphExecutionModuleOptions}.
  */
-import { DynamicModule, Module, Provider, Type } from "@nestjs/common";
+import {
+  DynamicModule,
+  Injectable,
+  Module,
+  OnApplicationShutdown,
+  Provider,
+  Type,
+} from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import {
@@ -22,6 +29,12 @@ import { RamAdapter, RamFlavour } from "@decaf-ts/core/ram";
 import type { GraphRunLimits, GraphWorkflowDocument } from "../../shared/graph";
 import type { GraphExecutionBackend } from "../../engine/execution/GraphExecutionBackend";
 import type { GraphNodeCredentialServices } from "../../engine/credentials/GraphNodeCredentials";
+import type { GraphBinaryStore } from "../../engine/binary/GraphBinaryStore";
+import { BlobGraphBinaryStore } from "../../engine/binary/BlobGraphBinaryStore";
+import { BlobGraphRunDataStore } from "../../engine/runs/GraphRunDataStore";
+import { BusGraphRunEventStore } from "../../engine/runs/bus/GraphRunBus";
+import type { GraphTelemetryHandle } from "../../engine/telemetry/GraphTelemetry";
+import { GraphHealthController, GRAPH_TELEMETRY } from "./GraphHealthController";
 import {
   GraphExecutionEngine,
   GraphNodeCatalogue,
@@ -224,6 +237,18 @@ export interface GraphExecutionModuleOptions {
    */
   runAdapter?: Adapter<any, any, any, any>;
   /**
+   * Where the engine keeps the bytes of workflow binaries. The standalone
+   * backend passes a {@link BlobGraphBinaryStore} over an integrations blob
+   * store (`createGraphBinaryStore`, S3 by default); `false` keeps binaries
+   * inline; unset uses the engine's in-process store.
+   */
+  binaryStore?: GraphBinaryStore | false;
+  /**
+   * Telemetry providers started by the host (`startGraphTelemetry`); enables
+   * `GET /graph/metrics` when Prometheus is on.
+   */
+  telemetry?: GraphTelemetryHandle;
+  /**
    * Auth handler installed via `DecafAuthModule.forRoot(...)` (the for-nest
    * pattern). When provided, the handler primes the request context with the
    * authenticated `user` / `roles` / `namespaces` / `organization`, which the
@@ -263,6 +288,61 @@ export interface GraphExecutionModuleOptions {
  * engine, catalogue, workflow persistence, run lifecycle/SSE controllers,
  * and their services. Configure via {@link GraphExecutionModule.forRoot}.
  */
+/**
+ * Builds and starts the run service: the run data lives next to the files
+ * when the binary store is blob-backed, a non-local bus also fans the event
+ * store out across processes, and the service claims runs once started.
+ */
+async function createGraphRunService(
+  engine: GraphExecutionEngine,
+  runStore: RamGraphRunStore,
+  eventStore: RamGraphRunEventStore,
+  options: GraphExecutionModuleOptions,
+  base: GraphRunServiceOptions
+): Promise<GraphRunService> {
+  const runs = options.runs ?? {};
+  const binaryStore = engine.binaryStore;
+  const runData =
+    runs.runData ??
+    (binaryStore instanceof BlobGraphBinaryStore
+      ? new BlobGraphRunDataStore(binaryStore.service)
+      : undefined);
+  const events =
+    runs.bus && runs.bus.kind !== "in-process"
+      ? new BusGraphRunEventStore(eventStore, runs.bus)
+      : eventStore;
+  const service = new GraphRunService(engine, runStore, events, {
+    ...base,
+    ...(runData ? { runData } : {}),
+    ...(runs.queue ? { queue: runs.queue } : {}),
+    ...(runs.bus ? { bus: runs.bus } : {}),
+    ...(runs.role ? { role: runs.role } : {}),
+    ...(runs.workerId ? { workerId: runs.workerId } : {}),
+    ...(runs.heartbeatMs !== undefined ? { heartbeatMs: runs.heartbeatMs } : {}),
+    ...(runs.leaseMs !== undefined ? { leaseMs: runs.leaseMs } : {}),
+    ...(runs.recoveryIntervalMs !== undefined
+      ? { recoveryIntervalMs: runs.recoveryIntervalMs }
+      : {}),
+    ...(runs.maxQueueDepth !== undefined ? { maxQueueDepth: runs.maxQueueDepth } : {}),
+    ...(runs.quotas ? { quotas: runs.quotas } : {}),
+    ...(runs.idempotencyTtlMs !== undefined
+      ? { idempotencyTtlMs: runs.idempotencyTtlMs }
+      : {}),
+  });
+  await service.start();
+  return service;
+}
+
+/** Graceful shutdown of the run service when the Nest application stops. */
+@Injectable()
+class GraphRunLifecycle implements OnApplicationShutdown {
+  constructor(private readonly runs: GraphRunService) {}
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.runs.shutdown();
+  }
+}
+
 @Module({})
 export class GraphExecutionModule {
   /**
@@ -406,6 +486,9 @@ export class GraphExecutionModule {
               ? { seedWorkflows: options.seedWorkflows }
               : {}),
             workflowStore: workflowService,
+            ...(options.binaryStore !== undefined
+              ? { binaryStore: options.binaryStore }
+              : {}),
             authEnabled: resolveGraphAuthEnabled(options),
             ...(options.authMatch ? { authMatch: options.authMatch } : {}),
             ...(options.credentialAuthorizer
@@ -505,15 +588,18 @@ export class GraphExecutionModule {
       },
       {
         provide: GraphRunService,
-        useFactory: (
+        useFactory: async (
           engine: GraphExecutionEngine,
           runStore: RamGraphRunStore,
           eventStore: RamGraphRunEventStore,
           workflowService: GraphWorkflowService
         ) =>
-          new GraphRunService(engine, runStore, eventStore, {
+          createGraphRunService(engine, runStore, eventStore, options, {
             limits: (options.runs?.limits ?? {}) as GraphRunLimits,
             allowAnonymousAccess: options.runs?.allowAnonymousAccess === true,
+            ...(options.runs?.retention
+              ? { retention: options.runs.retention }
+              : {}),
             documentResolver: {
               resolve: async (workflowId, _ownerUser, ...args) =>
                 workflowService.getDocument(workflowId, ...args),
@@ -575,9 +661,12 @@ export class GraphExecutionModule {
         GraphWorkflowController,
         GraphRunController,
         GraphEngineController,
+        GraphHealthController,
       ],
       providers: [
         ...providers,
+        { provide: GRAPH_TELEMETRY, useValue: options.telemetry },
+        GraphRunLifecycle,
         { provide: APP_GUARD, useClass: ThrottlerGuard },
       ],
       exports: [

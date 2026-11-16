@@ -8,7 +8,7 @@
  * through {@link GraphValueRepository} and its configured adapter.
  */
 import { model } from "@decaf-ts/decorator-validation";
-import { BaseModel, column, index, pk, table } from "@decaf-ts/core";
+import { BaseModel, column, index, OrderDirection, pk, table } from "@decaf-ts/core";
 
 /**
  * Persistable cached/pinned graph value. The `id` is the stable serialized
@@ -46,6 +46,7 @@ export class GraphValueModel extends BaseModel {
 
   /** Whether the value is pinned. */
   @column()
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["expiresAt"])
   pinned!: boolean;
 
   /** Cached node outputs. */

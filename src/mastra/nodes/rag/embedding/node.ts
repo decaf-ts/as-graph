@@ -1,12 +1,12 @@
 /**
  * @module as-graph/mastra/nodes/rag/embedding
  * @summary Mastra Embedding node declaration (SAA-836 M4).
- * @description Embedding node on the agent `embedding` zone. The embedding
+ * @description Embedding node on a memory node's `embedding` zone. The embedding
  * model is carried as **config** (`modelAdapter`, R1 — there is no
  * model-provider node kind); the node's `execute()` delegates to the run-scoped
  * RAG runtime service, which produces the vectors and the mastra embedding
  * resource (or the config-only descriptor fallback). The Mastra step adapter
- * invokes that `execute()`. Connects only to the agent `embedding` zone.
+ * invokes that `execute()`. Connects only to a memory node's `embedding` zone.
  */
 import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
@@ -32,7 +32,7 @@ export interface AgentEmbeddingOutput {
 }
 
 /**
- * Mastra Embedding node: supplies a configured embedding model to the agent's
+ * Mastra Embedding node: supplies a configured embedding model to a memory's
  * `embedding` zone.
  */
 @node("core.agent.embedding", {
@@ -108,11 +108,25 @@ export class AgentEmbeddingNode extends GraphNode<
   batchSize?: number;
 
   /** Output carrying the resolved mastra embedding resource (R9). */
+  /**
+   * Text to embed: one string or a list of strings. Left unwired, the node
+   * only supplies its embedding configuration to a memory's `embedding` zone.
+   */
+  @input({ handle: "text" })
+  text?: unknown;
+
   @required()
   @output({ handle: "resource" })
   resource!: unknown;
 
-  /** Connection to the agent's `embedding` zone. */
+  /** One vector per embedded text, present only when `text` was supplied. */
+  @output({ handle: "vectors" })
+  vectors?: unknown;
+
+  /**
+   * Connection to a memory node's `embedding` zone: the memory's semantic
+   * recall embeds with this node's model.
+   */
   @connection({ category: MASTRA_AGENT_ZONE.embedding, handle: "embedding" })
   embedding!: unknown;
 }

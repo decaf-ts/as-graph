@@ -42,6 +42,7 @@ export function registerBuiltinCategoryStyles(): void {
   registerGraphCategoryStyle("sandbox", { color: "#14b8a6", icon: "ti-box" });
   registerGraphCategoryStyle("scorers", { color: "#ec4899", icon: "ti-star" });
   registerGraphCategoryStyle("embedding", { color: "#6366f1", icon: "ti-vector" });
+  registerGraphCategoryStyle("subagents", { color: "#84cc16", icon: "ti-hierarchy-2" });
 }
 
 // Register at module load so the styles are available immediately.

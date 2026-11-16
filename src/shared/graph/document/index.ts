@@ -17,3 +17,5 @@ export * from "./GraphWorkflowDocumentBuilder";
 export * from "./GraphWorkflowDocumentReader";
 export * from "./GraphWorkflowDocumentSerializer";
 export * from "./GraphWorkflowUiState";
+export * from "./GraphBinaryReference";
+export * from "./GraphLoopBodyLayout";

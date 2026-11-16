@@ -11,7 +11,7 @@
  * `column0`, `column1`, …), or `text` verbatim. The `rows` output reports the
  * parsed row count for `csv`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -21,9 +21,11 @@ import type {
 } from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
 import { isBinaryGraphDataPayload, isGraphDataRecord } from "../../data/support";
+import { binaryBufferOf, isBinaryFilePayload } from "../file-support";
+import { WorkbookService } from "@decaf-ts/integrations/io/spreadsheet";
 
 /** Content format the decoded file is parsed as. */
-export type ExtractFromFileFormat = "json" | "csv" | "text";
+export type ExtractFromFileFormat = "json" | "csv" | "text" | "xlsx" | "ods";
 
 /** Encoding of the incoming string payload. */
 export type ExtractFromFileEncoding = "utf8" | "base64";
@@ -67,6 +69,11 @@ function decodeContent(value: unknown, encoding: ExtractFromFileEncoding): strin
       ? value
       : Buffer.from(value instanceof ArrayBuffer ? new Uint8Array(value) : value);
     return buffer.toString("utf8");
+  }
+  if (isBinaryFilePayload(value)) {
+    // A binary file payload always carries base64 bytes, whatever encoding the
+    // node is configured with for plain string inputs.
+    return binaryBufferOf(value, "base64").toString("utf8");
   }
   if (isGraphDataRecord(value)) {
     if (typeof value["data"] === "string") {
@@ -212,6 +219,25 @@ export class ExtractFromFileNode extends GraphNode<
   override execute(
     request: GraphNodeExecutionRequest<ExtractFromFileNodeInput>
   ): GraphExecutionValues {
+    if (this.format === "xlsx" || this.format === "ods") {
+      // Workbooks are binary packages: read the bytes, never decoded text.
+      try {
+        const rows = new WorkbookService().readRecords(
+          binaryBufferOf(request.inputs["value"], "auto"),
+          { format: this.format }
+        );
+        return { result: rows, rows: rows.length };
+      } catch (error) {
+        if (error instanceof GraphExecutionError) throw error;
+        throw new GraphExecutionError(
+          `Extract from File node could not read the ${this.format} workbook: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          "GRAPH_EXTRACT_FROM_FILE_INVALID_WORKBOOK",
+          { format: this.format }
+        );
+      }
+    }
     const content = decodeContent(
       request.inputs["value"],
       this.encoding ?? "utf8"
@@ -252,6 +278,7 @@ export class ExtractFromFileNode extends GraphNode<
   @input({ handle: "value" })
   value!: unknown;
 
+  @option(["text", "csv", "json", "xlsx", "ods"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.extract_from_file.fields.format.label",
     type: "select",
@@ -259,6 +286,7 @@ export class ExtractFromFileNode extends GraphNode<
   @input({ handle: "format", userControlled: true })
   format: ExtractFromFileFormat = "json";
 
+  @option(["base64", "utf8"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.extract_from_file.fields.encoding.label",
     type: "select",

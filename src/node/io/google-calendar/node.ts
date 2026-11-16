@@ -13,10 +13,11 @@
  * `GoogleCalendarService` is initialized per execution and shut down in a
  * `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { defaultInputText, isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -121,6 +122,12 @@ export class GoogleCalendarNode extends GraphNode<
   GoogleCalendarNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the event description when `description` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Google Calendar operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `google-calendar` credential supplies the token, API key, and default calendar ID.
@@ -132,6 +139,11 @@ export class GoogleCalendarNode extends GraphNode<
     request: GraphNodeExecutionRequest<GoogleCalendarNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.description) && routed !== undefined) {
+      this.description = defaultInputText(routed) as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Google Calendar node requires an operation",
@@ -264,6 +276,7 @@ export class GoogleCalendarNode extends GraphNode<
   }
 
   /** Google Calendar operation to perform (default `listEvents`). */
+  @option(["listEvents", "createEvent", "deleteEvent", "listCalendars", "getEvent", "updateEvent"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.google_calendar.fields.operation.label",
     type: "select",

@@ -79,6 +79,10 @@ async function startStandalone(
   const baseUrl = `http://127.0.0.1:${port}`;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // The standalone host refuses to boot without a binary store (S3 by
+    // default); these boot checks use the in-process provider.
+    GRAPH_BINARY_STORE: "memory",
+    BLOBS__MEMORY__SOURCE_ID: "standalone-boot-test",
     GRAPH_BACKEND_PORT: String(port),
     DAGSTER_GRAPHQL_URL: "",
     // This suite asserts the capability manifest, not trace export. The

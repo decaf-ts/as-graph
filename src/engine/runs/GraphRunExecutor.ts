@@ -28,6 +28,48 @@ import {
   GraphExecutionStatus,
 } from "../../shared/graph";
 import { GraphRunEventPublisher } from "./GraphRunEventPublisher";
+import type { GraphAuthData } from "../auth";
+import { graphRunTimeOf } from "./GraphRunConverters";
+import {
+  graphRunResultDataOf,
+  graphRunResultSummaryOf,
+  type GraphRunDataStore,
+} from "./GraphRunDataStore";
+import { graphMetrics, timedGraphStoreOperation } from "../telemetry/GraphTelemetry";
+
+/**
+ * Bytes a finished run occupies: its run data object plus the files it
+ * references (each counted once).
+ */
+function storedBytesOf(data: unknown): number {
+  let total = 0;
+  try {
+    total += Buffer.byteLength(JSON.stringify(data) ?? "");
+  } catch {
+    // unserializable data was capped already
+  }
+  const seen = new Set<string>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 12 || value === null || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record["id"] === "string" &&
+      (record["id"] as string).startsWith("graph-binary:") &&
+      typeof record["byteLength"] === "number"
+    ) {
+      if (!seen.has(record["id"] as string)) {
+        seen.add(record["id"] as string);
+        total += record["byteLength"] as number;
+      }
+      return;
+    }
+    for (const child of Array.isArray(value) ? value : Object.values(record)) {
+      visit(child, depth + 1);
+    }
+  };
+  visit(data, 0);
+  return total;
+}
 import {
   DEFAULT_GRAPH_RUN_LIMITS,
   isGraphRunTerminalEventType,
@@ -41,7 +83,7 @@ import {
 } from "./types";
 
 /** Why a run was aborted: explicit user cancellation or run timeout. */
-export type GraphRunAbortReason = "user" | "timeout";
+export type GraphRunAbortReason = "user" | "timeout" | "shutdown";
 
 /** Lifecycle hooks observed by {@link GraphRunExecutor} when a run completes. */
 export interface GraphRunExecutionHooks {
@@ -50,6 +92,11 @@ export interface GraphRunExecutionHooks {
     run: GraphRun,
     result?: GraphExecutionResult
   ) => Promise<void>;
+  /**
+   * Where a finished run's full result goes; the run row then keeps only the
+   * summary ({@link graphRunResultSummaryOf}).
+   */
+  runData?: GraphRunDataStore;
 }
 
 /**
@@ -77,6 +124,13 @@ export class GraphRunExecutor {
   private readonly controllers = new Map<string, AbortController>();
   private readonly completions = new Map<string, Promise<GraphRun>>();
   private readonly timeouts = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The principal each run executes as. */
+  private readonly auth = new Map<string, GraphAuthData>();
+
+  /** Sets the principal a run executes as (from its stored request). */
+  setAuth(runId: string, auth: GraphAuthData | undefined): void {
+    if (auth) this.auth.set(runId, auth);
+  }
 
   constructor(
     engine: GraphExecutionEngine,
@@ -118,7 +172,9 @@ export class GraphRunExecutor {
   abortReason(runId: string): GraphRunAbortReason | undefined {
     const signal = this.controllers.get(runId)?.signal;
     if (!signal?.aborted) return undefined;
-    return signal.reason === "timeout" ? "timeout" : "user";
+    return signal.reason === "timeout" || signal.reason === "shutdown"
+      ? signal.reason
+      : "user";
   }
 
   /** The run's in-flight completion promise, when one is scheduled. */
@@ -166,6 +222,7 @@ export class GraphRunExecutor {
 
   /** Releases all per-run state (controller, completion, timeout, publisher sequencing). */
   release(runId: string): void {
+    this.auth.delete(runId);
     this.controllers.delete(runId);
     this.completions.delete(runId);
     const timeout = this.timeouts.get(runId);
@@ -295,6 +352,9 @@ export class GraphRunExecutor {
             runId,
             abortSignal: this.controllers.get(runId)?.signal,
             metadata: { documentFingerprint: fingerprint },
+            // The caller's principal travels with the run (a worker does not
+            // execute inside the creating request's context).
+            ...(this.auth.get(runId) ? { auth: this.auth.get(runId) } : {}),
           },
           ...args
         );
@@ -306,7 +366,14 @@ export class GraphRunExecutor {
       let status: GraphRunStatus;
       let error: GraphExecutionErrorPayload | undefined;
 
-      if (abortReason === "timeout") {
+      if (abortReason === "shutdown") {
+        status = "failed";
+        error = {
+          name: "GraphRunInterruptedError",
+          message: `Graph run '${runId}' was interrupted by a worker shutdown`,
+          code: "GRAPH_RUN_INTERRUPTED",
+        };
+      } else if (abortReason === "timeout") {
         status = "failed";
         error =
           lastError ??
@@ -398,6 +465,9 @@ export class GraphRunExecutor {
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRun> {
     current.status = "running";
+    // Waiting for external input: no worker beats for it, and orphan
+    // recovery leaves it alone.
+    current.suspendedAt = new Date().toISOString();
     await this.persist(current, ...args);
     return current;
   }
@@ -410,11 +480,31 @@ export class GraphRunExecutor {
     ...args: MaybeContextualArg<Context>
   ): Promise<GraphRun> {
     current.status = status;
-    if (result) current.result = result;
+    current.suspendedAt = undefined;
+    if (result) {
+      if (this.hooks.runData) {
+        // The heavy part goes to the run data object, once; the row keeps
+        // the summary.
+        const data = graphRunResultDataOf(result);
+        await timedGraphStoreOperation("run-data", "save", () =>
+          this.hooks.runData!.save(current.runId, { result: data })
+        );
+        current.result = graphRunResultSummaryOf(result);
+        current.storedBytes = storedBytesOf(data);
+      } else {
+        current.result = result;
+      }
+    }
     if (error) current.error = error;
     if (!current.startedAt) current.startedAt = new Date().toISOString();
     current.finishedAt = new Date().toISOString();
     await this.persist(current, ...args);
+    graphMetrics.runsFinished.add(1, { status });
+    const durationMs =
+      graphRunTimeOf(current.finishedAt) - graphRunTimeOf(current.startedAt);
+    if (Number.isFinite(durationMs)) {
+      graphMetrics.runDuration.record(durationMs / 1000, { status });
+    }
     try {
       await this.hooks.onRunCompleted?.(current, result);
     } catch {

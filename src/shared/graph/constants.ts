@@ -97,6 +97,25 @@ export type GraphNodeMetadata = {
    */
   sizeRules?: GraphNodeSizeRule[];
   connectionRules?: GraphConnectionRule;
+  /**
+   * Behavioural capabilities the node kind declares (`trigger`, `branching`,
+   * `loop`, `resource`, …). Compiled into `GraphNodeManifest.capabilities`,
+   * which engines read instead of matching on kind names: a `trigger` node is
+   * a workflow entry and receives the run payload, a `branching` node emits
+   * only the output ports of the branch it selected. Category `Trigger`
+   * implies `trigger`.
+   */
+  capabilities?: string[];
+  /**
+   * Inherited properties (ports, fields, state) a subclass drops. A node class
+   * that extends another node keeps every decorated property of its base
+   * (C13); listing a property name here removes it from the subclass's ports,
+   * form fields and manifest, so a specialisation never carries a port it
+   * cannot honour (e.g. `core.agent.subAgent` drops the agent's
+   * `prompt`/`response` data ports — it is invoked by its supervisor, not by
+   * an edge).
+   */
+  omitPorts?: string[];
   metadata?: Record<string, unknown>;
   /**
    * Per-group rendering choice for Schema-typed `@input` / `@output` properties
@@ -264,8 +283,8 @@ export type GraphPortZoneAlign = "start" | "center" | "end";
  * Dedicated render zone of a `@connection()` port (SAA-836 M1). The manifest —
  * not the renderer — is authoritative for where a connection port sits, so the
  * mastra agent node can declare its distinct zones (memory bottom-left, scorers
- * top-right, embedding bottom-right, hooks/sandbox top-middle, tools/skill
- * bottom-middle). Zones sharing a side+align are ordered by {@link order}.
+ * top-right, subagents top-left, hooks/sandbox top-middle, tools/skill
+ * bottom-middle; the memory node's embedding zone sits bottom-centre). Zones sharing a side+align are ordered by {@link order}.
  */
 export type GraphPortZone = {
   /** Edge the port zone is anchored to. */

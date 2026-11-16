@@ -97,11 +97,11 @@ describe("mastra voice driver run (SAA-842 acceptance 3)", () => {
     });
 
     expect(result.status).toBe(GraphExecutionStatus.SUCCEEDED);
-    // The step adapter deep-clones plain objects into the JSON-safe output, so
-    // the resolved voice surface is structurally equal, not reference-equal.
-    expect(completedOutputs(harness, "voice")?.["resource"]).toStrictEqual(
-      liveVoice
-    );
+    // The resource output describes the resolved voice surface as workflow
+    // data: its fields, never its callable members.
+    expect(completedOutputs(harness, "voice")?.["resource"]).toStrictEqual({
+      tagged: "host-voice",
+    });
     // the voice node's VoiceConfig-shaped parameters reached the host factory
     expect(resolvedDescriptors).toEqual([
       expect.objectContaining({

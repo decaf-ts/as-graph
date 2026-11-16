@@ -7,7 +7,7 @@
  * input array is returned unchanged. The output is always an array —
  * array-in, array-out.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -77,6 +77,7 @@ export class LimitNode extends GraphNode<LimitNodeInput, LimitNodeOutput> {
   @input({ handle: "maxItems", userControlled: true })
   maxItems: number = 1;
 
+  @option(["firstItems", "lastItems"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.limit.fields.keep.label",
     type: "select",

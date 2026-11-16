@@ -19,7 +19,7 @@
  * maintained index for large production namespaces. The raw client is accessed through a local structural interface,
  * keeping this node independent of the concrete Redis client dependency.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { Adapter } from "@decaf-ts/core";
@@ -284,6 +284,7 @@ export class RedisNode extends GraphNode<RedisNodeInput, RedisNodeOutput> {
   }
 
   /** Operation to run (defaults to `get`). */
+  @option(["get", "delete", "set", "incr", "keys", "llen", "lpop", "rpop", "lpush", "rpush", "publish", "info"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.storage.redis.fields.operation.label",
     type: "select",

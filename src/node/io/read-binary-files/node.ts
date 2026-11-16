@@ -9,10 +9,16 @@ import { model, required } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
-import type { GraphExecutionValues } from "../../../engine/types";
+import type {
+  GraphExecutionValues,
+  GraphNodeExecutionRequest,
+} from "../../../engine/types";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import {
+  graphFilePathOfInput,
   graphGlobFiles,
+  openGraphFileStream,
   readGraphFilePayload,
   type BinaryFilePayload,
 } from "../file-support";
@@ -39,6 +45,7 @@ export interface ReadBinaryFilesNodeOutput {
 @node("core.io.readBinaryFiles", {
   kind: "core.io.readBinaryFiles",
   category: "IO",
+  capabilities: ["binaryStream"],
   color: "#0ea5e9",
   icon: "ti-files",
   width: 96,
@@ -62,8 +69,16 @@ export class ReadBinaryFilesNode extends GraphNode<
    *   when no selector is configured (and `GRAPH_FILE_*` codes from path
    *   resolution/read).
    */
-  override async execute(): Promise<GraphExecutionValues> {
-    const selector = this.fileSelector || this.pattern;
+  override async execute(
+    request: GraphNodeExecutionRequest<ReadBinaryFilesNodeInput>,
+    context?: GraphExecutionContext
+  ): Promise<GraphExecutionValues> {
+    // A configured selector wins; otherwise the default input supplies the
+    // glob pattern (a string, or a descriptor carrying a path).
+    const selector =
+      this.fileSelector ||
+      this.pattern ||
+      graphFilePathOfInput(request?.inputs?.["value"]);
     if (!selector) {
       throw new GraphExecutionError(
         "Read Binary Files node requires a file selector pattern",
@@ -71,14 +86,26 @@ export class ReadBinaryFilesNode extends GraphNode<
       );
     }
     const files = await graphGlobFiles(selector);
-    const payloads: BinaryFilePayload[] = [];
+    const results: unknown[] = [];
     let totalBytes = 0;
     for (const file of files) {
-      const { payload, bytes } = await readGraphFilePayload(file);
-      payloads.push(payload);
-      totalBytes += bytes;
+      if (!context?.binaries) {
+        const { payload, bytes } = await readGraphFilePayload(file);
+        results.push(payload);
+        totalBytes += bytes;
+        continue;
+      }
+      // Each file streams from disk straight into the binary store.
+      const opened = await openGraphFileStream(file);
+      const stored = await context.binaries.write(opened.stream, {
+        fileName: opened.fileName,
+        mimeType: opened.mimeType,
+        path: file,
+      });
+      results.push(stored);
+      totalBytes += stored.byteLength;
     }
-    return { result: payloads, files: payloads.length, bytes: totalBytes };
+    return { result: results, files: results.length, bytes: totalBytes };
   }
 
   /** Unused optional input retained for node uniformity. */

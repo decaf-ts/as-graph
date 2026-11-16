@@ -12,7 +12,7 @@
  * `send`. A throwaway `GmailService` is initialized per execution and shut
  * down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -67,6 +67,12 @@ const OPERATIONS: GmailOperation[] = ["send", "list", "get", "labels"];
 })
 @model()
 export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
+  /**
+   * Default data input: what the previous node produced. Used as the message text when `text` and `html` are empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured Gmail operation.
    *
@@ -165,6 +171,7 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
   }
 
   /** Gmail operation to perform (default `send`). */
+  @option(["send", "list", "get", "labels"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.gmail.fields.operation.label",
     type: "select",
@@ -285,6 +292,7 @@ export class GmailNode extends GraphNode<GmailNodeInput, GmailNodeOutput> {
   messageId?: string;
 
   /** Message fetch format (default `full`). */
+  @option(["full", "metadata", "minimal", "raw"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.comms.gmail.fields.format.label",
     type: "select",

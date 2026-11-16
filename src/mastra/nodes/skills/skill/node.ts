@@ -55,6 +55,7 @@ export class AgentSkillNode extends GraphNode<AgentSkillInput, AgentSkillOutput>
         type: "mastra.skill",
         name: this.name,
         description: this.description,
+        instructions: this.instructions,
         input: request.inputs,
       },
     };

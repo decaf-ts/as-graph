@@ -13,7 +13,7 @@
  * throwaway `GraphqlService` is initialized per execution and shut down in a
  * `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -67,6 +67,12 @@ export class GraphqlNode extends GraphNode<
   GraphqlNodeInput,
   GraphqlNodeOutput
 > {
+  /**
+   * Default data input: what the previous node produced. Used as the query when `query` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
   /**
    * Executes the configured GraphQL operation.
    *
@@ -137,6 +143,7 @@ export class GraphqlNode extends GraphNode<
   }
 
   /** Operation to run (default `query`). */
+  @option(["query", "mutation"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.graphql.fields.operation.label",
     type: "select",

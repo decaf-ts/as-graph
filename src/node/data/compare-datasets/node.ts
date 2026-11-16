@@ -6,7 +6,7 @@
  * comparison, first/all multiple matches, and per-mode conflict resolution
  * (`preferInput1`, `preferInput2`, `mix`, or `includeBoth`).
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -304,6 +304,7 @@ export class CompareDatasetsNode extends GraphNode<
   fieldsToMatch?: CompareFieldPair[] = [];
 
   /** Emission strategy for matched items with differing values (default `includeBoth`). */
+  @option(["preferInput1", "preferInput2", "mix", "includeBoth"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.compare_datasets.fields.resolve.label",
     type: "select",
@@ -312,6 +313,7 @@ export class CompareDatasetsNode extends GraphNode<
   resolve: CompareResolve = "includeBoth";
 
   /** Whether each left item may match one or every right item (default `first`). */
+  @option(["first", "all"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.compare_datasets.fields.multipleMatches.label",
     type: "select",
@@ -328,6 +330,7 @@ export class CompareDatasetsNode extends GraphNode<
   fuzzyCompare?: boolean = false;
 
   /** Preferred side for `mix` resolution (default `input1`). */
+  @option(["input1", "input2"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.compare_datasets.fields.preferWhenMix.label",
     type: "select",

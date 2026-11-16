@@ -9,6 +9,7 @@
 import { model, required } from "@decaf-ts/decorator-validation";
 import { node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { triggerRunPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -53,12 +54,12 @@ export class ManualTriggerNode extends GraphNode<
    * Returns the runtime trigger payload supplied by the run caller.
    *
    * @param {GraphNodeExecutionRequest<ManualTriggerInput>} request - Execution request carrying the manual trigger payload.
-   * @return {GraphExecutionValues} The `payload` output value (null when absent).
+   * @return {GraphExecutionValues} The `payload` output value (the whole run input when no `payload` field is sent, `null` when the run carries no input).
    */
   override execute(
     request: GraphNodeExecutionRequest<ManualTriggerInput>
   ): GraphExecutionValues {
-    return { payload: request.inputs["payload"] ?? null };
+    return { payload: triggerRunPayload(request.inputs) };
   }
 
   /** Output carrying the runtime trigger payload from the run caller. */

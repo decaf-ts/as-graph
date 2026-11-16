@@ -354,7 +354,12 @@ describe("Stage 5c vendor nodes — manifest contract", () => {
       expect(manifest).toBeDefined();
       expect(manifest.kind).toBe(entry.kind);
       expect(manifest.display.category).toBe(entry.category);
-      expect(manifest.inputs.map((port) => port.id)).toEqual(entry.inputs);
+      // Every service node leads with the default data input (`value`),
+      // followed by its own configuration ports.
+      expect(manifest.inputs.map((port) => port.id)).toEqual([
+        "value",
+        ...entry.inputs,
+      ]);
       expect(manifest.outputs.map((port) => port.id)).toEqual(entry.outputs);
       expect(manifest.credentials).toEqual(
         expect.arrayContaining([

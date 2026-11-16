@@ -135,6 +135,26 @@ function port(
   return { id, label, direction, ...extra };
 }
 
+/**
+ * The structural `loop` port every loop kind publishes: the last node of a
+ * body drawn on the canvas chains back into it. A loop body is a nested
+ * document in the canonical format; `graphNestLoopBodies` converts the canvas
+ * chain (body-entry port → body nodes → `loop`) into it.
+ *
+ * @param node - The loop node's locale segment (`foreach`, `while`, `until`).
+ * @returns The connection port manifest.
+ */
+function loopBodyExitPort(node: string): GraphPortManifest {
+  return {
+    id: "loop",
+    label: `graph.node.loop.${node}.ports.connection.loop.label`,
+    direction: "connection",
+    handle: "loop",
+    connectionPolicy: { allowSelf: true, maxConnections: 1 },
+    metadata: { loopBody: "exit" },
+  } as GraphPortManifest;
+}
+
 
 
 
@@ -184,7 +204,11 @@ function switchManifest(base: GraphNodeManifest): GraphNodeManifest {
     ...base,
     outputs: [],
     parameters: [
-      ...base.parameters,
+      // The structural definitions below are authoritative for these ids;
+      // drop the class-derived form-field parameters of the same name.
+      ...base.parameters.filter(
+        (parameter) => !["cases", "hasDefault", "switch"].includes(parameter.id)
+      ),
       {
         type: "collection",
         id: "cases",
@@ -291,8 +315,13 @@ const FOREACH_MANIFEST: GraphNodeManifest = {
       schema: { type: "number", integer: true, min: 0 },
     }),
     port("broken", "graph.node.loop.foreach.ports.output.broken.label", "output", { schema: { type: "boolean" } }),
-    port("state", "graph.node.loop.foreach.ports.output.state.label", "output", { schema: { type: "any" } }),
+    port("state", "graph.node.loop.foreach.ports.output.state.label", "output", { schema: { type: "any" } }),    // Body-entry port: the current item, visible to the loop body only.
+    port("item", "graph.node.loop.foreach.ports.output.item.label", "output", {
+      schema: { type: "any" },
+      metadata: { loopBody: "entry" },
+    }),
   ],
+  connections: [loopBodyExitPort("foreach")],
   parameters: [
     { type: "number", id: "maxIterations", label: "graph.node.loop.foreach.fields.maxIterations.label", integer: true, min: 1 },
     { type: "object", id: "condition", label: "graph.node.loop.foreach.fields.condition.label" },
@@ -323,7 +352,13 @@ const WHILE_MANIFEST: GraphNodeManifest = {
     port("iterations", "graph.node.loop.while.ports.output.iterations.label", "output", {
       schema: { type: "number", integer: true, min: 0 },
     }),
+    // Body-entry port: the current state, visible to the loop body only.
+    port("body", "graph.node.loop.while.ports.output.body.label", "output", {
+      schema: { type: "any" },
+      metadata: { loopBody: "entry" },
+    }),
   ],
+  connections: [loopBodyExitPort("while")],
   parameters: [
     { type: "number", id: "maxIterations", label: "graph.node.loop.while.fields.maxIterations.label", integer: true, min: 1 },
     { type: "object", id: "condition", label: "graph.node.loop.while.fields.condition.label", required: true },
@@ -353,7 +388,13 @@ const UNTIL_MANIFEST: GraphNodeManifest = {
     port("iterations", "graph.node.loop.until.ports.output.iterations.label", "output", {
       schema: { type: "number", integer: true, min: 0 },
     }),
+    // Body-entry port: the current state, visible to the loop body only.
+    port("body", "graph.node.loop.until.ports.output.body.label", "output", {
+      schema: { type: "any" },
+      metadata: { loopBody: "entry" },
+    }),
   ],
+  connections: [loopBodyExitPort("until")],
   parameters: [
     { type: "number", id: "maxIterations", label: "graph.node.loop.until.fields.maxIterations.label", integer: true, min: 1 },
     { type: "object", id: "condition", label: "graph.node.loop.until.fields.condition.label", required: true },

@@ -165,6 +165,22 @@ export function graphValuesLooselyEqual(
   left: unknown,
   right: unknown
 ): boolean {
+  // Records and lists are compared member by member with the same loose
+  // rule: a row that went through a text format (CSV, a form post) comes back
+  // with stringified numbers, and such a row is still "the same" row.
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((entry, index) => graphValuesLooselyEqual(entry, right[index]))
+    );
+  }
+  if (isGraphDataRecord(left) && isGraphDataRecord(right)) {
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    for (const key of keys) {
+      if (!graphValuesLooselyEqual(left[key], right[key])) return false;
+    }
+    return true;
+  }
   if (left !== null && right !== null && typeof left === typeof right) {
     return graphValueEquals(left, right);
   }
@@ -850,7 +866,8 @@ export function summarizeGraphItems(
   );
   const outputFormat = options.outputFormat ?? "separateItems";
 
-  if (!options.continueIfFieldNotFound) {
+  // An empty input has no items to be missing a field from (n8n emits nothing).
+  if (!options.continueIfFieldNotFound && items.length > 0) {
     for (const entry of aggregations) {
       const field = entry.field ?? "";
       if (!field) continue;

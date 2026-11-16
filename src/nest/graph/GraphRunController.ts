@@ -14,6 +14,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpException,
   HttpStatus,
   NotFoundException,
@@ -21,6 +22,7 @@ import {
   Param,
   Post,
   Query,
+  Res,
   Sse,
   MessageEvent,
   Inject,
@@ -42,6 +44,7 @@ import type {
   GraphRun,
   GraphRunCreateRequest,
 } from "../../";
+import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
 import { GraphRunService } from "../../";
 import {
   GraphWorkflowService,
@@ -54,6 +57,30 @@ import {
   type MastraRunMetricsPageHttp,
 } from "../../mastra/MastraRunMetricsEndpoint";
 import { toIsoDateString } from "./servingDates";
+import { GraphExecutionEngine } from "../../engine/execution/GraphExecutionEngine";
+
+/** Media types the binary endpoint may render inline; all others download. */
+const GRAPH_BINARY_INLINE_TYPES =
+  /^(image\/(png|jpeg|gif|webp)|audio\/(mpeg|wav|ogg|webm)|video\/(mp4|webm|ogg)|text\/(plain|csv)|application\/(json|pdf))$/;
+
+/** The slice of the HTTP response the binary endpoint writes to. */
+interface GraphBinaryHttpResponse {
+  setHeader(name: string, value: string): void;
+  end(body?: Buffer): void;
+  write(chunk: Uint8Array): boolean;
+  statusCode: number;
+  once(event: "drain", listener: () => void): unknown;
+}
+
+/**
+ * Whether the binary endpoint redirects to a signed object-store URL
+ * (`GRAPH_BINARY_PRESIGN`, on by default; `off`/`false`/`0` streams through
+ * the backend instead).
+ */
+function graphBinaryPresignEnabled(): boolean {
+  const raw = process.env["GRAPH_BINARY_PRESIGN"]?.trim().toLowerCase();
+  return !(raw && ["off", "false", "0", "no", "disabled"].includes(raw));
+}
 import {
   GRAPH_SERVING_INTERNAL_ERROR_MESSAGE,
   logUnmappedGraphServingError,
@@ -117,10 +144,31 @@ export interface GraphRunRequestBody {
  * @param {GraphServingErrorCorrelation} [correlation] - Request/run correlation ids attached to the server-side log.
  * @return {HttpException} The HTTP-mapped error to rethrow.
  */
+/** HTTP status of the run admission/idempotency failures. */
+const GRAPH_RUN_ERROR_STATUS: Record<string, HttpStatus> = {
+  GRAPH_RUN_CONCURRENCY_LIMIT: HttpStatus.TOO_MANY_REQUESTS,
+  GRAPH_QUOTA_EXCEEDED: HttpStatus.TOO_MANY_REQUESTS,
+  GRAPH_RUN_QUEUE_FULL: HttpStatus.TOO_MANY_REQUESTS,
+  GRAPH_QUOTA_STORAGE_EXCEEDED: HttpStatus.FORBIDDEN,
+  GRAPH_RUN_IDEMPOTENCY_CONFLICT: HttpStatus.UNPROCESSABLE_ENTITY,
+  GRAPH_RUN_SHUTTING_DOWN: HttpStatus.SERVICE_UNAVAILABLE,
+  GRAPH_RUN_DELETE_ACTIVE: HttpStatus.CONFLICT,
+  GRAPH_RUN_DELETE_UNSUPPORTED: HttpStatus.NOT_IMPLEMENTED,
+};
+
+/** Seconds a client should wait before retrying a 429/503. */
+const GRAPH_RUN_RETRY_AFTER_SECONDS = 5;
+
 function graphRunHttpErrorOf(
   e: unknown,
   correlation: GraphServingErrorCorrelation = {}
 ): HttpException {
+  if (e instanceof GraphExecutionError && GRAPH_RUN_ERROR_STATUS[e.graphCode]) {
+    return new HttpException(
+      { message: e.message, code: e.graphCode },
+      GRAPH_RUN_ERROR_STATUS[e.graphCode]
+    );
+  }
   if (e instanceof ForbiddenError || e instanceof AuthorizationError) {
     return new HttpException(
       correlation.runId
@@ -194,7 +242,12 @@ function graphRunModelToHttp(
   callerOwner: string | null
 ): Record<string, unknown> | undefined {
   const createdAt = toIsoDateString(model.createdAt);
-  const updatedAt = toIsoDateString(model.updatedAt);
+  // The durable lane's bootstrap DDL has no `updatedAt` column on graph_run,
+  // so a row read back from Postgres carries none: fall back to its latest
+  // lifecycle timestamp instead of dropping the row from the list.
+  const updatedAt = toIsoDateString(
+    model.updatedAt ?? model.finishedAt ?? model.startedAt ?? model.createdAt
+  );
   if (createdAt === undefined || updatedAt === undefined) return undefined;
   const includePayload = canAccessGraphResourcePayload(
     { owner: model.owner },
@@ -295,7 +348,9 @@ export class GraphRunController {
     @Optional() @Inject(GRAPH_RUN_OPTIONS)
     private readonly options: GraphRunControllerOptions = {},
     @Optional() @Inject(MASTRA_RUN_METRICS_DELEGATION)
-    private readonly runMetricsDelegation?: MastraRunMetricsDelegation
+    private readonly runMetricsDelegation?: MastraRunMetricsDelegation,
+    @Optional() @Inject(GraphExecutionEngine)
+    private readonly engine?: GraphExecutionEngine
   ) {}
 
   /**
@@ -356,15 +411,25 @@ export class GraphRunController {
   @Post("runs")
   @HttpCode(HttpStatus.ACCEPTED)
   async createRun(
-    @Body() body: GraphRunRequestBody
+    @Body() body: GraphRunRequestBody,
+    @Headers("idempotency-key") idempotencyKey?: string,
+    @Res({ passthrough: true }) res?: { setHeader(name: string, value: string): void }
   ): Promise<GraphRunCreatedResponse> {
     const context = this.requireAuthenticatedContext();
+    const key = idempotencyKey?.trim();
+    if (key !== undefined && (key.length === 0 || key.length > 255)) {
+      throw new HttpException(
+        "Idempotency-Key must be 1-255 characters",
+        HttpStatus.BAD_REQUEST
+      );
+    }
     const request: GraphRunCreateRequest = {
       ...(body?.workflow !== undefined ? { workflow: body.workflow } : {}),
       ...(body?.workflowId !== undefined
         ? { workflowId: body.workflowId }
         : {}),
       ...(body?.inputs !== undefined ? { inputs: body.inputs } : {}),
+      ...(key ? { idempotencyKey: key } : {}),
     };
     try {
       const owner = this.ownerUserOf();
@@ -382,10 +447,15 @@ export class GraphRunController {
         resultUrl: `/graph/runs/${run.runId}`,
       };
     } catch (e: unknown) {
-      throw graphRunHttpErrorOf(
+      const error = graphRunHttpErrorOf(
         e,
         body?.workflowId !== undefined ? { workflowId: body.workflowId } : {}
       );
+      const status = error.getStatus();
+      if (status === HttpStatus.TOO_MANY_REQUESTS || status === HttpStatus.SERVICE_UNAVAILABLE) {
+        res?.setHeader("Retry-After", String(GRAPH_RUN_RETRY_AFTER_SECONDS));
+      }
+      throw error;
     }
   }
 
@@ -504,19 +574,124 @@ export class GraphRunController {
   }
 
   /**
-   * Cancels a run (cooperative cancellation) and returns its updated state.
+   * Serves the bytes of a binary value a run produced.
+   *
+   * Run results, events and node input/output panels carry binary values as
+   * references (`{ id, fileName, mimeType, byteLength }`); this endpoint
+   * resolves one. Access follows the run: the caller must be allowed to read
+   * the run's payload, and the binary must belong to that run. The response
+   * is always `nosniff` and sandboxed, and only an allowlisted set of media
+   * types is ever rendered inline — everything else downloads.
    *
    * @param {string} runId - Run id path parameter.
-   * @return {Promise<Record<string, unknown>>} The cancelled run's HTTP shape.
-   * @throws {HttpException} The mapped graph-run HTTP error (404 for unknown runs, 403 for foreign owners).
+   * @param {string} binaryId - The reference's `id` (`graph-binary:<digest>`).
+   * @param {string} [action] - `view` to render inline when the type allows it; anything else downloads.
+   * @param res - The HTTP response the bytes are written to.
+   * @throws {HttpException} 404 for an unknown run or binary, 403 for a foreign owner.
+   */
+  @Get("runs/:runId/binary/:binaryId")
+  async getRunBinary(
+    @Param("runId") runId: string,
+    @Param("binaryId") binaryId: string,
+    @Query("action") action: string | undefined,
+    @Res() res: GraphBinaryHttpResponse
+  ): Promise<void> {
+    const context = this.requireAuthenticatedContext();
+    const callerOwner = this.ownerUserOf();
+    let run: GraphRun;
+    try {
+      run = await this.runService.getRun(runId, callerOwner, context);
+    } catch (e: unknown) {
+      throw graphRunHttpErrorOf(e, { runId });
+    }
+    if (!canAccessGraphResourcePayload({ owner: run.ownerUser }, callerOwner)) {
+      throw new HttpException("Forbidden", HttpStatus.FORBIDDEN);
+    }
+    const store = this.engine?.binaryStore;
+    const known =
+      store !== undefined && (await store.belongsTo(runId, binaryId));
+    const descriptor = known ? await store.describe(binaryId) : undefined;
+    if (!store || !descriptor) {
+      throw new NotFoundException(
+        `No binary '${binaryId}' found for run '${runId}'`
+      );
+    }
+    const inline =
+      action === "view" && GRAPH_BINARY_INLINE_TYPES.test(descriptor.mimeType);
+    // Offload the transfer to the object store: a short-lived signed URL that
+    // serves the right name and type (the access check above already ran).
+    if (graphBinaryPresignEnabled() && store.downloadUrl) {
+      const signed = await store.downloadUrl(binaryId, {
+        fileName: descriptor.fileName,
+        mimeType: descriptor.mimeType,
+        inline,
+      });
+      if (signed) {
+        res.statusCode = 302;
+        res.setHeader("Location", signed);
+        res.setHeader("Cache-Control", "no-store");
+        res.end();
+        return;
+      }
+    }
+    const fileName = descriptor.fileName.replace(/[^A-Za-z0-9._-]+/g, "_");
+    res.setHeader(
+      "Content-Type",
+      inline ? descriptor.mimeType : "application/octet-stream"
+    );
+    res.setHeader("Content-Length", String(descriptor.byteLength));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+    res.setHeader(
+      "Content-Disposition",
+      `${inline ? "inline" : "attachment"}; filename="${fileName}"`
+    );
+    // Stream the bytes through without loading the whole file.
+    const stream = store.openStream
+      ? await store.openStream(binaryId)
+      : await store.read(binaryId).then((bytes) =>
+          bytes
+            ? (async function* () {
+                yield bytes;
+              })()
+            : undefined
+        );
+    if (!stream) {
+      throw new NotFoundException(
+        `No binary '${binaryId}' found for run '${runId}'`
+      );
+    }
+    for await (const chunk of stream) {
+      if (!res.write(chunk)) {
+        await new Promise<void>((resolve) => res.once("drain", resolve));
+      }
+    }
+    res.end();
+  }
+
+  /**
+   * `DELETE /graph/runs/:runId` cancels a run (idempotent; a finished run is
+   * returned unchanged). With `?purge=true` it deletes a finished run instead
+   * — the run, its events and the files only it holds — answering `409` for a
+   * run that is still queued or running and `501` when the run store cannot
+   * delete.
    */
   @Delete("runs/:runId")
   async cancelRun(
-    @Param("runId") runId: string
+    @Param("runId") runId: string,
+    @Query("purge") purge?: string
   ): Promise<Record<string, unknown>> {
     const context = this.requireAuthenticatedContext();
     const callerOwner = this.ownerUserOf();
     try {
+      if (purge === "true" || purge === "1") {
+        const deleted = await this.runService.deleteRun(
+          runId,
+          callerOwner,
+          context
+        );
+        return { runId: deleted.runId, status: deleted.status, deleted: true };
+      }
       const run = await this.runService.cancelRun(
         runId,
         callerOwner,

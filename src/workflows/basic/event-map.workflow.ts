@@ -14,7 +14,9 @@ export const eventMapDocument = document({
   outputs: [port("mapped")],
   nodes: [
     node("trigger", "core.trigger.event"),
-    node("transform", "core.utility.map"),
+    node("transform", "core.utility.map", {
+      expression: "({ ...$item, total: $item.qty * $item.price })",
+    }),
     node("sink", "result"),
   ],
   edges: [
@@ -28,8 +30,8 @@ export const eventMapFixture: GraphWorkflowFixture = {
   id: eventMapDocument.id,
   document: eventMapDocument,
   kinds: ["core.trigger.event", "core.utility.map", "result"],
-  combos: ["exposed-ports", "defaults"],
+  combos: ["exposed-ports", "code-expression", "defaults"],
   executable: true,
-  inputs: {},
-  expectedOutputs: { mapped: { mapped: { value: null } } },
+  inputs: { payload: { sku: "bolt", qty: 4, price: 2.5 } },
+  expectedOutputs: { mapped: { sku: "bolt", qty: 4, price: 2.5, total: 10 } },
 };

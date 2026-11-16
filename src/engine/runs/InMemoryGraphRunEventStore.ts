@@ -78,6 +78,11 @@ export class InMemoryGraphRunEventStore implements GraphRunEventStore {
     };
   }
 
+  async lastSequence(runId: string): Promise<number> {
+    const list = this.events.get(runId);
+    return list && list.length > 0 ? list[list.length - 1].sequence : 0;
+  }
+
   release(runId: string): void {
     this.events.delete(runId);
     this.listeners.delete(runId);

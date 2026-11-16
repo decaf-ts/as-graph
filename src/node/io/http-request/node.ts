@@ -8,15 +8,20 @@
  * string values with non-blank keys, and a JSON body auto-supplies
  * `content-type: application/json` when the caller did not set one. `GET` and
  * `HEAD` requests never carry a body; other methods send the configured `body`
- * or fall back to the `value` input (strings and binary payloads pass through,
- * anything else is JSON-encoded). The request races an `AbortController`
+ * or fall back to the `value` input (strings and raw binaries pass through, a
+ * binary file payload sends its bytes with its media type as the default
+ * `content-type`, anything else is JSON-encoded). The request races an `AbortController`
  * against `timeoutMs` (default 30s, floored to the default when invalid) and
  * the execution context's `abortSignal`. The response body is read as text and
- * parsed as JSON unless `responseFormat` is `text`. With `failOnError` a
+ * parsed as JSON unless `responseFormat` is `text`; with `file` (n8n's
+ * "Response Format: File") the body is kept as bytes and emitted as a binary
+ * file payload — named from `Content-Disposition`, the configured `fileName`
+ * or the URL's last path segment, typed from `Content-Type` — so it lands on
+ * the binary tab and travels between nodes as a store reference. With `failOnError` a
  * non-2xx status throws; otherwise the status is reported on the `status`
  * output.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -26,6 +31,25 @@ import type {
 } from "../../../engine/types";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import {
+  binaryBufferOf,
+  binaryPayloadOf,
+  graphInputStreamOf,
+  isBinaryFilePayload,
+  mimeTypeFor,
+} from "../file-support";
+import { isGraphBinaryReference } from "../../../shared/graph/document/GraphBinaryReference";
+
+/** Environment variable: the largest file an HTTP `file` response may stream. */
+export const GRAPH_HTTP_MAX_FILE_BYTES_ENV = "GRAPH_HTTP_MAX_FILE_BYTES";
+/** Default file-response limit: 1 GiB. */
+export const DEFAULT_GRAPH_HTTP_MAX_FILE_BYTES = 1024 * 1024 * 1024;
+
+/** The configured file-response limit. */
+function graphHttpMaxFileBytes(): number {
+  const raw = Number(process.env[GRAPH_HTTP_MAX_FILE_BYTES_ENV]);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_GRAPH_HTTP_MAX_FILE_BYTES;
+}
 import {
   GRAPH_HTTP_MAX_REDIRECTS,
   GRAPH_HTTP_MAX_RESPONSE_BYTES,
@@ -42,7 +66,7 @@ export type HttpRequestMethod =
   | "HEAD";
 
 /** How the response body is decoded. */
-export type HttpResponseFormat = "json" | "text";
+export type HttpResponseFormat = "json" | "text" | "file";
 
 /** Inputs accepted by the HTTP Request node. */
 export type HttpRequestNodeInput = Record<string, unknown>;
@@ -66,6 +90,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
 @node("core.io.httpRequest", {
   kind: "core.io.httpRequest",
   category: "IO",
+  capabilities: ["binaryStream"],
   color: "#0ea5e9",
   icon: "ti-world-www",
   width: 96,
@@ -138,9 +163,16 @@ export class HttpRequestNode extends GraphNode<
       }
     }
 
-    const body = this.resolveBody(request, method);
-    if (body !== undefined && headers["content-type"] === undefined) {
-      headers["content-type"] = "application/json";
+    const { body, contentType, streamed } = await this.resolveBody(
+      request,
+      method,
+      context
+    );
+    const hasContentType = Object.keys(headers).some(
+      (key) => key.toLowerCase() === "content-type"
+    );
+    if (body !== undefined && !hasContentType) {
+      headers["content-type"] = contentType;
     }
 
     const timeoutMs = this.resolveTimeoutMs();
@@ -153,14 +185,36 @@ export class HttpRequestNode extends GraphNode<
     try {
       const { response, url: finalUrl } = await this.fetchFollowingRedirects(
         url,
-        { method, headers, body, signal: controller.signal }
+        {
+          method,
+          headers,
+          body: body as RequestInit["body"],
+          signal: controller.signal,
+          // A streamed (file) body is sent as it is read.
+          ...(streamed ? { duplex: "half" } : {}),
+        } as RequestInit,
+        streamed
       );
-      const text = await this.readCappedResponseText(response);
       const responseHeaders = Object.fromEntries(
         response.headers.entries()
       ) as Record<string, string>;
-      const result =
-        this.responseFormat === "text" ? text : this.parseResponse(text);
+      let result: unknown;
+      if (this.responseFormat === "file" && context?.binaries) {
+        // The body streams straight into the binary store, under the file
+        // limit rather than the in-memory response limit.
+        result = await context.binaries.write(
+          this.cappedBodyStream(response, graphHttpMaxFileBytes()),
+          this.fileDescriptorOf(response, finalUrl)
+        );
+      } else {
+        const bytes = await this.readCappedResponseBytes(response);
+        result =
+          this.responseFormat === "file"
+            ? this.filePayloadOf(bytes, response, finalUrl)
+            : this.responseFormat === "text"
+              ? bytes.toString("utf8")
+              : this.parseResponse(bytes.toString("utf8"));
+      }
 
       if (this.failOnError === true && !response.ok) {
         throw new GraphExecutionError(
@@ -218,7 +272,8 @@ export class HttpRequestNode extends GraphNode<
    */
   private async fetchFollowingRedirects(
     initialUrl: URL,
-    init: RequestInit
+    init: RequestInit,
+    streamedBody = false
   ): Promise<{ response: Response; url: URL }> {
     let current = initialUrl;
     let request = init;
@@ -260,6 +315,14 @@ export class HttpRequestNode extends GraphNode<
         );
       }
       await this.discardResponseBody(response);
+      if (streamedBody && response.status !== 303) {
+        // A streamed body was consumed by the first hop and cannot be resent.
+        throw new GraphExecutionError(
+          `HTTP Request node cannot follow a ${response.status} redirect while streaming a file body`,
+          "GRAPH_HTTP_REQUEST_FAILED",
+          { status: response.status, location: next.toString() }
+        );
+      }
       if (response.status === 303) {
         request = { ...request, method: "GET", body: undefined };
         const headers = { ...(request.headers as Record<string, string>) };
@@ -292,15 +355,107 @@ export class HttpRequestNode extends GraphNode<
   }
 
   /**
+   * Wraps a response body as a binary file payload.
+   *
+   * The file name comes from `Content-Disposition` (`filename*` or
+   * `filename`), then the configured `fileName`, then the URL's last path
+   * segment, then `response`; the media type from `Content-Type` (parameters
+   * dropped), else from the file name's extension.
+   *
+   * @param bytes - The response body.
+   * @param response - The response, for its headers.
+   * @param url - The final (post-redirect) URL.
+   * @returns The file payload.
+   */
+  private filePayloadOf(bytes: Buffer, response: Response, url: URL) {
+    const { fileName, mimeType } = this.fileDescriptorOf(response, url);
+    return binaryPayloadOf(bytes, fileName, undefined, mimeType);
+  }
+
+  /**
+   * Streams a response body, failing once it exceeds `maxBytes`.
+   *
+   * @throws {GraphExecutionError} `GRAPH_HTTP_RESPONSE_TOO_LARGE`.
+   */
+  private cappedBodyStream(
+    response: Response,
+    maxBytes: number
+  ): AsyncIterable<Uint8Array> {
+    const body = response.body;
+    return (async function* () {
+      if (!body) return;
+      const reader = body.getReader();
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          if (!value) continue;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            try {
+              await reader.cancel();
+            } catch {
+              // the size failure below is authoritative
+            }
+            throw new GraphExecutionError(
+              `HTTP Request node file response exceeds the ${maxBytes}-byte limit (${GRAPH_HTTP_MAX_FILE_BYTES_ENV})`,
+              "GRAPH_HTTP_RESPONSE_TOO_LARGE",
+              { limitBytes: maxBytes }
+            );
+          }
+          yield value;
+        }
+      } finally {
+        reader.releaseLock?.();
+      }
+    })();
+  }
+
+  /** Name and media type of a file response (see {@link filePayloadOf}). */
+  private fileDescriptorOf(
+    response: Response,
+    url: URL
+  ): { fileName: string; mimeType: string } {
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const encoded = /filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/.exec(disposition);
+    const plain = /filename\s*=\s*"?([^";]+)"?/.exec(disposition);
+    let fromHeader: string | undefined;
+    try {
+      fromHeader = encoded ? decodeURIComponent(encoded[1].trim()) : plain?.[1].trim();
+    } catch {
+      fromHeader = plain?.[1].trim();
+    }
+    const rawSegment = url.pathname.split("/").filter(Boolean).pop() ?? "";
+    let segment: string;
+    try {
+      segment = decodeURIComponent(rawSegment);
+    } catch {
+      segment = rawSegment;
+    }
+    const fileName =
+      fromHeader?.replace(/[\\/]/g, "_") ||
+      this.fileName?.trim() ||
+      segment ||
+      "response";
+    const contentType = response.headers
+      .get("content-type")
+      ?.split(";")[0]
+      .trim()
+      .toLowerCase();
+    return { fileName, mimeType: contentType || mimeTypeFor(fileName) };
+  }
+
+  /**
    * Reads the response body with a hard byte cap.
    *
    * @param response - The response to read.
-   * @returns The decoded UTF-8 body.
+   * @returns The body bytes.
    * @throws {GraphExecutionError} with code `GRAPH_HTTP_RESPONSE_TOO_LARGE`
    *   when the body exceeds {@link GRAPH_HTTP_MAX_RESPONSE_BYTES}.
    */
-  private async readCappedResponseText(response: Response): Promise<string> {
-    if (!response.body) return "";
+  private async readCappedResponseBytes(response: Response): Promise<Buffer> {
+    if (!response.body) return Buffer.alloc(0);
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
@@ -327,9 +482,7 @@ export class HttpRequestNode extends GraphNode<
     } finally {
       reader.releaseLock?.();
     }
-    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
-      "utf8"
-    );
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
   }
 
   /**
@@ -356,28 +509,45 @@ export class HttpRequestNode extends GraphNode<
   /**
    * Resolves the request body for non-GET/HEAD methods.
    *
-   * The configured `body` wins over the `value` input. Strings, `Buffer`s, and
+   * The configured `body` wins over the `value` input. A binary file payload
+   * sends its bytes, typed with its media type; strings, `Buffer`s, and
    * `Uint8Array`s pass through unchanged; anything else is JSON-encoded.
    *
    * @param request - The execution request carrying the `value` input.
    * @param method - The resolved HTTP method.
-   * @returns The body to send, or `undefined` for GET/HEAD or absent content.
+   * @returns The body to send (`undefined` for GET/HEAD or absent content)
+   *   and the `content-type` to default to.
    */
-  private resolveBody(
+  private async resolveBody(
     request: GraphNodeExecutionRequest<HttpRequestNodeInput>,
-    method: HttpRequestMethod
-  ): string | Buffer | Uint8Array | undefined {
-    if (method === "GET" || method === "HEAD") return undefined;
+    method: HttpRequestMethod,
+    context?: GraphExecutionContext
+  ): Promise<{
+    body?: string | Buffer | Uint8Array | AsyncIterable<Uint8Array>;
+    contentType: string;
+    streamed: boolean;
+  }> {
+    const json = "application/json";
+    if (method === "GET" || method === "HEAD") return { contentType: json, streamed: false };
     const body = this.body !== undefined ? this.body : request.inputs["value"];
-    if (body === undefined || body === null) return undefined;
+    if (body === undefined || body === null) return { contentType: json, streamed: false };
+    // A file (store reference or payload) is sent as its bytes, streamed.
+    if (isGraphBinaryReference(body) || isBinaryFilePayload(body)) {
+      const stream = await graphInputStreamOf(body, context);
+      return {
+        body: stream ?? binaryBufferOf(body, "base64"),
+        contentType: body.mimeType || "application/octet-stream",
+        streamed: stream !== undefined,
+      };
+    }
     if (
       typeof body === "string" ||
       (typeof Buffer !== "undefined" && Buffer.isBuffer(body)) ||
       body instanceof Uint8Array
     ) {
-      return body as string | Buffer | Uint8Array;
+      return { body: body as string | Buffer | Uint8Array, contentType: json, streamed: false };
     }
-    return JSON.stringify(body);
+    return { body: JSON.stringify(body), contentType: json, streamed: false };
   }
 
   /**
@@ -408,6 +578,7 @@ export class HttpRequestNode extends GraphNode<
   @input({ handle: "url", userControlled: true })
   url: string = "";
 
+  @option(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.http_request.fields.method.label",
     type: "select",
@@ -436,12 +607,22 @@ export class HttpRequestNode extends GraphNode<
   @input({ handle: "body", userControlled: true, type: "object" })
   body?: unknown;
 
+  @option(["text", "json", "file"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.http_request.fields.responseFormat.label",
     type: "select",
   })
   @input({ handle: "responseFormat", userControlled: true })
   responseFormat: HttpResponseFormat = "json";
+
+  /** File name for a `file` response without a `Content-Disposition` name. */
+  @uielement("ngx-decaf-crud-field", {
+    label: "graph.node.io.http_request.fields.fileName.label",
+    placeholder: "graph.node.io.http_request.fields.fileName.placeholder",
+    type: "text",
+  })
+  @input({ handle: "fileName", userControlled: true })
+  fileName?: string;
 
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.http_request.fields.timeoutMs.label",

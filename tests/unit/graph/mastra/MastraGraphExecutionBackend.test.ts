@@ -26,7 +26,7 @@ describe("MastraGraphExecutionBackend", () => {
     const backend = new MastraGraphExecutionBackend();
 
     expect(backend.local).toBe(false);
-    expect(backend.codeMode).toBe("unsupported");
+    expect(backend.codeMode).toBe("hostSide");
     expect(backend.capabilities).toEqual(resolveMastraCapabilities());
     expect(backend.capabilities.workflows).toEqual({
       list: "supported",
@@ -52,7 +52,7 @@ describe("MastraGraphExecutionBackend", () => {
       expect.arrayContaining(["workflowList", "workflowLookup"])
     );
     expect(resolveMastraCapabilities()).toEqual({
-      codeMode: "unsupported",
+      codeMode: "hostSide",
       workflows: {
         list: "supported",
         get: "supported",

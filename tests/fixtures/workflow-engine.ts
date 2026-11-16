@@ -15,7 +15,10 @@ import {
   GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND,
   CodeNode,
 } from "../../src/node";
-import { GraphExecutionEngine } from "../../src/engine/execution/GraphExecutionEngine";
+import {
+  GraphExecutionEngine,
+  type GraphExecutionEngineConfig,
+} from "../../src/engine/execution/GraphExecutionEngine";
 import { GraphNodeCatalogue } from "../../src/engine/catalog/GraphNodeCatalogue";
 import { GraphNodeExecutorRegistry } from "../../src/engine/registry/GraphNodeExecutorRegistry";
 import { registerBuiltInGraphNodes } from "../../src/engine/catalog/GraphBuiltInRegistrations";
@@ -32,7 +35,9 @@ const CODE_GRAPH_NODE_MANIFEST =
   GRAPH_BUILT_IN_NODE_MANIFESTS_BY_KIND["core.utility.code"];
 
 /** Boots the real engine used to execute the demo fixtures. */
-export async function bootFixtureEngine(): Promise<{
+export async function bootFixtureEngine(
+  overrides: Partial<GraphExecutionEngineConfig> = {}
+): Promise<{
   engine: GraphExecutionEngine;
   catalogue: GraphNodeCatalogue;
 }> {
@@ -40,7 +45,8 @@ export async function bootFixtureEngine(): Promise<{
   const engine = await bootEngine({
     registry: new GraphNodeExecutorRegistry(catalogue),
     codeSandboxEvaluator: await bootCodeSandboxEvaluator(),
-  });
+    ...overrides,
+  } as GraphExecutionEngineConfig);
   await registerBuiltInGraphNodes(catalogue);
   await catalogue.register(
     defineGraphNode({

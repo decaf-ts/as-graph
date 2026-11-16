@@ -18,17 +18,13 @@ import type { GraphExecutionEngine } from "./GraphExecutionEngine";
 import type {
   GraphExecutionErrorPayload,
   GraphExecutionEvent,
-  GraphInputBinding,
   GraphJsonValue,
-  GraphValueTemplate,
   GraphWorkflowDocument,
 } from "../../shared/graph";
 import {
   GraphExecutionEventType,
   GraphExecutionStatus,
   GraphVisualState,
-  graphValueTemplateDefaultLanguage,
-  isGraphValueTemplate,
 } from "../../shared/graph";
 import {
   GRAPH_DEFAULT_CONCURRENCY,
@@ -38,6 +34,14 @@ import {
   GRAPH_MAX_LOOP_ITERATIONS,
   GRAPH_WORKFLOW_BOUNDARY,
 } from "../constants";
+import {
+  graphNodeForwardsValues,
+  graphNodeIsTrigger,
+} from "./GraphNodeEngineRequirements";
+import {
+  dehydrateGraphBinaries,
+  hydrateGraphBinaries,
+} from "../binary/GraphBinaryStore";
 import { graphNodeRequiresMastraEngine } from "./GraphNodeEngineRequirements";
 import {
   GraphBreakSignal,
@@ -58,9 +62,15 @@ import type { GraphExecutionPlanNode } from "../planning/GraphExecutionPlanNode"
 import type { GraphExecutionPlanEdge } from "../planning/GraphExecutionPlanEdge";
 import {
   GraphParameterValidator,
-  isGraphCredentialReferenceLike,
 } from "../validation/GraphParameterValidator";
 import { createGraphValueRepository } from "../store/GraphValueRepository";
+import { graphNodeStreamsBinaries } from "../binary/GraphBinaryAccess";
+import { graphMetrics, withGraphSpan } from "../telemetry/GraphTelemetry";
+import {
+  applyGraphInputBindings,
+  collectGraphNodeCredentials,
+  resolveGraphNodeParameters,
+} from "./GraphNodeRequestResolution";
 import type { GraphCachedValue } from "../store/GraphCachedValue";
 import { GraphPinningService } from "../pinning/GraphPinningService";
 import { GraphPinningPolicy } from "../pinning/GraphPinningPolicy";
@@ -121,14 +131,6 @@ function callerAuthOf(args: readonly unknown[]): GraphAuthData {
   return graphAuthDataOf(contextArgOf(args));
 }
 
-function graphTemplateToExpression(template: string): string {
-  const escaped = template.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-  const interpolated = escaped.replace(
-    /\{\{\s*([\s\S]*?)\s*\}\}/g,
-    (_match, expression: string) => `\${${expression}}`
-  );
-  return `\`${interpolated}\``;
-}
 
 /**
  * Configuration for the {@link LocalGraphExecutionBackend}.
@@ -152,6 +154,27 @@ export interface LocalGraphExecutionBackendConfig
    * backend preserves the direct read path.
    */
   engine?: GraphExecutionEngine;
+}
+
+/**
+ * Merges the values several data edges route onto one input port.
+ *
+ * Branch joins route mutually-exclusive outputs onto the same port, so at most
+ * one value is defined and it is passed through unchanged. A real fan-in of
+ * item lists appends them in edge order, which is what a list-consuming node
+ * expects from two producers. Mixed or scalar fan-ins have no lossless merge,
+ * so the last defined value wins, as before.
+ *
+ * @param defined - The defined values, in edge order.
+ * @returns The value the target port receives.
+ */
+export function mergeFanInValues(defined: unknown[]): unknown {
+  if (defined.length === 0) return undefined;
+  if (defined.length === 1) return defined[0];
+  if (defined.every((value) => Array.isArray(value))) {
+    return (defined as unknown[][]).flat();
+  }
+  return defined[defined.length - 1];
 }
 
 /**
@@ -372,7 +395,7 @@ export class LocalGraphExecutionBackend
         workflowId: plan.workflowId,
         path,
         status: GraphExecutionStatus.SUCCEEDED,
-        payload: { outputs: valueStore.getWorkflowValues() },
+        payload: { outputs: valueStore.getWorkflowOutputs() },
       });
 
       return buildGraphExecutionResult(
@@ -507,6 +530,16 @@ export class LocalGraphExecutionBackend
     if (opts.usePinnedValues) {
       const cached = await this.tryPinnedValue(frame, plan, planNode, inputs);
       if (cached) {
+        // A pinned value's files are held by the pin; the run reusing them
+        // holds them too, so its binary endpoint serves them.
+        const pinnedStore = this.engine?.binaryStore;
+        if (pinnedStore) {
+          await dehydrateGraphBinaries(
+            cached.outputs,
+            pinnedStore,
+            this.engine?.binaryRunIdOf(frame.runId) ?? frame.runId
+          );
+        }
         frame.valueStore.setNodeOutputs(planNode.id, cached.outputs);
         this.routeOutgoingEdges(
           frame,
@@ -584,17 +617,57 @@ export class LocalGraphExecutionBackend
         opts
       );
 
+      // Values travel between nodes as binary references; a node that reads
+      // bytes gets them back inline. Structural nodes (loops, branches) only
+      // forward values, so they keep the references and never copy bytes.
+      const binaryStore = this.engine?.binaryStore;
+      const binaryRunId = this.engine?.binaryRunIdOf(frame.runId) ?? frame.runId;
+      // Streaming nodes read files through `context.binaries`; structural
+      // nodes only forward them — neither gets hydrated bytes.
+      const executorInputs =
+        binaryStore &&
+        !graphNodeForwardsValues(planNode.manifest) &&
+        !graphNodeStreamsBinaries(planNode.manifest)
+          ? await hydrateGraphBinaries(inputs, binaryStore, binaryRunId)
+          : inputs;
+
       const request: GraphNodeExecutionRequest = {
         nodeId: planNode.id,
         kind: planNode.kind,
-        inputs,
+        inputs: executorInputs,
         parameters,
         credentials: this.collectCredentials(planNode),
         metadata: planNode.instance.metadata,
       };
 
-      const rawOutputs = await this.invokeExecutor(planNode, request, context);
-      const outputs = this.validateNodeOutputs(planNode, rawOutputs ?? {});
+      const nodeStarted = performance.now();
+      let nodeStatus = "succeeded";
+      let rawOutputs: GraphExecutionValues | undefined;
+      try {
+        rawOutputs = await withGraphSpan(
+          "graph.node",
+          {
+            "graph.run.id": frame.runId,
+            "graph.node.id": planNode.id,
+            "graph.node.kind": planNode.kind,
+          },
+          () => this.invokeExecutor(planNode, request, context) as Promise<GraphExecutionValues>
+        );
+      } catch (error) {
+        nodeStatus = "failed";
+        throw error;
+      } finally {
+        graphMetrics.nodeDuration.record((performance.now() - nodeStarted) / 1000, {
+          kind: planNode.kind,
+          status: nodeStatus,
+        });
+      }
+      const validated = this.validateNodeOutputs(planNode, rawOutputs ?? {});
+      // Bytes leave the value flow here: every boundary downstream of this
+      // point (value store, events, results, pins) sees references only.
+      const outputs = binaryStore
+        ? await dehydrateGraphBinaries(validated, binaryStore, binaryRunId)
+        : validated;
 
       frame.valueStore.setNodeOutputs(planNode.id, outputs);
       this.routeOutgoingEdges(frame, plan, planNode, outputs, emitFn);
@@ -917,41 +990,7 @@ export class LocalGraphExecutionBackend
   private collectCredentials(
     planNode: GraphExecutionPlanNode
   ): GraphResolvedCredentials {
-    const credentials: GraphResolvedCredentials = {};
-    for (const parameter of planNode.manifest.parameters) {
-      if (parameter.type !== "credential") continue;
-      const value: unknown = (planNode.instance.parameters ?? {})[
-        parameter.id
-      ];
-      if (typeof value === "string" && value.length > 0) {
-        credentials[parameter.id] = {
-          credentialId: value,
-          credentialType: parameter.credentialType ?? "",
-        };
-      } else if (isGraphCredentialReferenceLike(value)) {
-        credentials[parameter.id] = {
-          credentialId: value.credentialId,
-          credentialType: value.credentialType,
-        };
-      }
-    }
-    const extra = (planNode.instance.metadata ?? {})["credentials"];
-    if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-      for (const [key, raw] of Object.entries(
-        extra as Record<string, GraphJsonValue>
-      )) {
-        const value: unknown = raw;
-        if (typeof value === "string" && value.length > 0) {
-          credentials[key] = { credentialId: value, credentialType: "" };
-        } else if (isGraphCredentialReferenceLike(value)) {
-          credentials[key] = {
-            credentialId: value.credentialId,
-            credentialType: value.credentialType,
-          };
-        }
-      }
-    }
-    return credentials;
+    return collectGraphNodeCredentials(planNode.instance, planNode.manifest);
   }
 
   /**
@@ -970,10 +1009,17 @@ export class LocalGraphExecutionBackend
     planNode: GraphExecutionPlanNode,
     opts: GraphExecutionOptions
   ): Promise<GraphExecutionValues> {
-    const inputs: GraphExecutionValues = {};
     const incoming = (plan.incomingByNode.get(planNode.id) ?? []).filter(
       (edge) => edge.type === "data"
     );
+    // An entry (trigger) node has no upstream producer: the run payload is its
+    // input. Seeding it keeps the local engine consistent with engines that
+    // hand root steps the run's initial data, and gives a trigger something
+    // other than `null` to emit.
+    const inputs: GraphExecutionValues =
+      incoming.length === 0 && graphNodeIsTrigger(planNode.manifest)
+        ? frame.valueStore.getWorkflowInputs()
+        : {};
 
     const edgesByTarget = new Map<string, typeof incoming>();
     for (const edge of incoming) {
@@ -982,6 +1028,9 @@ export class LocalGraphExecutionBackend
       edgesByTarget.set(edge.targetPort, list);
     }
 
+    const declaredInputs = new Set(
+      planNode.manifest.inputs.map((port) => port.id)
+    );
     for (const [targetPort, edges] of edgesByTarget) {
       if (edges.length === 1) {
         inputs[targetPort] = frame.valueStore.getPort(
@@ -989,49 +1038,35 @@ export class LocalGraphExecutionBackend
           edges[0].sourcePort
         );
       } else {
-        let definedValue: unknown;
-        let hasDefined = false;
+        const defined: unknown[] = [];
         for (const edge of edges) {
           const value = frame.valueStore.getPort(
             edge.sourceNodeId,
             edge.sourcePort
           );
-          inputs[edge.sourcePort] = value;
-          if (value !== undefined) {
-            definedValue = value;
-            hasDefined = true;
+          // The source-port spread must never overwrite one of the node's own
+          // declared ports: a workflow input named like a configuration port
+          // would otherwise silently replace that port's value.
+          if (
+            edge.sourcePort === targetPort ||
+            !declaredInputs.has(edge.sourcePort)
+          ) {
+            inputs[edge.sourcePort] = value;
           }
+          if (value !== undefined) defined.push(value);
         }
-        // Branch merges route several mutually-exclusive outputs onto the same
-        // target port (e.g. an if/switch branch). The port-keyed map above
-        // preserves distinct source ports, but the target port must also receive
-        // the single defined branch value so the node reads its own port.
-        if (hasDefined && inputs[targetPort] === undefined) {
-          inputs[targetPort] = definedValue;
-        }
+        inputs[targetPort] = mergeFanInValues(defined);
       }
     }
 
     // Literal bindings, expression bindings, and manifest defaults.
-    const bindings = planNode.instance.inputBindings ?? {};
-    for (const port of planNode.manifest.inputs) {
-      const binding: GraphInputBinding | undefined = bindings[port.id];
-      if (binding?.mode === "literal") {
-        inputs[port.id] = binding.value;
-      } else if (binding?.mode === "expression") {
-        inputs[port.id] = await this.evaluateExpressionBinding(
-          planNode,
-          binding.expression,
-          inputs,
-          opts
-        );
-      } else if (inputs[port.id] === undefined) {
-        const defaultValue = port.metadata?.["defaultValue"];
-        if (defaultValue !== undefined) {
-          inputs[port.id] = defaultValue;
-        }
-      }
-    }
+    await applyGraphInputBindings(
+      planNode.instance,
+      planNode.manifest,
+      inputs,
+      this.codeSandboxEvaluator,
+      { metadata: opts.metadata, abortSignal: opts.abortSignal }
+    );
 
     return inputs;
   }
@@ -1046,86 +1081,12 @@ export class LocalGraphExecutionBackend
     inputs: GraphExecutionValues,
     opts: GraphExecutionOptions
   ): Promise<Record<string, GraphJsonValue>> {
-    const parameters = planNode.instance.parameters ?? {};
-    const resolved: Record<string, GraphJsonValue> = {};
-    for (const [key, value] of Object.entries(parameters)) {
-      resolved[key] = isGraphValueTemplate(value)
-        ? await this.evaluateValueTemplate(value, planNode, inputs, opts)
-        : value;
-    }
-    return resolved;
-  }
-
-  /**
-   * Evaluates a persisted `GraphValueTemplate` with the pluggable
-   * {@link CodeSandboxEvaluator} (DECAF-32 §22.4) — no new evaluator.
-   * `expression` mode evaluates the body directly; `template` mode compiles its
-   * `{{ ... }}` placeholders into a JavaScript template literal evaluated in
-   * the same sandbox, so both modes share the code-evaluator VM.
-   */
-  private async evaluateValueTemplate(
-    template: GraphValueTemplate,
-    planNode: GraphExecutionPlanNode,
-    inputs: GraphExecutionValues,
-    opts: GraphExecutionOptions
-  ): Promise<GraphJsonValue> {
-    const evaluator = this.codeSandboxEvaluator;
-    if (!evaluator) {
-      throw new GraphExecutionError(
-        `Value template on node '${planNode.id}' requires a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator`,
-        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
-        { nodeId: planNode.id }
-      );
-    }
-    const language =
-      template.language ?? graphValueTemplateDefaultLanguage(template.mode);
-    const code =
-      template.mode === "template"
-        ? graphTemplateToExpression(template.expression)
-        : template.expression;
-    const md = opts.metadata as Record<string, unknown> | undefined;
-    const result = await evaluator.evaluate({
-      code,
-      language: language === "typescript" ? "typescript" : "javascript",
-      input: inputs,
-      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
-      item: md?.item,
-      index: md?.index as number | undefined,
-      abortSignal: opts.abortSignal,
-    });
-    return result as GraphJsonValue;
-  }
-
-  /**
-   * Evaluates an expression binding with the EXISTING allowed-expression
-   * machinery only (the pluggable {@link CodeSandboxEvaluator}, DECAF-32
-   * §22.4) — no new evaluator. The expression sees the already-routed input
-   * values as `$input` and the run metadata as context.
-   */
-  private async evaluateExpressionBinding(
-    planNode: GraphExecutionPlanNode,
-    expression: string,
-    inputs: GraphExecutionValues,
-    opts: GraphExecutionOptions
-  ): Promise<unknown> {
-    const evaluator = this.codeSandboxEvaluator;
-    if (!evaluator) {
-      throw new GraphExecutionError(
-        `Expression binding on node '${planNode.id}' requires a CodeSandboxEvaluator to be registered in GraphExecutionEngineConfig.codeSandboxEvaluator`,
-        "GRAPH_CODE_SANDBOX_NOT_CONFIGURED",
-        { nodeId: planNode.id, expression }
-      );
-    }
-    const md = opts.metadata as Record<string, unknown> | undefined;
-    return await evaluator.evaluate({
-      code: expression,
-      language: "javascript",
-      input: inputs,
-      vars: (md?.vars as Record<string, unknown> | undefined) ?? undefined,
-      item: md?.item,
-      index: md?.index as number | undefined,
-      abortSignal: opts.abortSignal,
-    });
+    return resolveGraphNodeParameters(
+      planNode.instance,
+      inputs,
+      this.codeSandboxEvaluator,
+      { metadata: opts.metadata, abortSignal: opts.abortSignal }
+    );
   }
 
   /**
@@ -1326,7 +1287,8 @@ export class LocalGraphExecutionBackend
     return new GraphPinningService(
       store,
       new GraphPinningPolicy(),
-      new GraphPinningDependencyResolver()
+      new GraphPinningDependencyResolver(),
+      this.engine?.binaryStore
     );
   }
 

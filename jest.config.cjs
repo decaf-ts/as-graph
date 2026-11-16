@@ -1,6 +1,9 @@
+/* global require, __dirname */
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node config/script */
+
 const config = {
   verbose: true,
-  // eslint-disable-next-line no-undef
+   
   rootDir: __dirname,
   transform: {
     "^.+\\.ts$": "ts-jest",
@@ -16,6 +19,18 @@ const config = {
     "node_modules/@mastra/.+\\.js$": "ts-jest",
     "node_modules/@ai-sdk/.+\\.js$": "ts-jest",
     "node_modules/@workflow/.+\\.js$": "ts-jest",
+    // NestJS 12 is published as ES modules only (and reads import.meta.url).
+    "node_modules/@nestjs/.+\\.js$": [
+      "babel-jest",
+      {
+        configFile: false,
+        babelrc: false,
+        plugins: [
+          "@babel/plugin-transform-modules-commonjs",
+          require("node:path").join(__dirname, "tests/support/babel-import-meta.cjs"),
+        ],
+      },
+    ],
   },
   testEnvironment: "node",
   // Live integration suites boot mastra and real services; the 5s default
@@ -35,7 +50,7 @@ const config = {
     "/tests/integration/graph/nodes/io/ReadPDFLive.test.ts",
   ],
   transformIgnorePatterns: [
-    "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow)/)",
+    "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow|@nestjs)/)",
   ],
   // as-graph is developed inside the decaf-ts umbrella repo, where `@decaf-ts/*`
   // dependencies exist both in this package's node_modules and in the transitive

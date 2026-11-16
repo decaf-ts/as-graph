@@ -66,7 +66,13 @@ import {
   GRAPH_MASTRA_ENGINE_DISABLED,
   MastraEnvironment,
 } from "./MastraEnvironment";
+import type { GraphExecutionEngine } from "../engine/execution/GraphExecutionEngine";
 import { createMastraNodeStepHandlers } from "./nodes";
+import {
+  MASTRA_UNSUPPORTED_NODE_KINDS,
+  createMastraEngineNeutralStepHandlers,
+  evaluateMastraCodeCondition,
+} from "./MastraEngineNeutralStepHandlers";
 import {
   wireMastraObservability,
   type MastraObservabilityHandle,
@@ -218,8 +224,8 @@ let MASTRA_METRICS_ADAPTER_SEQUENCE = 0;
  * `@mastra/core`-translated execution backend (SAA-196). Translates the
  * canonical document into a Mastra workflow, runs it through the injected Mastra
  * runtime, bridges Mastra's `fullStream` onto the facade event sink, and enforces
- * the SAA-193 resume guard conditions. Code-mode surfaces are not executed:
- * `codeMode` is `unsupported`, so the facade fails closed before delegating.
+ * the SAA-193 resume guard conditions. Code-mode surfaces are evaluated
+ * host-side in the facade's code sandbox (`codeMode` is `hostSide`).
  */
 export class MastraGraphExecutionBackend
   implements GraphExecutionBackend<MastraBackendConfig>
@@ -227,8 +233,13 @@ export class MastraGraphExecutionBackend
   /** Translated backend: never executes in-process. */
   readonly local = false;
 
-  /** Code-mode surfaces are rejected by the facade gate (C3). */
-  readonly codeMode = "unsupported" as const;
+  /**
+   * Code-mode surfaces are evaluated host-side, in the facade's
+   * `CodeSandboxEvaluator`; nothing is evaluated inside the Mastra runtime.
+   * The facade gate fails a code-mode document closed when no sandbox is
+   * configured.
+   */
+  readonly codeMode = "hostSide" as const;
 
   private compiler = new MastraWorkflowCompiler();
   private readonly documents = new Map<string, MastraCatalogueEntry>();
@@ -400,11 +411,23 @@ export class MastraGraphExecutionBackend
     // A missing host service (for example no agent runtime) fails closed at
     // execution with its stable typed error instead of disappearing from the
     // compiled workflow.
+    // Engine-neutral kinds (data, IO, storage, comms, devops, triggers,
+    // utility) run their own node class through the shared executor. They are
+    // registered first so a host handler for the same kind still wins.
+    const engineNeutralStepHandlers = createMastraEngineNeutralStepHandlers({
+      engine: (config as { engine?: GraphExecutionEngine }).engine,
+    });
     const stepHandlers: MastraNodeStepHandler[] = [
+      ...engineNeutralStepHandlers,
       ...hostStepHandlers,
       ...registeredStepHandlers,
     ];
-    this.compiler = new MastraWorkflowCompiler({ stepHandlers });
+    const facade = (config as { engine?: GraphExecutionEngine }).engine;
+    this.compiler = new MastraWorkflowCompiler({
+      stepHandlers,
+      evaluateCodeCondition: async (condition, input, nodeId) =>
+        evaluateMastraCodeCondition(facade, condition, input, nodeId),
+    });
     // SAA-836 O1: wire the mastra engine's observability layer onto the real
     // runtime — langfuse as the default and always-present export target plus
     // the OUR-node isolation exporter. Fails closed on credentials (gate C)
@@ -413,6 +436,14 @@ export class MastraGraphExecutionBackend
     // doubles) are skipped so the general engine keeps booting them unchanged.
     this.observability = await wireMastraObservability(this.runtime);
     this.initialized = true;
+  }
+
+  /**
+   * Engine-neutral kinds the Mastra engine cannot run; the facade drops them
+   * from this engine's catalogue.
+   */
+  unsupportedNodeKinds(): readonly string[] {
+    return MASTRA_UNSUPPORTED_NODE_KINDS;
   }
 
   /**
@@ -726,6 +757,28 @@ export class MastraGraphExecutionBackend
       status,
       resolvedRunOutput,
     });
+
+    // The compiled workflow's final mapping produces the document's workflow
+    // outputs. Record them on the frame, or the run result would report only
+    // the inputs it was started with.
+    if (status === GraphExecutionStatus.SUCCEEDED) {
+      const finalOutput = isRecord(resolvedRunOutput)
+        ? resolvedRunOutput["result"]
+        : undefined;
+      const valueStore = frame.valueStore as
+        | { setWorkflowOutput?: (port: string, value: unknown) => void }
+        | undefined;
+      if (
+        isRecord(finalOutput) &&
+        typeof valueStore?.setWorkflowOutput === "function"
+      ) {
+        for (const port of request.document.outputs ?? []) {
+          if (Object.prototype.hasOwnProperty.call(finalOutput, port.id)) {
+            valueStore.setWorkflowOutput(port.id, finalOutput[port.id]);
+          }
+        }
+      }
+    }
 
     frame.finish();
     return buildGraphExecutionResult(

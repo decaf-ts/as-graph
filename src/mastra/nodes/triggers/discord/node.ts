@@ -45,6 +45,7 @@ export interface DiscordChannelTriggerOutput {
 @node("core.agent.trigger.discord", {
   kind: "core.agent.trigger.discord",
   category: "Agent",
+  capabilities: ["trigger"],
   icon: "ti-brand-discord",
   width: 96,
   height: 96,

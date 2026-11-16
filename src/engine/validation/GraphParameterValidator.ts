@@ -10,6 +10,7 @@
  * validation is invariant under visibility state — hidden or
  * conditionally-hidden parameters are validated exactly like visible ones.
  */
+import { graphConditionProblemsOf } from "../../shared/graph";
 import type {
   GraphCredentialReference,
   GraphJsonValue,
@@ -213,6 +214,46 @@ export class GraphParameterValidator {
   }
 
   /**
+   * Checks the structure of every condition a node instance carries: the
+   * `condition` parameter (or legacy `metadata.condition`) of If, While, Until
+   * and Filter, and each case of a Switch. A value template is left alone —
+   * it resolves to a condition only at run time.
+   */
+  private validateConditions(
+    node: GraphNodeInstance,
+    issues: GraphValidationIssue[],
+    path: string
+  ): void {
+    const report = (value: unknown, where: string): void => {
+      if (value === undefined || value === null) return;
+      if (isGraphValueTemplate(value)) return;
+      for (const problem of graphConditionProblemsOf(value)) {
+        issues.push({
+          code: "parameter.invalid-condition",
+          path: `${path}.${where}`,
+          message: `Node '${node.id}' has an invalid condition: ${problem}`,
+          nodeId: node.id,
+        });
+      }
+    };
+    report(node.parameters?.["condition"], "parameters.condition");
+    report(node.metadata?.["condition"], "metadata.condition");
+    const cases =
+      node.parameters?.["cases"] ??
+      (node.metadata?.["switch"] as { cases?: unknown } | undefined)?.cases;
+    if (node.kind === "core.flow.switch" && Array.isArray(cases)) {
+      cases.forEach((entry, index) => {
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          report(
+            (entry as Record<string, unknown>)["condition"],
+            `parameters.cases[${index}].condition`
+          );
+        }
+      });
+    }
+  }
+
+  /**
    * Declared-ness, required presence, typing, and declarative validation
    * rules for parameter values. Validation is visibility-invariant: hidden
    * parameters are validated identically (visibility cannot bypass
@@ -234,6 +275,7 @@ export class GraphParameterValidator {
     path: string,
     edgeSatisfiedInputPorts?: ReadonlySet<string>
   ): void {
+    this.validateConditions(node, issues, path);
     const allowUndeclared =
       manifest.policies?.allowUndeclaredParameters === true;
     const declared = new Map(

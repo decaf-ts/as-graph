@@ -139,6 +139,7 @@ const CASES: KindCase[] = [
       "query",
       "body",
       "responseFormat",
+      "fileName",
       "timeoutMs",
       "failOnError",
     ],

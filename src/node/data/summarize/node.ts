@@ -6,7 +6,7 @@
  * a single nested record. The aggregation engine is shared with the Item
  * Lists node through `transform-utils`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -117,6 +117,7 @@ export class SummarizeNode extends GraphNode<
   fieldsToSplitBy?: string | string[];
 
   /** Emit one item per group or one nested record (default `separateItems`). */
+  @option(["separateItems", "singleItem"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.data.summarize.fields.outputFormat.label",
     type: "select",

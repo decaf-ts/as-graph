@@ -4,9 +4,12 @@
  * normal jest suite (`jest.config.cjs` matches `(test|spec|e2e)` only, so the
  * eval files never run with it). Run with `npm run test:evals`.
  */
+/* global require, __dirname */
+/* eslint-disable @typescript-eslint/no-require-imports -- plain Node config/script */
+
 const config = {
   verbose: true,
-  // eslint-disable-next-line no-undef
+   
   rootDir: __dirname,
   transform: {
     "^.+\\.ts$": "ts-jest",
@@ -19,6 +22,18 @@ const config = {
     "node_modules/@mastra/.+\\.js$": "ts-jest",
     "node_modules/@ai-sdk/.+\\.js$": "ts-jest",
     "node_modules/@workflow/.+\\.js$": "ts-jest",
+    // NestJS 12 is published as ES modules only (and reads import.meta.url).
+    "node_modules/@nestjs/.+\\.js$": [
+      "babel-jest",
+      {
+        configFile: false,
+        babelrc: false,
+        plugins: [
+          "@babel/plugin-transform-modules-commonjs",
+          require("node:path").join(__dirname, "tests/support/babel-import-meta.cjs"),
+        ],
+      },
+    ],
     // The mastra `.cjs` chunks (DatasetsManager/agent/tools/workspace) call
     // dynamic `import()` (e.g. `await import("p-map")` in the datasets
     // manager). Node refuses dynamic import inside jest's VM
@@ -32,7 +47,7 @@ const config = {
   testRegex: "/tests/evals/.*\\.eval\\.ts$",
   testPathIgnorePatterns: ["/node_modules/", "/n8n/"],
   transformIgnorePatterns: [
-    "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow)/)",
+    "node_modules/(?!(jose|@mastra|@ai-sdk|@workflow|@nestjs)/)",
   ],
   // Pin every bare `@decaf-ts/*` import to this package's own copy so the whole
   // test graph shares one instance of each package (same rationale as the main

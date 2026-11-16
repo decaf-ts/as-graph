@@ -6,6 +6,7 @@
 import { model, required } from "@decaf-ts/decorator-validation";
 import { node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { triggerRunPayload } from "../support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -49,12 +50,12 @@ export class EventTriggerNode extends GraphNode<
    * Returns the event-bus payload supplied by the run caller.
    *
    * @param {GraphNodeExecutionRequest<EventTriggerInput>} request - Execution request carrying the event payload.
-   * @return {GraphExecutionValues} The `payload` output value (null when absent).
+   * @return {GraphExecutionValues} The `payload` output value (the whole run input when no `payload` field is sent, `null` when the run carries no input).
    */
   override execute(
     request: GraphNodeExecutionRequest<EventTriggerInput>
   ): GraphExecutionValues {
-    return { payload: request.inputs["payload"] ?? null };
+    return { payload: triggerRunPayload(request.inputs) };
   }
 
   /** Output carrying the event-bus topic payload. */

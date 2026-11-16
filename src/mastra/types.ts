@@ -25,6 +25,7 @@ import type { GraphWorkflowDocument } from "../shared/graph/document/GraphWorkfl
 import type { MastraWorkflowCompiler } from "./MastraWorkflowCompiler";
 import type { MastraAgentRuntime } from "./MastraAgentStepHandler";
 import type { MastraModelAdapterConfig } from "./MastraAgentModelAdapter";
+import type { MastraAgentZoneWiring } from "./MastraAgentZones";
 import type {
   MastraMemoryConfig,
   MastraMemoryEmbedder,
@@ -169,6 +170,14 @@ export const GRAPH_MASTRA_MEMORY_VECTOR_REQUIRED =
  */
 export const GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED =
   "GRAPH_MASTRA_MEMORY_EMBEDDER_REQUIRED";
+
+/**
+ * An embedding node is wired onto a memory's `embedding` zone but cannot be
+ * used: it declares no `provider`/`modelId`, or the memory does not enable
+ * semantic recall (the only consumer of a memory embedder).
+ */
+export const GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID =
+  "GRAPH_MASTRA_MEMORY_EMBEDDING_INVALID";
 /**
  * A wired input/output processor or guardrail could not be resolved into a
  * real mastra processor (SAA-836 M5): unknown type, or a model-carrying type
@@ -342,7 +351,8 @@ export interface MastraBackendConfig extends Record<string, unknown> {
   createAgent?: (
     adapter: MastraModelAdapterConfig | undefined,
     node: GraphNodeInstance,
-    memories?: readonly unknown[]
+    memories?: readonly unknown[],
+    zones?: MastraAgentZoneWiring
   ) => unknown | Promise<unknown>;
   /**
    * Optional named memory map used by the `core.agent` step handler (SAA-836

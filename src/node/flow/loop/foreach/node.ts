@@ -22,6 +22,7 @@ import type {
 } from "../../../../engine/types";
 import { GraphExecutionEventType } from "../../../../shared/graph";
 import { GraphExecutionError } from "../../../../engine/errors/GraphExecutionError";
+import { assertChildRunSucceeded } from "../../child-run";
 import { GraphInputError } from "../../../../engine/errors/GraphInputError";
 import { GraphLoopLimitError } from "../../../../engine/errors/GraphLoopLimitError";
 import { extractLoopMetadata, resolveLoopMaxIterations } from "../loop-metadata";
@@ -136,16 +137,19 @@ export class GraphForeachLoopNode extends GraphNode<
       if (state !== undefined) childInputs[statePort] = state;
 
       try {
-        const childResult = await engine.execute(
-          bodyWorkflow,
-          childInputs,
-          {
-            parentRunId: context.runId,
-            path: [...context.path, `iteration:${i}`],
-            metadata: { item: sliceItems, index: i, slice },
-            auth: context.auth,
-          },
-          context
+        const childResult = assertChildRunSucceeded(
+          await engine.execute(
+            bodyWorkflow,
+            childInputs,
+            {
+              parentRunId: context.runId,
+              path: [...context.path, `iteration:${i}`],
+              metadata: { item: sliceItems, index: i, slice },
+              auth: context.auth,
+            },
+            context
+          ),
+          `foreach iteration ${i}`
         );
 
         results.push(childResult.outputs[resultPort]);
@@ -209,8 +213,10 @@ export class GraphForeachLoopNode extends GraphNode<
   @input({ handle: "slice" })
   slice!: number;
 
-  /** Per-iteration output carrying the current entry (or slice) to the body workflow. */
-  @required()
+  /**
+   * Body-entry port: the current entry (or slice), visible to the loop body
+   * only. The node never emits it to downstream nodes.
+   */
   @output({ handle: "item" })
   item!: unknown;
 
@@ -226,6 +232,26 @@ export class GraphForeachLoopNode extends GraphNode<
   @required()
   @output({ handle: "completed" })
   completed!: unknown[];
+
+  /** Every iteration's body output, in order (alias of `completed`). */
+  @output({ handle: "results" })
+  results!: unknown[];
+
+  /** How many iterations ran. */
+  @output({ handle: "iterations", type: "number" })
+  iterations!: number;
+
+  /** Whether a break node ended the loop early. */
+  @output({ handle: "broken", type: "boolean" })
+  broken!: boolean;
+
+  /** Initial value of the state carried from one iteration to the next. */
+  @input({ handle: "state" })
+  state?: unknown;
+
+  /** The carried state after the last iteration. */
+  @output({ handle: "state" })
+  stateOut?: unknown;
 
   /** Upper bound on iterations; falls back to the engine default when unset. */
   @uielement("ngx-decaf-crud-field", {

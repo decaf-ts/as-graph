@@ -72,7 +72,8 @@ describe("core.agent structured-output wiring (SAA-836 S1)", () => {
     await step.execute({ inputData: { prompt: "hi" } });
 
     expect(executes).toHaveLength(1);
-    expect(executes[0]).toHaveLength(6);
+    // node, inputs, signal, processors, memories, structured output, zones.
+    expect(executes[0]).toHaveLength(7);
     const structuredOutput = executes[0][5] as MastraResolvedStructuredOutput;
     expect(
       Object.keys((structuredOutput.schema as z.ZodObject).shape).sort()

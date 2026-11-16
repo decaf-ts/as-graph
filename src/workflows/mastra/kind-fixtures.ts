@@ -54,6 +54,12 @@ export interface MastraKindFixtureSpec {
   expectedGraphCode?: string;
   /** Node parameter carrying the required `resumeSchema` when present. */
   resumeSchema?: GraphJsonValue;
+  /**
+   * Runtime values routed onto expose-as-port configuration fields, keyed by
+   * port id. A wired value is honoured as configuration, so only meaningful
+   * values belong here.
+   */
+  wired?: Record<string, GraphJsonValue>;
 }
 
 /** Slugs the kind into a stable fixture id. */
@@ -112,10 +118,21 @@ function buildKindDocument(spec: MastraKindFixtureSpec): {
   const inputs: Record<string, GraphJsonValue> = {};
   const workflowInputs = manifest.inputs.map((inputPort) => {
     const id = `in-${inputPort.id}`;
-    inputs[id] =
-      inputPort.id === "resumeSchema" && spec.resumeSchema !== undefined
-        ? spec.resumeSchema
-        : inputValueFor(inputPort.id);
+    if (inputPort.id === "resumeSchema" && spec.resumeSchema !== undefined) {
+      inputs[id] = spec.resumeSchema;
+    } else if (inputPort.configurable !== true) {
+      // A data port gets a placeholder value to flow through the node.
+      inputs[id] = inputValueFor(inputPort.id);
+    } else if (spec.wired?.[inputPort.id] !== undefined) {
+      // A runtime value the workflow deliberately routes onto the field.
+      inputs[id] = spec.wired[inputPort.id];
+    } else if (parameters[inputPort.id] !== undefined) {
+      // An expose-as-port configuration field is wired too, and a wired value
+      // is honoured as configuration — so it carries the real configured
+      // value, never a placeholder string. Left without one, the port stays
+      // unfed and the node falls back to its own default.
+      inputs[id] = parameters[inputPort.id];
+    }
     return port(id, {
       label: `${inputPort.label} (${spec.kind})`,
       ...(inputPort.schema ? { schema: inputPort.schema } : {}),
@@ -204,6 +221,7 @@ function buildKindFixture(spec: MastraKindFixtureSpec): GraphWorkflowFixture {
  */
 export const MASTRA_KIND_FIXTURE_SPECS: readonly MastraKindFixtureSpec[] = [
   { kind: "core.agent", hostServices: ["agent", "createAgent"], capabilities: ["agentLlmNode", "agentToolBuilders"] },
+  { kind: "core.agent.subAgent", capabilities: ["agentToolBuilders"] },
   { kind: "core.agent.tool", capabilities: ["agentToolBuilders"] },
   { kind: "core.agent.toolSelector", capabilities: ["agentToolBuilders"] },
   { kind: "core.agent.hook", capabilities: ["agentToolBuilders"] },
@@ -217,7 +235,18 @@ export const MASTRA_KIND_FIXTURE_SPECS: readonly MastraKindFixtureSpec[] = [
   { kind: "core.agent.memory", hostServices: ["createMemory"], capabilities: ["memoryStorage"] },
   { kind: "core.agent.memorySelector", hostServices: ["createMemory"], capabilities: ["memoryStorage"] },
   { kind: "core.agent.embedding", hostServices: ["rag", "embedText"], capabilities: ["embeddings"] },
-  { kind: "core.agent.vectorStore", hostServices: ["rag"], capabilities: ["vectorStores"] },
+  {
+    kind: "core.agent.vectorStore",
+    hostServices: ["rag", "embedText"],
+    capabilities: ["vectorStores"],
+    // The fixture feeds documents, so the store really inserts: it needs a
+    // provider and an embedding configuration.
+    parameters: {
+      provider: "memory",
+      indexName: "fixture-vector-store",
+      embedding: { provider: "fixture", modelId: "fixture-embedding" },
+    },
+  },
   { kind: "core.agent.retriever", hostServices: ["rag"], capabilities: ["vectorStores", "ragChains"] },
   { kind: "core.agent.chunking", hostServices: ["rag"], capabilities: ["ragChains"] },
   { kind: "core.agent.rerank", hostServices: ["rag", "rerankDocuments"], capabilities: ["ragChains"] },
@@ -244,10 +273,10 @@ export const MASTRA_KIND_FIXTURE_SPECS: readonly MastraKindFixtureSpec[] = [
   { kind: "core.agent.trigger.discord", hostServices: ["channel", "resolveChannelAdapter"], capabilities: ["channelTriggers"] },
   { kind: "core.agent.trigger.telegram", hostServices: ["channel", "resolveChannelAdapter"], capabilities: ["channelTriggers"] },
   { kind: "core.agent.trigger.teams", hostServices: ["channel", "resolveChannelAdapter"], capabilities: ["channelTriggers"] },
-  { kind: "core.agent.response.slack", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"] },
-  { kind: "core.agent.response.discord", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"] },
-  { kind: "core.agent.response.telegram", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"] },
-  { kind: "core.agent.response.teams", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"] },
+  { kind: "core.agent.response.slack", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"], wired: { threadId: "threadId-value" } },
+  { kind: "core.agent.response.discord", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"], wired: { threadId: "threadId-value" } },
+  { kind: "core.agent.response.telegram", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"], wired: { threadId: "threadId-value" } },
+  { kind: "core.agent.response.teams", hostServices: ["channel", "sendChannelResponse"], capabilities: ["channelResponses"], wired: { threadId: "threadId-value" } },
   { kind: "core.agent.voice", hostServices: ["voice", "resolveVoice"], capabilities: ["voice"] },
 ];
 

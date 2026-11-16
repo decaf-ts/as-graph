@@ -29,3 +29,37 @@ export function graphNodeRequiresMastraEngine(kind: string): boolean {
     kind.startsWith(`${GRAPH_MASTRA_ONLY_KIND_PREFIX}.`)
   );
 }
+
+/**
+ * Whether a node kind is a workflow entry (trigger) node.
+ *
+ * Read from the compiled manifest's `capabilities`, never from the kind name:
+ * a trigger declares the capability through its `@node` metadata (category
+ * `Trigger`, or an explicit `capabilities: ["trigger"]`). An entry node has no
+ * upstream producer, so the engine hands it the run payload as its inputs.
+ *
+ * @param manifest - The node's resolved manifest (only `capabilities` is read).
+ * @returns `true` when the kind declares the `trigger` capability.
+ */
+export function graphNodeIsTrigger(
+  manifest: { capabilities?: readonly string[] } | undefined
+): boolean {
+  return manifest?.capabilities?.includes("trigger") === true;
+}
+
+/**
+ * Whether a node kind only forwards the values it receives.
+ *
+ * Loop and branching nodes route their input to a nested run or to one of
+ * their output ports without reading it, so the engine leaves binary
+ * references un-hydrated for them instead of copying bytes they never touch.
+ *
+ * @param manifest - The node's resolved manifest (only `capabilities` is read).
+ * @returns `true` when the kind declares the `loop` or `branching` capability.
+ */
+export function graphNodeForwardsValues(
+  manifest: { capabilities?: readonly string[] } | undefined
+): boolean {
+  const capabilities = manifest?.capabilities ?? [];
+  return capabilities.includes("loop") || capabilities.includes("branching");
+}

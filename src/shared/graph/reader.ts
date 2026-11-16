@@ -30,6 +30,57 @@ function resolveModel<M extends Model>(model: GraphModelLike<M>): Constructor<M>
   return model as Constructor<M>;
 }
 
+/**
+ * Lists every decorated property of a constructor, inherited ones first.
+ *
+ * `Metadata.properties` answers from the constructor's own property index as
+ * soon as that index is non-empty, so a node class that declares properties of
+ * its own shadows the ports, fields and state its base class declares (a
+ * storage node extending a shared base lost the base's `operation` input and
+ * every output). Walking the prototype chain and merging each level restores
+ * the inherited declarations, base class first so a base's default data input
+ * keeps its position ahead of the subclass's configuration fields.
+ *
+ * @param resolved - The constructor whose decorated properties are listed.
+ * @returns The property names, base-class declarations first, without
+ * duplicates, minus the properties the class drops with
+ * `@node({ omitPorts })`.
+ */
+function graphPropertiesOf(resolved: Constructor<Model>): string[] {
+  const chain: Constructor<Model>[] = [];
+  let current: unknown = resolved;
+  while (typeof current === "function" && current !== Function.prototype) {
+    chain.unshift(current as Constructor<Model>);
+    current = Object.getPrototypeOf(current);
+  }
+  // A subclass may drop inherited properties (`@node({ omitPorts })`).
+  let omitted: readonly string[];
+  try {
+    omitted =
+      (Metadata.get(resolved, GraphKeys.NODE) as GraphNodeMetadata | undefined)
+        ?.omitPorts ?? [];
+  } catch {
+    omitted = [];
+  }
+  const seen = new Set<string>(omitted);
+  const result: string[] = [];
+  for (const ctor of chain) {
+    let properties: unknown[] | undefined;
+    try {
+      properties = Metadata.properties(ctor);
+    } catch {
+      properties = undefined;
+    }
+    for (const property of properties ?? []) {
+      const key = String(property);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(key);
+    }
+  }
+  return result;
+}
+
 function asString(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   return typeof value === "string" ? value : String(value);
@@ -157,7 +208,7 @@ export function graphStatePropertiesOf<M extends Model>(
   model: GraphModelLike<M>
 ): string[] {
   const resolved = resolveModel(model);
-  const properties = Metadata.properties(resolved) || [];
+  const properties = graphPropertiesOf(resolved);
   return properties
     .map((property) => String(property))
     .filter((property) => !!graphStateMetadataOf(resolved, property));
@@ -286,7 +337,7 @@ function graphPortsOfInternal(
   resolved: Constructor<Model>,
   visited: Set<Constructor<Model>> = new Set()
 ): GraphPortDefinition[] {
-  const properties = Metadata.properties(resolved) || [];
+  const properties = graphPropertiesOf(resolved);
   const result: GraphPortDefinition[] = [];
   for (const property of properties) {
     const key = String(property);
@@ -302,6 +353,91 @@ function graphPortsOfInternal(
     }
     const port = graphPortDefinitionOfInternal(resolved, key, visited);
     if (port) result.push(port);
+  }
+  return result;
+}
+
+/**
+ * Lists a node class's user-changeable properties that are not ports.
+ *
+ * A property carrying `@uielement` but no port decorator is a configuration
+ * field only (§0.2 R5 category 2): it has a form control and a persisted
+ * value, and no canvas port. It is described with the same shape a port has
+ * (label, type, validation, element) minus a direction, so the manifest
+ * compiler can publish it as a parameter. Fields of a Schema-typed
+ * `@input`/`@output` carrier are included, unprefixed, like the carrier's
+ * ports are. Hidden properties are skipped.
+ *
+ * @param model - The node class or an instance of it.
+ * @returns The field definitions, in declaration order.
+ */
+export function graphFieldDefinitionsOf<M extends Model>(
+  model: GraphModelLike<M>
+): GraphPortDefinition[] {
+  return graphFieldsOfInternal(resolveModel(model), new Set());
+}
+
+function fieldDefaultsOf(
+  resolved: Constructor<Model>
+): Record<string, unknown> {
+  try {
+    return new (resolved as unknown as new () => Record<string, unknown>)();
+  } catch {
+    return {};
+  }
+}
+
+function graphFieldsOfInternal(
+  resolved: Constructor<Model>,
+  visited: Set<Constructor<Model>>
+): GraphPortDefinition[] {
+  if (visited.has(resolved)) return [];
+  visited.add(resolved);
+  const result: GraphPortDefinition[] = [];
+  // Property initializers are the field defaults (R8); they exist only on an
+  // instance.
+  const defaults = fieldDefaultsOf(resolved);
+  for (const key of graphPropertiesOf(resolved)) {
+    const graph = graphPortMetadataOf(resolved, key);
+    const validation = (Metadata as any).validationFor(resolved, key) as
+      | Record<string, any>
+      | undefined;
+    if (graph) {
+      if (!graph.schema) continue;
+      const nested = resolveNestedModelConstructor(resolved, key, validation);
+      if (nested) result.push(...graphFieldsOfInternal(nested, visited));
+      continue;
+    }
+    const element = ((Model as any).uiElementOf(resolved, key) ||
+      undefined) as Record<string, any> | undefined;
+    if (!element) continue;
+    if ((Model as any).uiIsHidden(resolved, key)) continue;
+    const uiProp = (Model as any).uiDecorationOf(resolved, key, UIKeys.PROP) as
+      | Record<string, any>
+      | undefined;
+    const designType = Metadata.type(resolved, key);
+    const typeName = asString(
+      validation?.[ValidationKeys.TYPE]?.customTypes?.[0]?.name ??
+        element?.props?.type ??
+        uiProp?.type ??
+        designType?.name
+    );
+    result.push({
+      property: key,
+      path: key,
+      name: key,
+      label: pickLabel(element, uiProp, key),
+      type: typeName?.toLowerCase(),
+      required: !!validation?.[ValidationKeys.REQUIRED],
+      hidden: false,
+      designType: designType?.name,
+      element,
+      prop:
+        defaults[key] !== undefined && uiProp?.["value"] === undefined
+          ? { ...(uiProp ?? {}), value: defaults[key] }
+          : uiProp,
+      validation,
+    } as unknown as GraphPortDefinition);
   }
   return result;
 }
@@ -391,7 +527,7 @@ function resolvePortGroups(
   const declared = graph.portGroups || [];
   const declaredByProperty = new Map(declared.map((g) => [g.property, g]));
   const groups: GraphPortGroupMetadata[] = [];
-  const properties = Metadata.properties(resolved) || [];
+  const properties = graphPropertiesOf(resolved);
   for (const property of properties) {
     const key = String(property);
     const portMeta = graphPortMetadataOf(resolved, key);

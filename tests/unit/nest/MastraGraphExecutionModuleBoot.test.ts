@@ -110,7 +110,7 @@ describe("MastraGraphExecutionModule boot (SAA-836 O1)", () => {
     expect(backend).toBeInstanceOf(MastraGraphExecutionBackend);
     expect((backend as MastraGraphExecutionBackend).ready).toBe(true);
     expect(backend.local).toBe(false);
-    expect(backend.codeMode).toBe("unsupported");
+    expect(backend.codeMode).toBe("hostSide");
 
     const capability = moduleRef.get(GraphEngineCapabilityService, {
       strict: false,

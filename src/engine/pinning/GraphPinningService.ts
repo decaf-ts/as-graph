@@ -17,7 +17,15 @@ import { GraphPinningError } from "../errors/GraphPinningError";
 import type { GraphExecutionPlan } from "../planning/GraphExecutionPlan";
 import type { GraphExecutionPlanNode } from "../planning/GraphExecutionPlanNode";
 import { GraphTopology } from "../planning/GraphTopology";
-import type { GraphValueRepository } from "../store/GraphValueRepository";
+import {
+  serializeGraphValueKey,
+  type GraphValueRepository,
+} from "../store/GraphValueRepository";
+import {
+  graphBinaryIdsOf,
+  graphBinaryPinHolder,
+  type GraphBinaryStore,
+} from "../binary/GraphBinaryStore";
 import type { GraphValueKey } from "../store/GraphValueKey";
 import type { GraphCachedValue } from "../store/GraphCachedValue";
 import type {
@@ -37,8 +45,35 @@ export class GraphPinningService {
   constructor(
     private readonly store: GraphValueRepository,
     private readonly policy: GraphPinningPolicy,
-    private readonly dependencyResolver: GraphPinningDependencyResolver
+    private readonly dependencyResolver: GraphPinningDependencyResolver,
+    private readonly binaryStore?: GraphBinaryStore
   ) {}
+
+  /**
+   * Makes a pin the holder of the files its outputs reference, replacing what
+   * an earlier pin under the same key held. A held file outlives the runs that
+   * produced it (run pruning releases only the run's own hold) until the pin
+   * is removed.
+   */
+  private async holdPinnedBinaries(
+    key: GraphValueKey,
+    outputs: GraphExecutionValues
+  ): Promise<void> {
+    if (!this.binaryStore) return;
+    const holder = graphBinaryPinHolder(serializeGraphValueKey(key));
+    await this.binaryStore.releaseHolder(holder);
+    for (const id of graphBinaryIdsOf(outputs)) {
+      await this.binaryStore.hold(holder, id);
+    }
+  }
+
+  /** Releases the files a pin held (they are deleted once nothing else holds them). */
+  private async releasePinnedBinaries(key: GraphValueKey): Promise<void> {
+    if (!this.binaryStore) return;
+    await this.binaryStore.releaseHolder(
+      graphBinaryPinHolder(serializeGraphValueKey(key))
+    );
+  }
 
   /**
    * Pins a node and all its upstream dependencies.
@@ -89,6 +124,7 @@ export class GraphPinningService {
         updatedAt: now,
         metadata: { ...options.result.metadata, nodeId },
       };
+      await this.holdPinnedBinaries(key, result.outputs);
       await this.store.writeCached(key, cached);
     }
   }
@@ -104,12 +140,34 @@ export class GraphPinningService {
       namespace: options.namespace,
     };
     await this.store.deleteCached(key);
+    await this.releasePinnedBinaries(key);
   }
 
   /**
    * Reads a pinned value for a node, returning `undefined` when no valid
    * pinned value exists.
    */
+  /**
+   * Deletes every pinned value whose `expiresAt` has passed and releases the
+   * files it held (batched; bounded per call).
+   *
+   * @param now - The reference time (default: now).
+   * @returns The number of expired pins removed.
+   */
+  async sweepExpired(now: Date = new Date()): Promise<number> {
+    let removed = 0;
+    for (let round = 0; round < 100; round++) {
+      const batch = await this.store.listExpiredPins(now, 500);
+      for (const value of batch) {
+        await this.store.deleteCached(value.key);
+        await this.releasePinnedBinaries(value.key);
+        removed++;
+      }
+      if (batch.length < 500) break;
+    }
+    return removed;
+  }
+
   async readPinnedValue(
     workflowId: string,
     node: GraphExecutionPlanNode,
@@ -121,6 +179,9 @@ export class GraphPinningService {
     const cached = await this.store.readCached(key);
     if (cached && cached.pinned) {
       if (cached.expiresAt && new Date(cached.expiresAt) < new Date()) {
+        // An expired pin is dropped, with the files it held.
+        await this.store.deleteCached(key);
+        await this.releasePinnedBinaries(key);
         return undefined;
       }
       return cached;

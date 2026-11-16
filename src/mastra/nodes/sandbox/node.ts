@@ -10,7 +10,7 @@
  * which resolves the configuration into the mastra sandbox resource on a real
  * output port (R9); the Mastra step adapter invokes that `execute()`.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { connection, input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../../node/base";
@@ -115,6 +115,7 @@ export class AgentSandboxNode extends GraphNode<
   workingDirectory?: string;
 
   /** The sandbox isolation mode. */
+  @option(["none", "seatbelt", "bwrap"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.agent.sandbox.fields.isolation.label",
     type: "select",

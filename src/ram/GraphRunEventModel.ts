@@ -11,6 +11,7 @@ import {
   column,
   index,
   noValidateOnUpdate,
+  OrderDirection,
   pk,
   table,
 } from "@decaf-ts/core";
@@ -28,6 +29,7 @@ export class GraphRunEventModel extends BaseModel {
   /** Run the event belongs to (indexed). */
   @column()
   @index()
+  @index([OrderDirection.ASC, OrderDirection.DSC], ["sequence"])
   runId!: string;
 
   /** Workflow the run executes. */

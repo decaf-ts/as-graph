@@ -105,9 +105,25 @@ export class AgentVoiceNode extends GraphNode<AgentVoiceInput, AgentVoiceOutput>
   listeningModel?: Record<string, unknown>;
 
   /** Output carrying the resolved mastra voice surface (R9). */
+  /** Text to speak. When routed, the node emits the spoken `audio`. */
+  @input({ handle: "text" })
+  text?: unknown;
+
+  /** Audio to transcribe (a binary payload). When routed, the node emits `transcript`. */
+  @input({ handle: "audio" })
+  audio?: unknown;
+
   @required()
   @output({ handle: "resource" })
   resource!: unknown;
+
+  /** The spoken audio as a binary payload; present when `text` was routed. */
+  @output({ handle: "audio" })
+  audioOut?: unknown;
+
+  /** The transcript; present when `audio` was routed. */
+  @output({ handle: "transcript" })
+  transcript?: unknown;
 }
 
 /** All built-in voice node constructors. */

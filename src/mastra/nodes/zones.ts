@@ -10,7 +10,10 @@
  * category strings. The `inputProcessors`/`outputProcessors` zones (SAA-836 M5)
  * carry mastra's input (preprocessor) and output (post-processor) pipelines;
  * guardrail kinds connect on the `outputProcessors` zone, composing with the
- * output-processor pipeline.
+ * output-processor pipeline. The `subagents` zone takes `core.agent.subAgent`
+ * nodes (mastra's supervisor `agents`). `embedding` is not an agent zone: it
+ * is the zone on the memory node (`core.agent.memory`) that takes the
+ * embedding model semantic recall uses.
  */
 
 /** A mastra agent connection-port zone category. */
@@ -24,17 +27,21 @@ export const MASTRA_AGENT_ZONE = {
   skill: "skill",
   inputProcessors: "inputProcessors",
   outputProcessors: "outputProcessors",
+  subagents: "subagents",
 } as const;
 
 /** Union of the canonical mastra agent zone categories. */
 export type MastraAgentZone =
   (typeof MASTRA_AGENT_ZONE)[keyof typeof MASTRA_AGENT_ZONE];
 
-/** Every canonical mastra agent zone category, in palette order. */
+/**
+ * Every zone category the agent node itself declares, in palette order
+ * (`embedding` lives on the memory node).
+ */
 export const MASTRA_AGENT_ZONES: readonly MastraAgentZone[] = [
   MASTRA_AGENT_ZONE.memory,
   MASTRA_AGENT_ZONE.scorers,
-  MASTRA_AGENT_ZONE.embedding,
+  MASTRA_AGENT_ZONE.subagents,
   MASTRA_AGENT_ZONE.hooks,
   MASTRA_AGENT_ZONE.sandbox,
   MASTRA_AGENT_ZONE.tools,

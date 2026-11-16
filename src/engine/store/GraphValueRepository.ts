@@ -9,6 +9,8 @@
  * on this repository.
  */
 import {
+  Condition,
+  OrderDirection,
   Repository,
   repository,
   type Adapter,
@@ -90,6 +92,7 @@ export class GraphValueRepository extends Repository<
   Adapter<any, any, any, any>
 > {
   private readonly runtimeValues = new Map<string, GraphExecutionValues>();
+  private workflowInputs: GraphExecutionValues = {};
 
   /**
    * @param adapter - The Decaf adapter backing cached/pinned value persistence.
@@ -102,7 +105,21 @@ export class GraphValueRepository extends Repository<
 
   /** Seeds the workflow input values for the current execution. */
   seedWorkflowInputs(inputs: GraphExecutionValues): void {
+    this.workflowInputs = { ...inputs };
     this.runtimeValues.set(GRAPH_WORKFLOW_BOUNDARY, { ...inputs });
+  }
+
+  /**
+   * Returns the values the run was started with, exactly as seeded.
+   *
+   * The workflow boundary record also accumulates routed workflow outputs, so
+   * it cannot answer "what did the caller send". Entry (trigger) nodes read the
+   * run payload from here.
+   *
+   * @returns A copy of the seeded workflow inputs.
+   */
+  getWorkflowInputs(): GraphExecutionValues {
+    return { ...this.workflowInputs };
   }
 
   /** Stores the outputs produced by a node for the current execution. */
@@ -128,6 +145,21 @@ export class GraphValueRepository extends Repository<
     const current = this.runtimeValues.get(GRAPH_WORKFLOW_BOUNDARY) ?? {};
     current[port] = value;
     this.runtimeValues.set(GRAPH_WORKFLOW_BOUNDARY, current);
+    this.workflowOutputPorts.add(port);
+  }
+
+  /** Workflow output ports a value was routed to during this run. */
+  private readonly workflowOutputPorts = new Set<string>();
+
+  /**
+   * Returns only the values routed to workflow output ports — what a run
+   * result reports as its outputs (the run inputs are reported separately).
+   */
+  getWorkflowOutputs(): GraphExecutionValues {
+    const boundary = this.runtimeValues.get(GRAPH_WORKFLOW_BOUNDARY) ?? {};
+    return Object.fromEntries(
+      [...this.workflowOutputPorts].map((port) => [port, boundary[port]])
+    );
   }
 
   /** Returns all workflow-level values (inputs merged with outputs). */
@@ -193,6 +225,30 @@ export class GraphValueRepository extends Repository<
     ...args: MaybeContextualArg<Context>
   ): Promise<boolean> {
     return (await this.readCached(key, ...args)) !== undefined;
+  }
+
+  /**
+   * One batch of pinned values whose `expiresAt` has passed — an indexed
+   * query on `expiresAt`, oldest first.
+   *
+   * @param now - The reference time.
+   * @param limit - Batch size.
+   */
+  async listExpiredPins(
+    now: Date,
+    limit: number,
+    ...args: MaybeContextualArg<Context>
+  ): Promise<GraphCachedValue[]> {
+    const models = (await this.select()
+      .where(
+        Condition.attr<GraphValueModel>("pinned")
+          .eq(true)
+          .and(Condition.attr<GraphValueModel>("expiresAt").lt(now))
+      )
+      .orderBy("expiresAt", OrderDirection.ASC)
+      .limit(limit)
+      .execute(...args)) as GraphValueModel[];
+    return models.map((model) => toCached(model));
   }
 
   /** Lists cached values matching a prefix of the key. */

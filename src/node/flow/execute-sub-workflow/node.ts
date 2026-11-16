@@ -16,7 +16,7 @@
  * also expose the last child's full `outputs` and its `childRunId` for
  * correlation.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import type { GraphWorkflowDocument } from "../../../shared/graph";
@@ -27,6 +27,7 @@ import type {
 } from "../../../engine/types";
 import type { GraphExecutionContext } from "../../../engine/execution/GraphExecutionContext";
 import { GraphExecutionError } from "../../../engine/errors/GraphExecutionError";
+import { assertChildRunSucceeded } from "../child-run";
 import { asGraphDataArray, isGraphDataRecord } from "../../data/support";
 
 /** Whether the child workflow runs once or once per input item. */
@@ -114,23 +115,26 @@ export class ExecuteSubWorkflowNode extends GraphNode<
 
     const document = await this.documentOf(engine, context);
     const inputPort = this.inputPort || "value";
-    const value = request.inputs["value"] ?? request.inputs["input"];
+    const value = request.inputs["value"];
 
     if (this.mode === "perItem") {
       const results: unknown[] = [];
       let lastOutputs: GraphExecutionValues | undefined;
       let lastRunId: string | undefined;
       for (const item of asGraphDataArray(value)) {
-        const child = await engine.execute(
-          document,
-          { [inputPort]: item },
-          {
-            parentRunId: context.runId,
-            path: [...context.path, "subworkflow"],
-            auth: context.auth,
-            metadata: { ...context.metadata, item },
-          },
-          context
+        const child = assertChildRunSucceeded(
+          await engine.execute(
+            document,
+            { [inputPort]: item },
+            {
+              parentRunId: context.runId,
+              path: [...context.path, "subworkflow"],
+              auth: context.auth,
+              metadata: { ...context.metadata, item },
+            },
+            context
+          ),
+          "sub-workflow run"
         );
         results.push(child.outputs["result"] ?? child.outputs);
         lastOutputs = child.outputs;
@@ -143,16 +147,19 @@ export class ExecuteSubWorkflowNode extends GraphNode<
       };
     }
 
-    const child = await engine.execute(
-      document,
-      { [inputPort]: value },
-      {
-        parentRunId: context.runId,
-        path: [...context.path, "subworkflow"],
-        auth: context.auth,
-        metadata: context.metadata,
-      },
-      context
+    const child = assertChildRunSucceeded(
+      await engine.execute(
+        document,
+        { [inputPort]: value },
+        {
+          parentRunId: context.runId,
+          path: [...context.path, "subworkflow"],
+          auth: context.auth,
+          metadata: context.metadata,
+        },
+        context
+      ),
+      "sub-workflow run"
     );
 
     return {
@@ -219,6 +226,7 @@ export class ExecuteSubWorkflowNode extends GraphNode<
   @input({ handle: "workflow", userControlled: true, type: "object" })
   workflow?: GraphWorkflowDocument;
 
+  @option(["once", "perItem"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.flow_control.execute_sub_workflow.fields.mode.label",
     type: "select",

@@ -54,7 +54,7 @@ export class AgentToolSelectorNode extends GraphNode<
   override execute(
     request: GraphNodeExecutionRequest<AgentToolSelectorInput>
   ): GraphExecutionValues {
-    const decision = request.inputs["decision"] ?? request.inputs["value"];
+    const decision = request.inputs["decision"];
     const available = this.tools ?? [];
     const selected =
       typeof decision === "string"

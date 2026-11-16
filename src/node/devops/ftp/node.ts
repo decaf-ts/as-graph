@@ -11,10 +11,12 @@
  * removes the file. An unknown `operation` silently falls back to `list`. The
  * SFTP connection is torn down in a `finally` block after every execution.
  */
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { isUnsetField } from "../../default-input";
+import { graphFilePathOfInput } from "../../io/file-support";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -103,6 +105,12 @@ function sftpCredentials(
 @model()
 export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
   /**
+   * Default data input: what the previous node produced. A path string or a file descriptor; used as the remote path when `remotePath` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured SFTP operation.
    *
    * @param request - Execution request carrying the credential references; the `sftp` credential is resolved via `resolveNodeCredential`.
@@ -114,6 +122,11 @@ export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
     request: GraphNodeExecutionRequest<FtpNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.remotePath) && routed !== undefined) {
+      this.remotePath = graphFilePathOfInput(routed) as never;
+    }
     const host = asNonEmptyString(this.host);
     const username = asNonEmptyString(this.username);
     if (!host || !username) {
@@ -188,6 +201,7 @@ export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
   }
 
   /** SFTP operation to perform (defaults to `list`). */
+  @option(["list", "delete", "download"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.ftp.fields.operation.label",
     type: "select",
@@ -246,6 +260,7 @@ export class FtpNode extends GraphNode<FtpNodeInput, FtpNodeOutput> {
   path?: string;
 
   /** Encoding for downloaded content (default `utf8`). */
+  @option(["base64", "utf8"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.devops.ftp.fields.encoding.label",
     type: "select",

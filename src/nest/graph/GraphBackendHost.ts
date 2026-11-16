@@ -35,6 +35,7 @@ import type {
 } from "../../dagster/DagsterTypes";
 import { DAGSTER_BACKEND_FLAVOUR } from "../../dagster/constants";
 import type { GraphExecutionModuleOptions } from "./GraphExecutionModule";
+import type { GraphRunRetentionOptions } from "../../engine/runs/types";
 
 /**
  * The graph engine variants a host can boot. Each maps one-to-one onto the
@@ -125,6 +126,91 @@ export function graphDemoSeedEnabledFromEnv(
   const raw = env[GRAPH_SEED_DEMO_ENV];
   if (raw === undefined || raw.trim() === "") return true;
   return !GRAPH_SEED_DEMO_DISABLED_VALUES.includes(raw.trim().toLowerCase());
+}
+
+/** Default maximum age of a finished run: 14 days (n8n's default). */
+export const DEFAULT_GRAPH_RUN_MAX_AGE_HOURS = 336;
+/** Default number of finished runs kept (n8n's default). */
+export const DEFAULT_GRAPH_RUN_MAX_COUNT = 10_000;
+/** Default period of the retention timer, in minutes. */
+export const DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MINUTES = 60;
+
+/** Reads a non-negative number; `off`/`0` (and the other disabled words) disable the limit. */
+function retentionLimitOf(
+  raw: string | undefined,
+  fallback: number,
+  name: string
+): number | undefined {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = raw.trim().toLowerCase();
+  if (GRAPH_SEED_DEMO_DISABLED_VALUES.includes(value)) return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new GraphExecutionError(
+      `${name} must be a non-negative number or 'off'; got '${raw}'`,
+      "GRAPH_RUN_RETENTION_INVALID",
+      { name, value: raw }
+    );
+  }
+  return number === 0 ? undefined : number;
+}
+
+/**
+ * Resolves the standalone backend's run retention (n8n-style execution
+ * pruning) from the environment:
+ *
+ * - `GRAPH_RUN_RETENTION` — `off` disables pruning altogether.
+ * - `GRAPH_RUN_MAX_AGE_HOURS` — maximum age of a finished run (default 336,
+ *   14 days; `0`/`off` = no age limit).
+ * - `GRAPH_RUN_MAX_COUNT` — finished runs kept, newest first (default 10000;
+ *   `0`/`off` = no count limit).
+ * - `GRAPH_RUN_PRUNE_INTERVAL_MINUTES` — retention timer period (default 60;
+ *   `0` = prune only after each finished run).
+ *
+ * @param env - The environment to read from (defaults to `process.env`).
+ * @returns The retention options, or `undefined` when pruning is off.
+ * @throws {GraphExecutionError} `GRAPH_RUN_RETENTION_INVALID` for a malformed
+ * value.
+ */
+export function graphRunRetentionFromEnv(
+  env: NodeJS.ProcessEnv = process.env
+): GraphRunRetentionOptions | undefined {
+  const enabled = env["GRAPH_RUN_RETENTION"];
+  if (
+    enabled !== undefined &&
+    GRAPH_SEED_DEMO_DISABLED_VALUES.includes(enabled.trim().toLowerCase())
+  ) {
+    return undefined;
+  }
+  const maxAgeHours = retentionLimitOf(
+    env["GRAPH_RUN_MAX_AGE_HOURS"],
+    DEFAULT_GRAPH_RUN_MAX_AGE_HOURS,
+    "GRAPH_RUN_MAX_AGE_HOURS"
+  );
+  const maxCount = retentionLimitOf(
+    env["GRAPH_RUN_MAX_COUNT"],
+    DEFAULT_GRAPH_RUN_MAX_COUNT,
+    "GRAPH_RUN_MAX_COUNT"
+  );
+  const intervalMinutes =
+    retentionLimitOf(
+      env["GRAPH_RUN_PRUNE_INTERVAL_MINUTES"],
+      DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MINUTES,
+      "GRAPH_RUN_PRUNE_INTERVAL_MINUTES"
+    ) ?? 0;
+  const pinSweepMinutes =
+    retentionLimitOf(
+      env["GRAPH_PIN_SWEEP_INTERVAL_MINUTES"],
+      DEFAULT_GRAPH_RUN_PRUNE_INTERVAL_MINUTES,
+      "GRAPH_PIN_SWEEP_INTERVAL_MINUTES"
+    ) ?? 0;
+  if (maxAgeHours === undefined && maxCount === undefined) return undefined;
+  return {
+    ...(maxAgeHours !== undefined ? { maxAgeMs: maxAgeHours * 3_600_000 } : {}),
+    ...(maxCount !== undefined ? { maxCount: Math.floor(maxCount) } : {}),
+    intervalMs: intervalMinutes * 60_000,
+    pinSweepIntervalMs: pinSweepMinutes * 60_000,
+  };
 }
 
 /** Host wiring for the Dagster variant: the client port plus its gate options. */

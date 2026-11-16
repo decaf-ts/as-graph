@@ -20,7 +20,7 @@
  */
 import { jest, describe, beforeAll, afterAll, it, expect } from "@jest/globals";
 import type { GraphWorkflowDocument } from "../../../src/shared/graph";
-import { ValidationError } from "@decaf-ts/db-decorators";
+import { GraphExecutionError } from "../../../src/engine/errors/GraphExecutionError";
 
 import {
   GraphNodeExecutorRegistry,
@@ -138,8 +138,10 @@ describe("GraphRunConcurrency (SAA-595 per-caller buckets)", () => {
     } catch (e: unknown) {
       rejected = e;
     }
-    expect(rejected).toBeInstanceOf(ValidationError);
-    expect((rejected as ValidationError).message).toContain(
+    // Admission rejections are GraphExecutionErrors mapped to HTTP 429.
+    expect(rejected).toBeInstanceOf(GraphExecutionError);
+    expect((rejected as GraphExecutionError).graphCode).toBe("GRAPH_RUN_CONCURRENCY_LIMIT");
+    expect((rejected as GraphExecutionError).message).toContain(
       "per caller is exhausted"
     );
   }

@@ -12,10 +12,11 @@
  * `getDocument`. A throwaway `GoogleDocsService` is initialized per execution
  * and shut down in a `finally` block.
  */
-import { model } from "@decaf-ts/decorator-validation";
+import { model, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
+import { defaultInputText, isUnsetField } from "../../default-input";
 import type {
   GraphExecutionValues,
   GraphNodeExecutionRequest,
@@ -104,6 +105,12 @@ export class GoogleDocsNode extends GraphNode<
   GoogleDocsNodeOutput
 > {
   /**
+   * Default data input: what the previous node produced. Used as the text to write when `text` is empty.
+   */
+  @input({ handle: "value" })
+  value?: unknown;
+
+  /**
    * Executes the configured Google Docs operation.
    *
    * @param request - Execution request carrying the credential secrets; the optional `google-docs` credential supplies the token and/or API key.
@@ -115,6 +122,11 @@ export class GoogleDocsNode extends GraphNode<
     request: GraphNodeExecutionRequest<GoogleDocsNodeInput>,
     context: GraphExecutionContext
   ): Promise<GraphExecutionValues> {
+    // The default input fills the payload field left empty.
+    const routed = request.inputs?.["value"];
+    if (isUnsetField(this.text) && routed !== undefined) {
+      this.text = defaultInputText(routed) as never;
+    }
     if (!this.operation) {
       throw new GraphExecutionError(
         "Google Docs node requires an operation",
@@ -227,6 +239,7 @@ export class GoogleDocsNode extends GraphNode<
   }
 
   /** Google Docs operation to perform (default `getDocument`). */
+  @option(["createDocument", "getDocument", "appendText", "replaceAllText", "batchUpdate"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.google_docs.fields.operation.label",
     type: "select",

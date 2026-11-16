@@ -12,10 +12,17 @@
  */
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import { realpathSync } from "node:fs";
-import { glob, mkdir, readFile, realpath, writeFile, appendFile } from "node:fs/promises";
+import { createReadStream, createWriteStream, realpathSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { glob, mkdir, readFile, realpath, stat, writeFile, appendFile } from "node:fs/promises";
 import { GraphExecutionError } from "../../engine/errors/GraphExecutionError";
 import { isBinaryGraphDataPayload, isGraphDataRecord } from "../data/support";
+import {
+  isGraphBinaryPayload,
+  isGraphBinaryReference,
+} from "../../shared/graph/document/GraphBinaryReference";
+import type { GraphBinaryAccess } from "../../engine/binary/GraphBinaryAccess";
 
 const FILE_IO_BASE_ENV = "GRAPH_FILE_IO_BASE";
 const FORBIDDEN_PATH_SEGMENTS = new Set(["workdocs"]);
@@ -373,4 +380,175 @@ export async function graphGlobFiles(pattern: string): Promise<string[]> {
     files.push(match);
   }
   return files;
+}
+
+/**
+ * Resolves a file path from a node's default data input.
+ *
+ * A file reader accepts, on its default input, either a path string or a file
+ * descriptor carrying one: the result of a file writer (`{ path, fileName }`)
+ * or a binary payload that still knows where it came from. This is what lets a
+ * writer be chained straight into a reader.
+ *
+ * @param value - The routed default input.
+ * @returns The path it designates, or `undefined` when it designates none.
+ */
+export function graphFilePathOfInput(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (isGraphDataRecord(value)) {
+    for (const key of ["path", "filePath", "fileName"]) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether a value is a binary file payload (inline or store-backed).
+ *
+ * @param value - The value to inspect.
+ * @returns `true` for a record carrying a `mimeType`, a numeric `byteLength`,
+ * and either inline base64 `data` or a binary store `id`.
+ */
+export function isBinaryFilePayload(value: unknown): value is BinaryFilePayload {
+  return (
+    isGraphDataRecord(value) &&
+    typeof value["mimeType"] === "string" &&
+    typeof value["byteLength"] === "number" &&
+    (typeof value["data"] === "string" || typeof value["id"] === "string")
+  );
+}
+
+/**
+ * Opens a contained file for streaming.
+ *
+ * @param configuredPath - The configured path, relative to the file-IO base.
+ * @returns The byte stream plus the file's name, media type and size.
+ * @throws {GraphExecutionError} `GRAPH_FILE_INVALID_PATH` when the file does
+ *   not exist, plus the containment errors from `resolveGraphFilePath`.
+ */
+export async function openGraphFileStream(configuredPath: string): Promise<{
+  stream: AsyncIterable<Uint8Array>;
+  fileName: string;
+  mimeType: string;
+  byteLength: number;
+}> {
+  const { base, candidate } = resolveGraphFilePath(configuredPath);
+  let existing: string;
+  try {
+    existing = await realpath(candidate);
+  } catch {
+    throw new GraphExecutionError(
+      `File node path '${configuredPath}' does not exist`,
+      "GRAPH_FILE_INVALID_PATH",
+      { path: configuredPath }
+    );
+  }
+  assertContainedPath(base, existing, configuredPath);
+  const { size } = await stat(existing);
+  return {
+    stream: createReadStream(existing),
+    fileName: basename(candidate),
+    mimeType: mimeTypeFor(candidate),
+    byteLength: size,
+  };
+}
+
+/**
+ * Streams bytes into a contained file (same containment rules as
+ * {@link writeGraphFile}), without buffering them.
+ *
+ * @param configuredPath - The configured path, relative to the file-IO base.
+ * @param data - The bytes.
+ * @param options - Append and directory-creation options.
+ * @returns The configured path and the number of bytes written.
+ */
+export async function writeGraphFileStream(
+  configuredPath: string,
+  data: AsyncIterable<Uint8Array>,
+  options: { append?: boolean; createDirectories?: boolean } = {}
+): Promise<{ path: string; bytes: number }> {
+  const { base, candidate } = resolveGraphFilePath(configuredPath);
+  const existing = await realPathOfNearestExisting(candidate);
+  if (existing) assertContainedPath(base, existing, configuredPath);
+  if (options.createDirectories) {
+    await mkdir(dirname(candidate), { recursive: true });
+  }
+  const parentRealPath = await realpath(dirname(candidate));
+  assertContainedPath(base, parentRealPath, configuredPath);
+  const targetRealPath = await realPathOfNearestExisting(candidate);
+  if (targetRealPath) assertContainedPath(base, targetRealPath, configuredPath);
+  let bytes = 0;
+  const counted = (async function* () {
+    for await (const chunk of data) {
+      bytes += chunk.byteLength;
+      yield chunk;
+    }
+  })();
+  await pipeline(
+    Readable.from(counted),
+    createWriteStream(candidate, { flags: options.append ? "a" : "w" })
+  );
+  return { path: configuredPath, bytes };
+}
+
+/**
+ * The bytes of a node input that may be a file (a store reference or an
+ * inline payload) or plain content: files are read through
+ * `context.binaries` (under the in-memory ceiling); anything else decodes
+ * as {@link binaryBufferOf} does.
+ *
+ * @param value - The input value.
+ * @param context - The node's execution context (for `binaries`), if any.
+ * @param encoding - Decoding of plain string content.
+ * @param dataPropertyName - Preferred record field for plain records.
+ */
+export async function graphInputBytesOf(
+  value: unknown,
+  context: { binaries?: GraphBinaryAccess } | undefined,
+  encoding: GraphBinaryEncoding = "utf8",
+  dataPropertyName = "data"
+): Promise<Buffer> {
+  if (isGraphBinaryReference(value)) {
+    if (!context?.binaries) {
+      throw new GraphExecutionError(
+        `File '${value.fileName}' is a store reference but no binary store is available`,
+        "GRAPH_BINARY_NOT_FOUND",
+        { id: value.id }
+      );
+    }
+    return context.binaries.readBuffer(value);
+  }
+  return binaryBufferOf(value, encoding, dataPropertyName);
+}
+
+/**
+ * A byte stream for a node input that is a file (reference or payload), or
+ * `undefined` when the value is not a file.
+ */
+export async function graphInputStreamOf(
+  value: unknown,
+  context: { binaries?: GraphBinaryAccess } | undefined
+): Promise<AsyncIterable<Uint8Array> | undefined> {
+  if (isGraphBinaryReference(value) || isGraphBinaryPayload(value)) {
+    if (context?.binaries) return context.binaries.open(value);
+    if (isGraphBinaryPayload(value)) {
+      const bytes = Buffer.from(value.data, "base64");
+      return (async function* () {
+        yield bytes;
+      })();
+    }
+    throw new GraphExecutionError(
+      `File '${value.fileName}' is a store reference but no binary store is available`,
+      "GRAPH_BINARY_NOT_FOUND",
+      { id: value.id }
+    );
+  }
+  return undefined;
 }

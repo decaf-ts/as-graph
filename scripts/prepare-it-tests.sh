@@ -9,9 +9,11 @@
 #   - Redis, MinIO (S3), fake-gcs-server (GCS), Azurite (Azure Blob)
 #   - SFTP (atmoz/sftp), Mailpit (SMTP sink)
 #   - the pinned Dagster gateway fixture (built by tests/integration/dagster)
-#   - the sibling integrations Postgres harness (decaf-postgres-integration on
-#     port 55435) required by the RLS credential suites when that checkout is
-#     present; `INTEGRATIONS_DIR` overrides its location.
+#   - a Postgres for the RLS credential suites (decaf-pg, port 55436,
+#     `DECAF_PG_URL`)
+#   - as-graph's bootstrap SQL (`docker/sql/`) applied to the main Postgres
+#
+# Everything lives in this package — no sibling checkout is needed.
 #
 # Every endpoint is probed from the test runner's network namespace before the
 # script succeeds. The resolved endpoints are written to the git-ignored
@@ -53,21 +55,6 @@ export AS_GRAPH_IT_HOST="${SERVICE_HOST}"
 
 compose() {
   docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" "$@"
-}
-
-integrations_compose_file() {
-  echo "${INTEGRATIONS_DIR:-${ROOT_DIR}/../integrations}/docker/postgres-compose.yml"
-}
-
-boot_integrations_postgres() {
-  local compose_file
-  compose_file="$(integrations_compose_file)"
-  if [ ! -f "${compose_file}" ]; then
-    echo "==> sibling integrations harness not found; RLS credential suites need DECAF_PG_URL"
-    return
-  fi
-  echo "==> booting sibling integrations Postgres harness (decaf-postgres-integration, 55435)"
-  docker compose -f "${compose_file}" up -d --wait --wait-timeout 180
 }
 
 install_deps() {
@@ -174,15 +161,16 @@ END
 $$;
 SQL
 
-  local as_infra_dir="${AS_INFRA_DIR:-${ROOT_DIR}/../as-infra}/infrastructure/mastra/migrations"
+  # as-graph's own bootstrap DDL (generated: `npm run ddl:asgraph` / `ddl:mastra`).
+  local sql_dir="${ROOT_DIR}/docker/sql"
   MIGRATIONS_OK=0
-  if [ -f "${as_infra_dir}/0001_asgraph_decaf_tables.sql" ] && [ -f "${as_infra_dir}/0002_mastra_storage_schema.sql" ]; then
-    echo "==> applying as-infra bootstrap DDL from ${as_infra_dir}"
-    psql_exec "${POSTGRES_CONTAINER}" test < "${as_infra_dir}/0001_asgraph_decaf_tables.sql"
-    psql_exec "${POSTGRES_CONTAINER}" test < "${as_infra_dir}/0002_mastra_storage_schema.sql"
+  if [ -f "${sql_dir}/0001_asgraph_decaf_tables.sql" ] && [ -f "${sql_dir}/0002_mastra_storage_schema.sql" ]; then
+    echo "==> applying bootstrap DDL from ${sql_dir}"
+    psql_exec "${POSTGRES_CONTAINER}" test < "${sql_dir}/0001_asgraph_decaf_tables.sql"
+    psql_exec "${POSTGRES_CONTAINER}" test < "${sql_dir}/0002_mastra_storage_schema.sql"
     MIGRATIONS_OK=1
   else
-    echo "!! as-infra bootstrap DDL not found at ${as_infra_dir}" >&2
+    echo "!! bootstrap DDL not found at ${sql_dir}" >&2
     echo "!! the durable graph and live Mastra storage lanes will stay skipped" >&2
     psql_exec "${POSTGRES_CONTAINER}" test <<'SQL'
 CREATE SCHEMA IF NOT EXISTS asgraph;
@@ -260,6 +248,8 @@ const { writeFileSync } = require("node:fs");
 const [file, host, dagsterUrl, migrationsOk] = process.argv.slice(2);
 const env = {
   AS_GRAPH_IT_HOST: host,
+  // RLS credential suites (as-graph's own decaf-pg service).
+  DECAF_PG_URL: `postgresql://decaf:decaf-integration@${host}:55436/decaf_integration`,
   SAA1032_SERVICE_HOST: host,
   SAA1032_PG_HOST: host,
   SAA1032_PG_PORT: "55440",
@@ -273,6 +263,7 @@ const env = {
   SAA1032_RABBITMQ_PORT: "55672",
   SAA1032_RABBITMQ_USER: "asgraph",
   SAA1032_RABBITMQ_PASSWORD: "asgraph",
+  GRAPH_IT_DRAGONFLY_URL: `redis://${host}:56380`,
   SAA1032_S3_HOST: host,
   SAA1032_S3_PORT: "59000",
   SAA1032_GCS_HOST: host,
@@ -315,6 +306,7 @@ verify_matrix() {
   wait_tcp "${SERVICE_HOST}" 53306 "mysql"
   wait_tcp "${SERVICE_HOST}" 51433 "mssql"
   wait_tcp "${SERVICE_HOST}" 56379 "redis"
+  wait_tcp "${SERVICE_HOST}" 56380 "dragonfly"
   wait_tcp "${SERVICE_HOST}" 55672 "rabbitmq"
   wait_tcp "${SERVICE_HOST}" 59000 "minio"
   wait_tcp "${SERVICE_HOST}" 54444 "fake-gcs"
@@ -322,9 +314,7 @@ verify_matrix() {
   wait_tcp "${SERVICE_HOST}" 52222 "sftp"
   wait_tcp "${SERVICE_HOST}" 1025 "mailpit-smtp"
   wait_tcp "${SERVICE_HOST}" 8025 "mailpit-http"
-  if [ -f "$(integrations_compose_file)" ]; then
-    wait_tcp "${SERVICE_HOST}" 55435 "integrations-postgres"
-  fi
+  wait_tcp "${SERVICE_HOST}" 55436 "decaf-pg"
 }
 
 read_dagster_url() {
@@ -340,7 +330,6 @@ ensure_build
 
 echo "==> booting service matrix from ${COMPOSE_FILE}"
 compose up -d --wait --wait-timeout 300
-boot_integrations_postgres
 
 MIGRATIONS_OK=0
 bootstrap_metadata_postgres
@@ -368,7 +357,5 @@ echo "    azurite        ${SERVICE_HOST}:10010 (account devstoreaccount1)"
 echo "    sftp           ${SERVICE_HOST}:52222 (testuser/testpass, /upload)"
 echo "    mailpit        ${SERVICE_HOST}:1025 SMTP, ${SERVICE_HOST}:8025 HTTP"
 [ -n "${DAGSTER_URL}" ] && echo "    dagster        ${DAGSTER_URL}"
-if [ -f "$(integrations_compose_file)" ]; then
-  echo "    integrations   ${SERVICE_HOST}:55435 (decaf-postgres-integration, db decaf_integration)"
-fi
+echo "    decaf-pg       ${SERVICE_HOST}:55436 (db decaf_integration; RLS credential suites)"
 echo "==> prepare-it-tests complete: environment ready for \`npm run coverage\`"

@@ -10,7 +10,7 @@
  * (`GRAPH_XML_INPUT_TOO_LARGE`).
  */
 import { Builder, Parser } from "xml2js";
-import { model, required } from "@decaf-ts/decorator-validation";
+import { model, required, option } from "@decaf-ts/decorator-validation";
 import { uielement } from "@decaf-ts/ui-decorators";
 import { input, node, output } from "../../../shared/graph";
 import { GraphNode } from "../../base";
@@ -180,6 +180,7 @@ export class XmlNode extends GraphNode<XmlNodeInput, XmlNodeOutput> {
   value!: unknown;
 
   /** Conversion direction (default `xmlToJson`). */
+  @option(["jsonToXml", "xmlToJson"])
   @uielement("ngx-decaf-crud-field", {
     label: "graph.node.io.xml.fields.mode.label",
     type: "select",

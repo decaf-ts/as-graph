@@ -55,7 +55,7 @@ describe("Mastra workflow-management capabilities (SAA-346)", () => {
 
   it("resolves the management statuses in the backend capability projection", () => {
     expect(resolveMastraCapabilities()).toEqual({
-      codeMode: "unsupported",
+      codeMode: "hostSide",
       workflows: {
         list: "supported",
         get: "supported",
