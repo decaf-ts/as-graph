@@ -206,7 +206,7 @@ liveDescribe(
           "run-5",
           "mastra-it-metrics-owned-run",
         ],
-        [WORKFLOW_ID, "mastra-it-two-leaf"]
+        [WORKFLOW_ID, "mastra-it-two-leaf-metrics"]
       );
     });
 
@@ -221,7 +221,7 @@ liveDescribe(
           "run-5",
           "mastra-it-metrics-owned-run",
         ],
-        [WORKFLOW_ID, "mastra-it-two-leaf"]
+        [WORKFLOW_ID, "mastra-it-two-leaf-metrics"]
       );
       await closeLiveStores();
     });
@@ -434,7 +434,7 @@ liveDescribe(
         stepHandlers: [realStepHandler(NODE_KIND)],
       });
 
-      const source = integrationTwoLeafDocument();
+      const source = integrationTwoLeafDocument("metrics");
       await backend.execute(
         {
           document: source,

@@ -47,11 +47,11 @@ function realRuntime(): Mastra {
   return liveMastra("as-graph-it-workflow-management");
 }
 
-/** The same id/topology as the two-leaf document, edited to change its fingerprint. */
+/** The suite's own two-leaf id, edited (same id, new fingerprint) for the update flow. */
 function editedTwoLeafDocument() {
   return document({
-    id: "mastra-it-two-leaf",
-    name: "mastra-it-two-leaf-edited",
+    id: "mastra-it-two-leaf-managed",
+    name: "mastra-it-two-leaf-managed-edited",
     nodes: [
       node("first", NODE_KIND, { variant: 2 }),
       node("second", NODE_KIND),
@@ -76,7 +76,7 @@ liveDescribe(
       await purgeLiveRuns(
         sharedLiveStorage(),
         ["mastra-it-managed-run"],
-        ["mastra-it-two-leaf", "mastra-it-two-leaf-edited"]
+        ["mastra-it-two-leaf-managed", "mastra-it-two-leaf-managed-edited"]
       );
     });
 
@@ -84,7 +84,7 @@ liveDescribe(
       await purgeLiveRuns(
         sharedLiveStorage(),
         ["mastra-it-managed-run"],
-        ["mastra-it-two-leaf", "mastra-it-two-leaf-edited"]
+        ["mastra-it-two-leaf-managed", "mastra-it-two-leaf-managed-edited"]
       );
       await closeLiveStores();
     });
@@ -94,7 +94,7 @@ liveDescribe(
     });
 
     it("creates, edits, runs, serializes, and deletes a managed workflow", async () => {
-      const source = integrationTwoLeafDocument();
+      const source = integrationTwoLeafDocument("managed");
       const calls: StepCall[] = [];
       const runtime = realRuntime();
       const manager = new MastraWorkflowManager({

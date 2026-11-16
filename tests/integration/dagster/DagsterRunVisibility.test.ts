@@ -30,16 +30,42 @@ dagsterIntegrationDescribe("Dagster run visibility (SAA-306)", () => {
     GraphExecutionBackendRegistry.clear();
   });
 
-  it("reads the terminal record of a pre-existing run", async () => {
-    const client = dagsterClient();
+  /**
+   * The newest `etl` run that already reached a terminal `success` state.
+   *
+   * `DagsterExecutionGate` launches a real `etl_pipeline` run (~20-30s to a
+   * terminal state) and jest runs suites in parallel against the same shared
+   * gateway, so the newest run id is not necessarily terminal yet. The
+   * container-startup run is, and every read here wants a completed run.
+   */
+  async function newestSuccessfulRunId(
+    client: ReturnType<typeof dagsterClient>
+  ): Promise<string> {
     const runIds = await client.listRunIds(DAGSTER_EXAMPLE_JOBS.etl);
     expect(runIds.length).toBeGreaterThan(0);
+    const statuses: Array<{ runId: string; status: string }> = [];
+    for (const runId of runIds.slice(0, 10)) {
+      const record = await client.getRun(runId);
+      statuses.push({ runId, status: record.status });
+      if (record.status === "success") return runId;
+    }
+    throw new Error(
+      `no terminal 'success' run among the newest ${Math.min(
+        runIds.length,
+        10
+      )} of ${runIds.length}; statuses: ${JSON.stringify(statuses)}`
+    );
+  }
+
+  it("reads the terminal record of a pre-existing run", async () => {
+    const client = dagsterClient();
+    const runId = await newestSuccessfulRunId(client);
 
     const backend = new DagsterGraphExecutionBackend();
     await backend.initialize({ client });
-    const record = await backend.getRun(runIds[0]);
+    const record = await backend.getRun(runId);
 
-    expect(record.runId).toBe(runIds[0]);
+    expect(record.runId).toBe(runId);
     expect(record.status).toBe("success");
     expect(record.startedAt).toBeDefined();
     expect(record.finishedAt).toBeDefined();
@@ -48,15 +74,14 @@ dagsterIntegrationDescribe("Dagster run visibility (SAA-306)", () => {
 
   it("observes a pre-existing run end-to-end through the canonical sink", async () => {
     const client = dagsterClient();
-    const runIds = await client.listRunIds(DAGSTER_EXAMPLE_JOBS.etl);
-    expect(runIds.length).toBeGreaterThan(0);
+    const runId = await newestSuccessfulRunId(client);
 
     const backend = new DagsterGraphExecutionBackend();
     await backend.initialize({ client });
     const sink = new RecordingSink();
 
     const result = await backend.observeRun({
-      dagsterRunId: runIds[0],
+      dagsterRunId: runId,
       graphRunId: "as-graph-it-run",
       workflowId: DAGSTER_EXAMPLE_JOBS.etl,
       events: sink,
@@ -103,8 +128,8 @@ dagsterIntegrationDescribe("Dagster run visibility (SAA-306)", () => {
 
   it("surfaces the existing run through the client port as success", async () => {
     const client = dagsterClient();
-    const runIds = await client.listRunIds(DAGSTER_EXAMPLE_JOBS.etl);
-    const record = await client.getRun(runIds[0]);
+    const runId = await newestSuccessfulRunId(client);
+    const record = await client.getRun(runId);
     expect(record.status).toBe("success");
     expect(record.outputs).toEqual({});
     client.dispose();

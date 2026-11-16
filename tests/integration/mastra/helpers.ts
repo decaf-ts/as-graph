@@ -171,10 +171,16 @@ export function compileDocument(
  * A canonical two-leaf document (`first -> second`) wired through the canonical
  * `out`/`in` ports, so the real bridge can route an edge value.
  */
-export function integrationTwoLeafDocument() {
+/**
+ * The canonical two-leaf document. Suites that purge mastra snapshot rows by
+ * workflow name pass a unique `suffix`, so concurrent suites sharing the live
+ * Postgres tables never purge each other's rows mid-test.
+ */
+export function integrationTwoLeafDocument(suffix?: string) {
+  const id = suffix ? `mastra-it-two-leaf-${suffix}` : "mastra-it-two-leaf";
   return document({
-    id: "mastra-it-two-leaf",
-    name: "mastra-it-two-leaf",
+    id,
+    name: id,
     nodes: [node("first", "test.leaf"), node("second", "test.leaf")],
     edges: [edge("e1", ["node", "first", "out"], ["node", "second", "in"])],
   });

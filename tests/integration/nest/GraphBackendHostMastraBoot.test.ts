@@ -112,11 +112,11 @@ liveDescribe("GraphBackendHost mastra boot (SAA-709 acceptance 3)", () => {
   let adapter: TypeORMAdapter | undefined;
 
   beforeAll(async () => {
-    await purgeAsGraphWorkflows(["mastra-it-two-leaf"]);
+    await purgeAsGraphWorkflows(["mastra-it-two-leaf-boot"]);
     await purgeLiveRuns(
       sharedLiveStorage(),
       ["mastra-host-run"],
-      ["mastra-it-two-leaf"]
+      ["mastra-it-two-leaf-boot"]
     );
     ({ app, moduleRef, adapter } = await bootMastraApp());
   });
@@ -128,11 +128,11 @@ liveDescribe("GraphBackendHost mastra boot (SAA-709 acceptance 3)", () => {
       // already closed
     }
     await adapter?.shutdown();
-    await purgeAsGraphWorkflows(["mastra-it-two-leaf"]);
+    await purgeAsGraphWorkflows(["mastra-it-two-leaf-boot"]);
     await purgeLiveRuns(
       sharedLiveStorage(),
       ["mastra-host-run"],
-      ["mastra-it-two-leaf"]
+      ["mastra-it-two-leaf-boot"]
     );
     await closeLiveStores();
   });
@@ -175,7 +175,7 @@ liveDescribe("GraphBackendHost mastra boot (SAA-709 acceptance 3)", () => {
         new Context()
       );
     const engine = moduleRef.get(GraphExecutionEngine);
-    const document = integrationTwoLeafDocument();
+    const document = integrationTwoLeafDocument("boot");
     const result = await engine.execute(
       document,
       {},
