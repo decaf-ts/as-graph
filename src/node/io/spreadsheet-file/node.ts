@@ -79,7 +79,10 @@ const FORMAT_FILES: Record<SpreadsheetFileFormat, { mimeType: string; extension:
   xls: { mimeType: "application/vnd.ms-excel", extension: "xls" },
 };
 
-/** Whether a format is a binary workbook package. */
+/**
+ * Whether a format is a binary workbook package.
+ * @returns {boolean} Whether the format is XLSX, ODS or XLS.
+ */
 function isWorkbookFormat(format: SpreadsheetFileFormat | undefined): format is WorkbookFormat {
   return format === "xlsx" || format === "ods" || format === "xls";
 }

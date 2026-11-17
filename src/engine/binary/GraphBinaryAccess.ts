@@ -153,7 +153,10 @@ export class GraphBinaryAccess {
     return { ...descriptor, byteLength: buffer.byteLength, id };
   }
 
-  /** Whether a value is a file this accessor can read. */
+  /**
+   * Whether a value is a file this accessor can read.
+   * @returns {boolean} Whether the value is a binary reference or payload.
+   */
   static isFile(value: unknown): value is GraphBinaryReference | GraphBinaryPayload {
     return isGraphBinaryReference(value) || isGraphBinaryPayload(value);
   }

@@ -44,6 +44,18 @@ use `@example` and `@see` when required
 
 ## 🔍 Notes on Key Tags
 
+For this backend module, keep JSDoc types compatible with the existing
+`better-docs` TypeScript plugin:
+
+- Give type guard functions an explicit `@returns {boolean}`; inferred
+  TypeScript predicates such as `value is GraphBinaryReference` are not JSDoc
+  type expressions.
+- Use ordinary `//` comments for private timer fields typed with
+  `ReturnType<typeof setInterval>`. Documenting those fields with `/** ... */`
+  makes the plugin emit unsupported TypeScript type queries as JSDoc types.
+
+Verify declarations with `npm run docs`.
+
 - **`@class` / `@interface` / `@function` / `@typedef` / `@const`**: Always include to ensure type is properly rendered by better-docs.
 - **`@description`**: One-liner description for quick scan/read.
 - **`@summary`**: Paragraph-level detail; used for in-depth context.

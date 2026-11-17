@@ -204,12 +204,12 @@ export class GraphRunService {
     }
   }
 
-  /** Periodic expired-pin sweep, when retention is configured. */
+  // Periodic expired-pin sweep, when retention is configured.
   private pinSweepTimer?: ReturnType<typeof setInterval>;
 
-  /** Periodic retention timer, when retention is configured. */
+  // Periodic retention timer, when retention is configured.
   private pruneTimer?: ReturnType<typeof setInterval>;
-  /** Periodic orphan recovery timer. */
+  // Periodic orphan recovery timer.
   private recoveryTimer?: ReturnType<typeof setInterval>;
   private readonly runData: GraphRunDataStore;
   private readonly queue: GraphRunQueue;
