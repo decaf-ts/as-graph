@@ -1,6 +1,6 @@
 {
   "name": "@decaf-ts/as-graph",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Workflow document model, node catalogue and reference execution engine for Decaf graph workflows",
   "type": "module",
   "exports": {
