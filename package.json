@@ -162,7 +162,7 @@
     "test:circular": "dpdm -T --no-warning --no-tree ./src/index.ts",
     "prepare-it-tests": "npx playwright install chromium && bash scripts/prepare-it-tests.sh",
     "teardown-it-tests": "bash scripts/teardown-it-tests.sh",
-    "coverage": "rimraf ./workdocs/reports/data/*.json && NODE_OPTIONS=--max-old-space-size=8192 npm run test:all -- --coverage --config=./workdocs/reports/jest.coverage.config.cjs --maxWorkers=6",
+    "coverage": "rimraf ./workdocs/reports/data/*.json && NODE_OPTIONS=--max-old-space-size=8192 npm run test:all -- --coverage --config=./workdocs/reports/jest.coverage.config.cjs",
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
     "prepare-pr": "npm run lint-fix && npm run build:prod && npm run coverage && npm run docs",
