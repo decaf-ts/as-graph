@@ -9,6 +9,7 @@
 import { jest, describe, it, afterAll } from "@jest/globals";
 import { randomUUID } from "node:crypto";
 import { createClient } from "redis";
+import type { RedisAdapter } from "@decaf-ts/integrations/redis";
 import { TaskEngineGraphRunQueue } from "../../../src/engine/runs/queue/TaskEngineGraphRunQueue";
 import { BullMqGraphRunQueue } from "../../../src/engine/runs/queue/BullMqGraphRunQueue";
 import { assertDistributedRuns } from "./distributedRunHarness";
@@ -20,26 +21,37 @@ const live = DRAGONFLY ? describe : describe.skip;
 
 live("distributed runs over Dragonfly", () => {
   const prefix = `{graph-it-${randomUUID().slice(0, 8)}}`;
-  let redisTasks: Promise<unknown> | undefined;
+  let redisTasks: Promise<RedisAdapter> | undefined;
 
   afterAll(async () => {
-    const client = createClient({ url: DRAGONFLY });
-    await client.connect();
-    for await (const keys of client.scanIterator({ MATCH: `*${prefix}*`, COUNT: 500 })) {
-      const batch = ([] as string[]).concat(keys as unknown as string[]);
-      if (batch.length) await client.del(batch);
+    try {
+      const client = createClient({ url: DRAGONFLY });
+      try {
+        await client.connect();
+        for await (const keys of client.scanIterator({ MATCH: `*${prefix}*`, COUNT: 500 })) {
+          const batch = ([] as string[]).concat(keys as unknown as string[]);
+          if (batch.length) await client.del(batch);
+        }
+      } finally {
+        if (client.isOpen) await client.quit();
+      }
+    } finally {
+      // The queues borrow this shared adapter; their stop() leaves it open.
+      await (await redisTasks)?.shutdown();
     }
-    await client.quit();
   });
 
   it("TaskEngine on Dragonfly (integrations Redis adapter)", async () => {
     await assertDistributedRuns(DRAGONFLY as string, async () => {
       redisTasks ??= (async () => {
         const { RedisAdapter } = await import("@decaf-ts/integrations/redis");
-        const adapter = new (RedisAdapter as unknown as new (conf: unknown, alias: string) => {
-          initialize(): Promise<void>;
-        })({ url: DRAGONFLY, prefix }, `graph-it-tasks-${randomUUID()}`);
-        await adapter.initialize().catch(() => undefined);
+        const adapter = new RedisAdapter({ url: DRAGONFLY, prefix }, `graph-it-tasks-${randomUUID()}`);
+        try {
+          await adapter.initialize();
+        } catch (error) {
+          await adapter.shutdown();
+          throw error;
+        }
         return adapter;
       })();
       return new TaskEngineGraphRunQueue({ adapter: (await redisTasks) as never, pollMsIdle: 100 });

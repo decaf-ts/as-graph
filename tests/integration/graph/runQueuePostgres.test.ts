@@ -6,7 +6,7 @@
  * (`includeTaskModels`); its `url`-only connection still gives the TypeORM
  * adapter an operation user (`createdBy`/`updatedBy`).
  */
-import { jest, describe, it, beforeAll } from "@jest/globals";
+import { jest, describe, it, beforeAll, afterAll } from "@jest/globals";
 import { createTypeormGraphAdapter } from "../../../src/typeorm";
 import { assertDistributedRuns } from "./distributedRunHarness";
 
@@ -17,7 +17,7 @@ const POSTGRES = process.env["GRAPH_IT_POSTGRES_URL"];
 const live = DRAGONFLY && POSTGRES ? describe : describe.skip;
 
 live("distributed runs with the TaskEngine queue on Postgres", () => {
-  let adapter: unknown;
+  let adapter: Awaited<ReturnType<typeof createTypeormGraphAdapter>> | undefined;
 
   beforeAll(async () => {
     adapter = await createTypeormGraphAdapter({
@@ -29,6 +29,11 @@ live("distributed runs with the TaskEngine queue on Postgres", () => {
       },
       includeTaskModels: true,
     });
+  });
+
+  afterAll(async () => {
+    // TaskEngineGraphRunQueue borrows this adapter, so the suite owns its pool.
+    await adapter?.shutdown();
   });
 
   it("TaskEngine on Postgres", async () => {
